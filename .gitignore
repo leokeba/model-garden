@@ -89,3 +89,4 @@ yarn.lock
 
 # Build artifacts
 *.whl
+data/hub_*.jsonl
