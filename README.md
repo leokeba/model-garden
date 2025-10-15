@@ -1,8 +1,8 @@
 # 🌱 Model Garden
 
-**Fine-tune and serve LLMs with carbon footprint tracking**
+**Fine-tune and serve LLMs and Vision-Language Models with carbon footprint tracking**
 
-Model Garden is a comprehensive platform for fine-tuning, deploying, and serving large language models (LLMs) while tracking their environmental impact. Built with performance and sustainability in mind.
+Model Garden is a comprehensive platform for fine-tuning, deploying, and serving large language models (LLMs) and vision-language models (VLMs) while tracking their environmental impact. Built with performance and sustainability in mind.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -16,7 +16,8 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - **70% less VRAM usage** - train larger models on consumer GPUs
 - Support for LoRA, QLoRA, and full fine-tuning
 - 4-bit, 8-bit, and 16-bit quantization
-- **🆕 Vision-Language Models** - Fine-tune Qwen2.5-VL and multimodal models
+- **🆕 Vision-Language Models** - Fine-tune Qwen2.5-VL (3B/7B/72B) for image + text tasks
+- **🎨 Multimodal Training** - Unified interface for text-only and vision-language models
 
 ### ⚡ Efficient Inference
 - **High-throughput serving** powered by vLLM
@@ -34,7 +35,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - Simple REST API and CLI interface
 - Real-time training progress and job management
 - Comprehensive model management
-- **Integrated web dashboard** - Manage models and jobs via UI
+- **Integrated web dashboard** - Manage text and vision models via intuitive UI
 
 ---
 
