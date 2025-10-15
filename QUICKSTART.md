@@ -51,6 +51,18 @@ uv run model-garden generate ./models/my-first-model \
   --max-tokens 128
 ```
 
+### 4. Start API Server (NEW!)
+
+```bash
+# Start the REST API server
+uv run model-garden serve
+
+# The API will be available at:
+# - API: http://localhost:8000
+# - Docs: http://localhost:8000/docs
+# - ReDoc: http://localhost:8000/redoc
+```
+
 ## Using Real Datasets
 
 ### From Local File
