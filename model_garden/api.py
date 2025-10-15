@@ -1,11 +1,13 @@
 """FastAPI backend for Model Garden."""
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -75,6 +77,96 @@ class PaginatedResponse(BaseModel):
 # Global variables for managing state
 training_jobs: Dict[str, Dict] = {}
 models_storage: Dict[str, Dict] = {}
+
+
+def run_training_job(job_id: str):
+    """Execute a training job in the background."""
+    try:
+        job = training_jobs[job_id]
+        
+        # Update job status to running
+        job["status"] = "running"
+        job["started_at"] = datetime.utcnow().isoformat() + "Z"
+        
+        print(f"🚀 Starting training job {job_id}: {job['name']}")
+        
+        # Initialize trainer
+        trainer = ModelTrainer(
+            base_model=job["base_model"],
+            max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
+            load_in_4bit=True,
+        )
+        
+        # Load model
+        trainer.load_model()
+        
+        # Prepare for training with LoRA
+        lora_config = job["lora_config"]
+        trainer.prepare_for_training(
+            r=lora_config.get("r", 16),
+            lora_alpha=lora_config.get("lora_alpha", 16),
+        )
+        
+        # Load dataset
+        if job["from_hub"]:
+            train_dataset = trainer.load_dataset_from_hub(job["dataset_path"])
+        else:
+            train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
+        
+        # Format dataset
+        train_dataset = trainer.format_dataset(
+            train_dataset,
+            instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
+            input_field=job["hyperparameters"].get("input_field", "input"),
+            output_field=job["hyperparameters"].get("output_field", "output"),
+        )
+        
+        # Train
+        hyperparams = job["hyperparameters"]
+        trainer.train(
+            dataset=train_dataset,
+            output_dir=job["output_dir"],
+            num_train_epochs=hyperparams.get("num_epochs", 3),
+            per_device_train_batch_size=hyperparams.get("batch_size", 2),
+            gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
+            learning_rate=hyperparams.get("learning_rate", 2e-4),
+            max_steps=hyperparams.get("max_steps", -1),
+            logging_steps=hyperparams.get("logging_steps", 10),
+            save_steps=hyperparams.get("save_steps", 100),
+        )
+        
+        # Save final model
+        save_method = hyperparams.get("save_method", "merged_16bit")
+        if save_method != "lora":
+            trainer.save_model(job["output_dir"], save_method=save_method)
+        
+        # Update job status to completed
+        job["status"] = "completed"
+        job["completed_at"] = datetime.utcnow().isoformat() + "Z"
+        job["progress"] = {"current_step": 100, "total_steps": 100, "epoch": hyperparams.get("num_epochs", 3)}
+        
+        # Add model to storage
+        model_id = Path(job["output_dir"]).name
+        models_storage[model_id] = {
+            "id": model_id,
+            "name": job["name"],
+            "base_model": job["base_model"],
+            "status": "available",
+            "created_at": job["created_at"],
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "path": job["output_dir"],
+            "training_job_id": job_id,
+            "size_bytes": calculate_dir_size(Path(job["output_dir"])),
+        }
+        
+        print(f"✅ Training job {job_id} completed successfully!")
+        
+    except Exception as e:
+        # Update job status to failed
+        job["status"] = "failed"
+        job["completed_at"] = datetime.utcnow().isoformat() + "Z"
+        job["error_message"] = str(e)
+        print(f"❌ Training job {job_id} failed: {e}")
 
 
 @asynccontextmanager
@@ -264,10 +356,9 @@ async def list_training_jobs(
 
 
 @app.post("/api/v1/training/jobs", response_model=APIResponse)
-async def create_training_job(job_request: TrainingJobRequest):
+async def create_training_job(job_request: TrainingJobRequest, background_tasks: BackgroundTasks):
     """Create a new training job."""
     import uuid
-    from datetime import datetime
     
     job_id = str(uuid.uuid4())
     
@@ -291,12 +382,13 @@ async def create_training_job(job_request: TrainingJobRequest):
     
     training_jobs[job_id] = job_info
     
-    # TODO: Add job to queue for processing
+    # Start training job in background
+    background_tasks.add_task(run_training_job, job_id)
     
     return APIResponse(
         success=True,
         data={"job_id": job_id},
-        message=f"Training job {job_id} created successfully"
+        message=f"Training job {job_id} created and queued for execution"
     )
 
 

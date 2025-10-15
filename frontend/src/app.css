@@ -1,9 +1,3 @@
-/* 
-  TailwindCSS directives - these are processed by PostCSS
-  @see https://tailwindcss.com/docs/functions-and-directives
-*/
-/* stylelint-disable at-rule-no-unknown */
-/* postcss-bem-linter: ignore */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
