@@ -18,17 +18,22 @@ Before installing, make sure you have:
    - Required for PyTorch with CUDA support
    - Download from: https://developer.nvidia.com/cuda-downloads
 
-4. **uv package manager** (optional but recommended)
+4. **uv package manager** (recommended)
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
+   
+   **Why uv?** uv is 10-100x faster than pip for dependency resolution and installation, especially for ML packages with complex dependencies.
 
 ## Installation Steps
 
 ### Option 1: Using uv (Recommended)
 
 ```bash
-# Create virtual environment
+# Install dependencies using uv sync (reads pyproject.toml)
+uv sync
+
+# Or create virtual environment manually
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
@@ -56,7 +61,7 @@ pip install -e .
 
 ```bash
 # Check if CLI is available
-model-garden --version
+uv run model-garden --version
 
 # Should output: model-garden, version 0.1.0
 ```
@@ -66,7 +71,7 @@ model-garden --version
 ### 1. Create Test Dataset
 
 ```bash
-model-garden create-dataset --output ./data/test.jsonl --num-examples 50
+uv run model-garden create-dataset --output ./data/test.jsonl --num-examples 50
 ```
 
 This creates a simple dataset with 50 examples for testing.
@@ -74,7 +79,7 @@ This creates a simple dataset with 50 examples for testing.
 ### 2. Run a Quick Training Test
 
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/test.jsonl \
   --output-dir ./models/test-model \
@@ -93,7 +98,7 @@ model-garden train \
 ### 3. Test Generation
 
 ```bash
-model-garden generate ./models/test-model \
+uv run model-garden generate ./models/test-model \
   --prompt "Explain what artificial intelligence is" \
   --max-tokens 100
 ```
@@ -103,7 +108,7 @@ model-garden generate ./models/test-model \
 Once the quick test works, try a real training run:
 
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/example_dataset.jsonl \
   --output-dir ./models/ml-explainer \
@@ -123,7 +128,7 @@ This will:
 Then test it:
 
 ```bash
-model-garden generate ./models/ml-explainer \
+uv run model-garden generate ./models/ml-explainer \
   --prompt "What is deep learning?" \
   --max-tokens 150
 ```
@@ -135,7 +140,7 @@ model-garden generate ./models/ml-explainer \
 If you get CUDA OOM errors:
 
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/test.jsonl \
   --output-dir ./models/test-model \
@@ -200,7 +205,7 @@ Expected training speed on different GPUs (TinyLlama, batch_size=2):
 ## Success Criteria
 
 ✅ Installation complete if:
-- `model-garden --version` works
+- `uv run model-garden --version` works
 - Can create sample dataset
 - Can run training for 10 steps
 - Can generate text from trained model

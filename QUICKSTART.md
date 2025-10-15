@@ -5,10 +5,13 @@ This guide will help you quickly get started with fine-tuning a small model.
 ## Installation
 
 ```bash
-# Install dependencies (this may take a few minutes)
+# Install dependencies with uv (recommended)
+uv sync
+
+# Or install manually with uv pip
 uv pip install -e .
 
-# Or with pip
+# Or with pip if you have a traditional venv
 pip install -e .
 ```
 
@@ -17,7 +20,7 @@ pip install -e .
 ### 1. Create a sample dataset
 
 ```bash
-model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
+uv run model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
 ```
 
 ### 2. Fine-tune a small model
@@ -25,7 +28,7 @@ model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
 We'll use TinyLlama (1.1B parameters) which is small enough to train on most GPUs:
 
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/sample.jsonl \
   --output-dir ./models/my-first-model \
@@ -43,7 +46,7 @@ This will:
 ### 3. Generate text
 
 ```bash
-model-garden generate ./models/my-first-model \
+uv run model-garden generate ./models/my-first-model \
   --prompt "Explain machine learning in simple terms" \
   --max-tokens 128
 ```
@@ -65,7 +68,7 @@ Example `dataset.jsonl`:
 
 Then train:
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/dataset.jsonl \
   --output-dir ./models/my-model \
@@ -75,7 +78,7 @@ model-garden train \
 ### From HuggingFace Hub
 
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset yahma/alpaca-cleaned \
   --output-dir ./models/alpaca-model \
@@ -87,7 +90,7 @@ model-garden train \
 
 ### For Small GPUs (8-12GB)
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/dataset.jsonl \
   --output-dir ./models/my-model \
@@ -98,7 +101,7 @@ model-garden train \
 
 ### For Larger GPUs (16GB+)
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/phi-2-bnb-4bit \
   --dataset ./data/dataset.jsonl \
   --output-dir ./models/my-model \
@@ -109,7 +112,7 @@ model-garden train \
 
 ### For Fast Testing
 ```bash
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/dataset.jsonl \
   --output-dir ./models/test-model \
@@ -130,7 +133,7 @@ Unsloth provides optimized 4-bit versions of popular models:
 ## CLI Options
 
 ```bash
-model-garden train --help
+uv run model-garden train --help
 ```
 
 Key options:

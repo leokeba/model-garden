@@ -149,7 +149,7 @@ def train(
 
         \b
         # Train with local dataset
-        model-garden train \\
+        uv run model-garden train \\
             --base-model unsloth/tinyllama-bnb-4bit \\
             --dataset ./data/train.jsonl \\
             --output-dir ./models/my-model \\
@@ -157,7 +157,7 @@ def train(
 
         \b
         # Train with HuggingFace Hub dataset
-        model-garden train \\
+        uv run model-garden train \\
             --base-model unsloth/tinyllama-bnb-4bit \\
             --dataset yahma/alpaca-cleaned \\
             --output-dir ./models/my-model \\
@@ -240,7 +240,7 @@ def create_dataset(output: str, num_examples: int) -> None:
     Example:
 
         \b
-        model-garden create-dataset \\
+        uv run model-garden create-dataset \\
             --output ./data/sample.jsonl \\
             --num-examples 100
     """
@@ -279,7 +279,7 @@ def generate(model_path: str, prompt: str, max_tokens: int, temperature: float) 
     Example:
 
         \b
-        model-garden generate ./models/my-model \\
+        uv run model-garden generate ./models/my-model \\
             --prompt "Explain quantum computing" \\
             --max-tokens 256
     """

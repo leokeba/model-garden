@@ -66,7 +66,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 ### Prerequisites
 - Python 3.11 or higher
 - CUDA-capable GPU (minimum 6GB VRAM)
-- [uv](https://github.com/astral-sh/uv) package manager (optional)
+- [uv](https://github.com/astral-sh/uv) package manager (recommended for faster dependency resolution)
 
 ### Installation
 
@@ -76,6 +76,9 @@ git clone https://github.com/leokeba/model-garden.git
 cd model-garden
 
 # Install with uv (recommended)
+uv sync
+
+# Or create a virtual environment manually
 uv venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 uv pip install -e .
@@ -94,10 +97,10 @@ pip install -e .
 
 ```bash
 # Create a sample dataset for testing
-model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
+uv run model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
 
 # Fine-tune a small model (TinyLlama 1.1B)
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/sample.jsonl \
   --output-dir ./models/my-model \
@@ -105,7 +108,7 @@ model-garden train \
   --batch-size 2
 
 # Or use a real dataset from HuggingFace Hub
-model-garden train \
+uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset yahma/alpaca-cleaned \
   --output-dir ./models/alpaca-model \
@@ -113,15 +116,15 @@ model-garden train \
   --epochs 3
 
 # Check training status
-model-garden jobs status <job-id>
+uv run model-garden jobs status <job-id>
 
 # Generate text from your fine-tuned model
-model-garden generate ./models/my-model \
+uv run model-garden generate ./models/my-model \
   --prompt "Explain quantum computing in simple terms" \
   --max-tokens 256
 
 # View carbon footprint
-model-garden carbon report <model-id>
+uv run model-garden carbon report <model-id>
 ```
 
 ### API Usage
@@ -134,10 +137,10 @@ For now, you can use the CLI for all operations:
 
 ```bash
 # See all available commands
-model-garden --help
+uv run model-garden --help
 
 # Get help for a specific command
-model-garden train --help
+uv run model-garden train --help
 ```
 
 ---
@@ -172,6 +175,9 @@ git clone https://github.com/yourusername/model-garden.git
 cd model-garden
 
 # Create virtual environment with uv
+uv sync
+
+# Or manually
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
