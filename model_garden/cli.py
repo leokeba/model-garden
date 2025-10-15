@@ -397,5 +397,225 @@ def serve(host: str, port: int, reload: bool) -> None:
         raise click.Abort()
 
 
+@main.command(name="train-vision")
+@click.option(
+    "--base-model",
+    "-m",
+    default="Qwen/Qwen2.5-VL-3B-Instruct",
+    help="Vision-language model to fine-tune",
+)
+@click.option(
+    "--dataset",
+    "-d",
+    required=True,
+    help="Path to vision-language dataset file (JSONL with text and image fields)",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    required=True,
+    help="Directory to save the fine-tuned model",
+)
+@click.option(
+    "--epochs",
+    "-e",
+    default=3,
+    type=int,
+    help="Number of training epochs",
+)
+@click.option(
+    "--batch-size",
+    "-b",
+    default=1,
+    type=int,
+    help="Training batch size per device (use 1 for vision models)",
+)
+@click.option(
+    "--learning-rate",
+    "-lr",
+    default=2e-5,
+    type=float,
+    help="Learning rate (lower for vision models)",
+)
+@click.option(
+    "--max-seq-length",
+    default=2048,
+    type=int,
+    help="Maximum sequence length",
+)
+@click.option(
+    "--lora-r",
+    default=16,
+    type=int,
+    help="LoRA rank",
+)
+@click.option(
+    "--lora-alpha",
+    default=16,
+    type=int,
+    help="LoRA alpha parameter",
+)
+@click.option(
+    "--gradient-accumulation-steps",
+    default=8,
+    type=int,
+    help="Gradient accumulation steps (higher for vision models)",
+)
+@click.option(
+    "--max-steps",
+    default=-1,
+    type=int,
+    help="Maximum training steps (-1 for full epochs)",
+)
+@click.option(
+    "--logging-steps",
+    default=10,
+    type=int,
+    help="Log every N steps",
+)
+@click.option(
+    "--save-steps",
+    default=100,
+    type=int,
+    help="Save checkpoint every N steps",
+)
+@click.option(
+    "--text-field",
+    default="text",
+    help="Dataset field name for text/questions",
+)
+@click.option(
+    "--image-field",
+    default="image",
+    help="Dataset field name for image paths",
+)
+def train_vision(
+    base_model: str,
+    dataset: str,
+    output_dir: str,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    max_seq_length: int,
+    lora_r: int,
+    lora_alpha: int,
+    gradient_accumulation_steps: int,
+    max_steps: int,
+    logging_steps: int,
+    save_steps: int,
+    text_field: str,
+    image_field: str,
+) -> None:
+    """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
+
+    Example:
+
+        \b
+        # Train Qwen2.5-VL with vision-language dataset
+        uv run model-garden train-vision \\
+            --base-model Qwen/Qwen2.5-VL-3B-Instruct \\
+            --dataset ./data/vision_dataset.jsonl \\
+            --output-dir ./models/my-vision-model \\
+            --epochs 3 \\
+            --batch-size 1
+
+    Dataset format (JSONL):
+        {"text": "What is in this image?", "image": "/path/to/img.jpg", "response": "A cat"}
+    """
+    try:
+        from model_garden.vision_training import VisionLanguageTrainer
+        
+        console.print("\n[bold cyan]🌱 Model Garden - Vision-Language Fine-tuning[/bold cyan]\n")
+        console.print("[yellow]⚠️  Vision-language training is experimental[/yellow]")
+        console.print("[yellow]⚠️  Ensure your dataset has proper image paths and text[/yellow]\n")
+
+        # Initialize trainer
+        trainer = VisionLanguageTrainer(
+            base_model=base_model,
+            max_seq_length=max_seq_length,
+            load_in_4bit=True,
+        )
+
+        # Load model
+        trainer.load_model()
+
+        # Prepare for training with LoRA
+        trainer.prepare_for_training(
+            r=lora_r,
+            lora_alpha=lora_alpha,
+        )
+
+        # Load dataset
+        train_dataset = trainer.load_dataset_from_file(dataset)
+
+        # Format dataset
+        train_dataset = trainer.format_dataset(
+            train_dataset,
+            text_field=text_field,
+            image_field=image_field,
+        )
+
+        # Train
+        trainer.train(
+            dataset=train_dataset,
+            output_dir=output_dir,
+            num_train_epochs=epochs,
+            per_device_train_batch_size=batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            learning_rate=learning_rate,
+            max_steps=max_steps,
+            logging_steps=logging_steps,
+            save_steps=save_steps,
+        )
+
+        # Save final model (LoRA adapters)
+        trainer.save_model(output_dir, save_method="lora")
+
+        console.print("\n[bold green]✨ Vision-language training completed successfully![/bold green]\n")
+        console.print(f"[green]Model saved to: {output_dir}[/green]\n")
+
+    except Exception as e:
+        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        import traceback
+        traceback.print_exc()
+        raise click.Abort()
+
+
+@main.command(name="create-vision-dataset")
+@click.option(
+    "--output",
+    "-o",
+    default="./data/vision_sample.jsonl",
+    help="Output path for the sample vision dataset",
+)
+@click.option(
+    "--num-examples",
+    "-n",
+    default=10,
+    type=int,
+    help="Number of examples to generate",
+)
+def create_vision_dataset(output: str, num_examples: int) -> None:
+    """Create a sample vision-language dataset for testing.
+
+    Example:
+
+        \b
+        uv run model-garden create-vision-dataset \\
+            --output ./data/vision_sample.jsonl \\
+            --num-examples 10
+    """
+    try:
+        from model_garden.vision_training import create_vision_sample_dataset
+        
+        console.print("\n[bold cyan]🌱 Model Garden - Vision Dataset Creation[/bold cyan]\n")
+        create_vision_sample_dataset(output, num_examples)
+        console.print("\n[bold green]✨ Dataset created successfully![/bold green]\n")
+        console.print("[yellow]⚠️  Remember to replace placeholder image paths with real images[/yellow]\n")
+    except Exception as e:
+        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        raise click.Abort()
+
+
 if __name__ == "__main__":
     main()

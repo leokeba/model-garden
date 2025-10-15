@@ -16,6 +16,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - **70% less VRAM usage** - train larger models on consumer GPUs
 - Support for LoRA, QLoRA, and full fine-tuning
 - 4-bit, 8-bit, and 16-bit quantization
+- **🆕 Vision-Language Models** - Fine-tune Qwen2.5-VL and multimodal models
 
 ### ⚡ Efficient Inference
 - **High-throughput serving** powered by vLLM
@@ -31,9 +32,9 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 
 ### 🎯 Developer-Friendly
 - Simple REST API and CLI interface
-- Real-time training progress via WebSocket
+- Real-time training progress and job management
 - Comprehensive model management
-- Beautiful web dashboard (coming soon)
+- **Integrated web dashboard** - Manage models and jobs via UI
 
 ---
 
@@ -127,6 +128,35 @@ uv run model-garden generate ./models/my-model \
 uv run model-garden carbon report <model-id>
 ```
 
+### 🆕 Vision-Language Model Training
+
+Fine-tune models that understand both images and text:
+
+```bash
+# Create a sample vision-language dataset
+uv run model-garden create-vision-dataset \
+  --output ./data/vision_sample.jsonl
+
+# Fine-tune Qwen2.5-VL for image understanding
+uv run model-garden train-vision \
+  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
+  --dataset ./data/vision_dataset.jsonl \
+  --output-dir ./models/my-vision-model \
+  --epochs 3 \
+  --batch-size 1
+```
+
+**Supported vision-language models:**
+- Qwen/Qwen2.5-VL-3B-Instruct (3B params, ~6GB VRAM)
+- Qwen/Qwen2.5-VL-7B-Instruct (7B params, ~10GB VRAM)
+
+**Dataset format** (JSONL):
+```json
+{"text": "What is in this image?", "image": "/path/to/img.jpg", "response": "A cat"}
+```
+
+📖 **Full guide**: [Vision-Language Training](./docs/08-vision-language-training.md)
+
 ### Web UI & API
 
 **🎉 NEW: Web UI and REST API now available!**
@@ -165,8 +195,11 @@ Once started, access:
 # See all available CLI commands
 uv run model-garden --help
 
-# Get help for a specific command
+# Text-only training
 uv run model-garden train --help
+
+# Vision-language training
+uv run model-garden train-vision --help
 
 # Start the API server
 uv run model-garden serve --help

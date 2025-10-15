@@ -6,6 +6,7 @@
 
   let formData = $state({
     name: '',
+    model_type: 'text', // 'text' or 'vision'
     base_model: 'unsloth/tinyllama-bnb-4bit',
     dataset_path: './data/sample.jsonl',
     output_dir: '',
@@ -26,13 +27,39 @@
   let submitting = $state(false);
   let error = $state('');
 
-  const baseModels = [
+  const textModels = [
     'unsloth/tinyllama-bnb-4bit',
     'unsloth/phi-2-bnb-4bit',
     'unsloth/mistral-7b-bnb-4bit',
     'unsloth/llama-2-7b-bnb-4bit',
     'unsloth/llama-3-8b-bnb-4bit',
   ];
+
+  const visionModels = [
+    'Qwen/Qwen2.5-VL-3B-Instruct',
+    'Qwen/Qwen2.5-VL-7B-Instruct',
+    'Qwen/Qwen2.5-VL-72B-Instruct',
+    'unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit',
+    'unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit',
+  ];
+
+  // Update available models when type changes
+  $effect(() => {
+    if (formData.model_type === 'vision') {
+      formData.base_model = visionModels[0];
+      formData.dataset_path = './data/vision_dataset.jsonl';
+      // Vision models need smaller batch size and larger gradient accumulation
+      formData.hyperparameters.batch_size = 1;
+      formData.hyperparameters.gradient_accumulation_steps = 8;
+      formData.hyperparameters.learning_rate = 0.00002; // Lower LR for vision
+    } else {
+      formData.base_model = textModels[0];
+      formData.dataset_path = './data/sample.jsonl';
+      formData.hyperparameters.batch_size = 2;
+      formData.hyperparameters.gradient_accumulation_steps = 4;
+      formData.hyperparameters.learning_rate = 0.0002;
+    }
+  });
 
   function updateOutputDir() {
     if (formData.name && !formData.output_dir) {
@@ -52,7 +79,11 @@
     error = '';
 
     try {
-      const response = await api.createTrainingJob(formData);
+      const response = await api.createTrainingJob({
+        ...formData,
+        // Add vision flag to the request
+        is_vision: formData.model_type === 'vision'
+      });
       if (response.success) {
         goto(`/training/${response.data.job_id}`);
       } else {
@@ -97,6 +128,66 @@
           <h3 class="text-lg font-semibold text-gray-900 mb-4">Basic Configuration</h3>
           
           <div class="grid grid-cols-1 gap-4">
+            <!-- Model Type Selector -->
+            <div>
+              <div class="block text-sm font-medium text-gray-700 mb-2">
+                Model Type *
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onclick={() => formData.model_type = 'text'}
+                  class={`p-4 border-2 rounded-lg text-left transition-all ${
+                    formData.model_type === 'text'
+                      ? 'border-primary-500 bg-primary-50'
+                      : 'border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  <div class="flex items-center gap-2">
+                    <div class={`w-4 h-4 rounded-full border-2 ${
+                      formData.model_type === 'text'
+                        ? 'border-primary-500 bg-primary-500'
+                        : 'border-gray-400'
+                    }`}>
+                      {#if formData.model_type === 'text'}
+                        <div class="w-full h-full rounded-full bg-white scale-50"></div>
+                      {/if}
+                    </div>
+                    <span class="font-medium">Text-Only (LLM)</span>
+                  </div>
+                  <p class="text-sm text-gray-600 mt-2 ml-6">
+                    Fine-tune language models for text generation tasks
+                  </p>
+                </button>
+                
+                <button
+                  type="button"
+                  onclick={() => formData.model_type = 'vision'}
+                  class={`p-4 border-2 rounded-lg text-left transition-all ${
+                    formData.model_type === 'vision'
+                      ? 'border-primary-500 bg-primary-50'
+                      : 'border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  <div class="flex items-center gap-2">
+                    <div class={`w-4 h-4 rounded-full border-2 ${
+                      formData.model_type === 'vision'
+                        ? 'border-primary-500 bg-primary-500'
+                        : 'border-gray-400'
+                    }`}>
+                      {#if formData.model_type === 'vision'}
+                        <div class="w-full h-full rounded-full bg-white scale-50"></div>
+                      {/if}
+                    </div>
+                    <span class="font-medium">Vision-Language (VLM)</span>
+                  </div>
+                  <p class="text-sm text-gray-600 mt-2 ml-6">
+                    Fine-tune multimodal models for image + text tasks
+                  </p>
+                </button>
+              </div>
+            </div>
+
             <div>
               <label for="name" class="block text-sm font-medium text-gray-700 mb-1">
                 Model Name *
@@ -122,10 +213,21 @@
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
               >
-                {#each baseModels as model}
-                  <option value={model}>{model}</option>
-                {/each}
+                {#if formData.model_type === 'text'}
+                  {#each textModels as model}
+                    <option value={model}>{model}</option>
+                  {/each}
+                {:else}
+                  {#each visionModels as model}
+                    <option value={model}>{model}</option>
+                  {/each}
+                {/if}
               </select>
+              {#if formData.model_type === 'vision'}
+                <p class="text-xs text-gray-500 mt-1">
+                  🎨 Vision-language models can analyze images and text together
+                </p>
+              {/if}
             </div>
 
             <div>
@@ -136,14 +238,29 @@
                 type="text"
                 id="dataset_path"
                 bind:value={formData.dataset_path}
-                placeholder="./data/my-dataset.jsonl"
+                placeholder={formData.model_type === 'vision' ? './data/vision_dataset.jsonl' : './data/my-dataset.jsonl'}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
               />
               <p class="text-xs text-gray-500 mt-1">
-                Path to your JSONL dataset file
+                {#if formData.model_type === 'vision'}
+                  Path to your JSONL dataset with image paths and text
+                {:else}
+                  Path to your JSONL dataset file
+                {/if}
               </p>
             </div>
+
+            {#if formData.model_type === 'vision'}
+              <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 class="text-sm font-semibold text-blue-900 mb-2">📋 Vision Dataset Format</h4>
+                <p class="text-sm text-blue-800 mb-2">Your dataset should be in JSONL format with:</p>
+                <pre class="text-xs bg-blue-100 p-2 rounded overflow-x-auto"><code>{`{"text": "What is in this image?", "image": "/path/to/image.jpg", "response": "A cat sitting on a table"}`}</code></pre>
+                <p class="text-xs text-blue-700 mt-2">
+                  <strong>Tip:</strong> Use <code>model-garden create-vision-dataset</code> CLI to generate sample data
+                </p>
+              </div>
+            {/if}
 
             <div>
               <label for="output_dir" class="block text-sm font-medium text-gray-700 mb-1">
@@ -163,6 +280,14 @@
         <!-- Training Hyperparameters -->
         <div>
           <h3 class="text-lg font-semibold text-gray-900 mb-4">Training Hyperparameters</h3>
+          
+          {#if formData.model_type === 'vision'}
+            <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p class="text-sm text-yellow-800">
+                ⚠️ <strong>Vision models require:</strong> Lower batch size (1-2), higher gradient accumulation (8+), and lower learning rate (2e-5)
+              </p>
+            </div>
+          {/if}
           
           <div class="grid grid-cols-2 gap-4">
             <div>
@@ -203,6 +328,22 @@
                 min="1"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
+            </div>
+
+            <div>
+              <label for="gradient_accumulation" class="block text-sm font-medium text-gray-700 mb-1">
+                Gradient Accumulation
+              </label>
+              <input
+                type="number"
+                id="gradient_accumulation"
+                bind:value={formData.hyperparameters.gradient_accumulation_steps}
+                min="1"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                Higher for vision models (8+)
+              </p>
             </div>
 
             <div>

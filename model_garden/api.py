@@ -41,6 +41,8 @@ class TrainingJobRequest(BaseModel):
     hyperparameters: Optional[Dict] = None
     lora_config: Optional[Dict] = None
     from_hub: bool = False
+    is_vision: bool = False  # Flag for vision-language models
+    model_type: Optional[str] = None  # 'text' or 'vision'
 
 
 class TrainingJobInfo(BaseModel):
@@ -90,55 +92,101 @@ def run_training_job(job_id: str):
         
         print(f"🚀 Starting training job {job_id}: {job['name']}")
         
-        # Initialize trainer
-        trainer = ModelTrainer(
-            base_model=job["base_model"],
-            max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
-            load_in_4bit=True,
-        )
+        # Check if this is a vision-language model
+        is_vision = job.get("is_vision", False)
         
-        # Load model
-        trainer.load_model()
-        
-        # Prepare for training with LoRA
-        lora_config = job["lora_config"]
-        trainer.prepare_for_training(
-            r=lora_config.get("r", 16),
-            lora_alpha=lora_config.get("lora_alpha", 16),
-        )
-        
-        # Load dataset
-        if job["from_hub"]:
-            train_dataset = trainer.load_dataset_from_hub(job["dataset_path"])
-        else:
+        if is_vision:
+            # Use VisionLanguageTrainer for vision models
+            from model_garden.vision_training import VisionLanguageTrainer
+            
+            print(f"🎨 Using VisionLanguageTrainer for {job['base_model']}")
+            
+            trainer = VisionLanguageTrainer(
+                base_model=job["base_model"],
+                max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
+                load_in_4bit=True,
+            )
+            
+            # Load model
+            trainer.load_model()
+            
+            # Prepare for training with LoRA
+            lora_config = job["lora_config"]
+            trainer.prepare_for_training(
+                r=lora_config.get("r", 16),
+                lora_alpha=lora_config.get("lora_alpha", 16),
+            )
+            
+            # Load and format dataset
             train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
-        
-        # Format dataset
-        train_dataset = trainer.format_dataset(
-            train_dataset,
-            instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
-            input_field=job["hyperparameters"].get("input_field", "input"),
-            output_field=job["hyperparameters"].get("output_field", "output"),
-        )
-        
-        # Train
-        hyperparams = job["hyperparameters"]
-        trainer.train(
-            dataset=train_dataset,
-            output_dir=job["output_dir"],
-            num_train_epochs=hyperparams.get("num_epochs", 3),
-            per_device_train_batch_size=hyperparams.get("batch_size", 2),
-            gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
-            learning_rate=hyperparams.get("learning_rate", 2e-4),
-            max_steps=hyperparams.get("max_steps", -1),
-            logging_steps=hyperparams.get("logging_steps", 10),
-            save_steps=hyperparams.get("save_steps", 100),
-        )
-        
-        # Save final model
-        save_method = hyperparams.get("save_method", "merged_16bit")
-        if save_method != "lora":
-            trainer.save_model(job["output_dir"], save_method=save_method)
+            formatted_dataset = trainer.format_dataset(train_dataset)
+            
+            # Train
+            hyperparams = job["hyperparameters"]
+            trainer.train(
+                dataset=formatted_dataset,
+                output_dir=job["output_dir"],
+                num_train_epochs=hyperparams.get("num_epochs", 3),
+                per_device_train_batch_size=hyperparams.get("batch_size", 1),
+                gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 8),
+                learning_rate=hyperparams.get("learning_rate", 2e-5),
+                max_steps=hyperparams.get("max_steps", -1),
+                logging_steps=hyperparams.get("logging_steps", 10),
+                save_steps=hyperparams.get("save_steps", 100),
+            )
+            
+            # Save model
+            trainer.save_model(job["output_dir"], save_method="lora")
+        else:
+            # Use standard ModelTrainer for text-only models
+            trainer = ModelTrainer(
+                base_model=job["base_model"],
+                max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
+                load_in_4bit=True,
+            )
+            
+            # Load model
+            trainer.load_model()
+            
+            # Prepare for training with LoRA
+            lora_config = job["lora_config"]
+            trainer.prepare_for_training(
+                r=lora_config.get("r", 16),
+                lora_alpha=lora_config.get("lora_alpha", 16),
+            )
+            
+            # Load dataset
+            if job["from_hub"]:
+                train_dataset = trainer.load_dataset_from_hub(job["dataset_path"])
+            else:
+                train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
+            
+            # Format dataset
+            train_dataset = trainer.format_dataset(
+                train_dataset,
+                instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
+                input_field=job["hyperparameters"].get("input_field", "input"),
+                output_field=job["hyperparameters"].get("output_field", "output"),
+            )
+            
+            # Train
+            hyperparams = job["hyperparameters"]
+            trainer.train(
+                dataset=train_dataset,
+                output_dir=job["output_dir"],
+                num_train_epochs=hyperparams.get("num_epochs", 3),
+                per_device_train_batch_size=hyperparams.get("batch_size", 2),
+                gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
+                learning_rate=hyperparams.get("learning_rate", 2e-4),
+                max_steps=hyperparams.get("max_steps", -1),
+                logging_steps=hyperparams.get("logging_steps", 10),
+                save_steps=hyperparams.get("save_steps", 100),
+            )
+            
+            # Save final model
+            save_method = hyperparams.get("save_method", "merged_16bit")
+            if save_method != "lora":
+                trainer.save_model(job["output_dir"], save_method=save_method)
         
         # Update job status to completed
         job["status"] = "completed"
@@ -378,6 +426,8 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "hyperparameters": job_request.hyperparameters or {},
         "lora_config": job_request.lora_config or {},
         "from_hub": job_request.from_hub,
+        "is_vision": job_request.is_vision or False,
+        "model_type": job_request.model_type or ("vision" if job_request.is_vision else "text"),
     }
     
     training_jobs[job_id] = job_info
