@@ -57,12 +57,12 @@ models/
 *.gguf
 *.h5
 
-# Datasets
-data/
+# Datasets (but keep example dataset)
 datasets/
 *.jsonl
 *.csv
 *.parquet
+!data/example_dataset.jsonl
 
 # Logs
 logs/
@@ -71,6 +71,9 @@ logs/
 # Carbon tracking data
 emissions.csv
 codecarbon/
+
+# Unsloth cache
+unsloth_compiled_cache/
 
 # Environment variables
 .env

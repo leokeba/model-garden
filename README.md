@@ -65,54 +65,59 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 
 ### Prerequisites
 - Python 3.11 or higher
-- CUDA-capable GPU (recommended: 16GB+ VRAM)
-- [uv](https://github.com/astral-sh/uv) package manager
+- CUDA-capable GPU (minimum 6GB VRAM)
+- [uv](https://github.com/astral-sh/uv) package manager (optional)
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/model-garden.git
+git clone https://github.com/leokeba/model-garden.git
 cd model-garden
 
 # Install with uv (recommended)
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 uv pip install -e .
 
 # Or with pip
+python -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
-### Start the API Server
-
-```bash
-# Start FastAPI server
-model-garden serve --host 0.0.0.0 --port 8000
-
-# Or using uvicorn directly
-uvicorn model_garden.api.main:app --reload
-```
+**📖 Full installation guide: [INSTALL.md](./INSTALL.md)**
 
 ### CLI Usage
 
-```bash
-# List available models
-model-garden models list
+**🚀 Quick start: [QUICKSTART.md](./QUICKSTART.md)**
 
-# Start a training job
+```bash
+# Create a sample dataset for testing
+model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
+
+# Fine-tune a small model (TinyLlama 1.1B)
 model-garden train \
-  --base-model unsloth/llama-3-8b-bnb-4bit \
-  --dataset my-dataset.jsonl \
+  --base-model unsloth/tinyllama-bnb-4bit \
+  --dataset ./data/sample.jsonl \
   --output-dir ./models/my-model \
-  --learning-rate 2e-4 \
+  --epochs 3 \
+  --batch-size 2
+
+# Or use a real dataset from HuggingFace Hub
+model-garden train \
+  --base-model unsloth/tinyllama-bnb-4bit \
+  --dataset yahma/alpaca-cleaned \
+  --output-dir ./models/alpaca-model \
+  --from-hub \
   --epochs 3
 
 # Check training status
 model-garden jobs status <job-id>
 
-# Generate text
-model-garden generate \
-  --model ./models/my-model \
-  --prompt "Explain quantum computing" \
+# Generate text from your fine-tuned model
+model-garden generate ./models/my-model \
+  --prompt "Explain quantum computing in simple terms" \
   --max-tokens 256
 
 # View carbon footprint
@@ -121,39 +126,30 @@ model-garden carbon report <model-id>
 
 ### API Usage
 
-```python
-import requests
+**⚠️ API server coming in Phase 2**
 
-# Start a training job
-response = requests.post("http://localhost:8000/api/v1/training/jobs", json={
-    "name": "finance-model-v1",
-    "base_model": "unsloth/llama-3-8b-bnb-4bit",
-    "dataset_id": "dataset-123",
-    "hyperparameters": {
-        "learning_rate": 2e-4,
-        "num_train_epochs": 3,
-        "per_device_train_batch_size": 2
-    }
-})
+The REST API and web dashboard are planned for Phase 2. Currently, only the CLI is available.
 
-job_id = response.json()["job_id"]
-print(f"Training job started: {job_id}")
+For now, you can use the CLI for all operations:
 
-# Generate text (OpenAI-compatible)
-response = requests.post("http://localhost:8000/api/v1/inference/generate", json={
-    "model": "my-model",
-    "prompt": "Write a Python function to calculate fibonacci numbers",
-    "max_tokens": 256,
-    "temperature": 0.7
-})
+```bash
+# See all available commands
+model-garden --help
 
-print(response.json()["generated_text"])
+# Get help for a specific command
+model-garden train --help
 ```
 
 ---
 
 ## 📚 Documentation
 
+### Getting Started
+- **[Installation Guide](./INSTALL.md)** - Detailed installation and setup instructions
+- **[Quick Start](./QUICKSTART.md)** - Get up and running in minutes
+- **[GitHub Setup](./GITHUB_SETUP.md)** - Guide for creating the repository
+
+### Design Documentation
 Comprehensive design documentation is available in the [`docs/`](./docs) directory:
 
 - [**Project Overview**](./docs/00-project-overview.md) - Vision, objectives, and roadmap
@@ -224,12 +220,14 @@ pre-commit run --all-files
 
 ### Phase 1: Foundation & MVP ✅ (In Progress)
 - [x] Research and design documentation
-- [ ] Core training engine with Unsloth
-- [ ] Basic inference with vLLM
-- [ ] REST API with FastAPI
-- [ ] CLI interface with Click
-- [ ] Carbon tracking integration
-- [ ] Model management system
+- [x] Core training engine with Unsloth
+- [x] CLI interface with Click
+- [x] Basic model management
+- [ ] ~~Basic inference with vLLM~~ (deferred to Phase 2)
+- [ ] ~~REST API with FastAPI~~ (deferred to Phase 2)
+- [ ] ~~Carbon tracking integration~~ (deferred to Phase 2)
+
+**Current Focus**: Testing and refining the fine-tuning CLI
 
 ### Phase 2: Core Features 🚧
 - [ ] Web dashboard (Svelte + TailwindCSS)

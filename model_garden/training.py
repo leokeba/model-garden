@@ -1,15 +1,28 @@
-"""Core training module using Unsloth for efficient fine-tuning."""
+"""Core training module using Unsloth for efficient fine-tuning.
+
+Note: You may see non-critical warnings:
+- TorchAO compatibility warning: Safe to ignore unless you need C++/CUDA kernels
+- PyTorch CUDA allocator deprecation: Will be resolved in future PyTorch versions
+"""
 
 import json
+import os
+import warnings
 from pathlib import Path
 from typing import Optional
 
+# Suppress non-critical warnings
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+
+# Import unsloth first for optimal performance
+from unsloth import FastLanguageModel
+
+# Then import other ML libraries
 from datasets import Dataset, load_dataset
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from trl import SFTTrainer
 from transformers import TrainingArguments
-from unsloth import FastLanguageModel
 
 console = Console()
 
@@ -254,12 +267,7 @@ class ModelTrainer:
 
         trainer = SFTTrainer(
             model=self.model,
-            tokenizer=self.tokenizer,
             train_dataset=dataset,
-            dataset_text_field="text",
-            max_seq_length=self.max_seq_length,
-            dataset_num_proc=2,
-            packing=False,
             args=training_args,
         )
 
