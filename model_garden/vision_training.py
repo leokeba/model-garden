@@ -3,12 +3,15 @@
 Supports multimodal models like Qwen2.5-VL for fine-tuning on vision-language tasks.
 """
 
+import base64
+import io
 import json
 import os
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
 
 from datasets import Dataset, load_dataset
+from PIL import Image
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -187,81 +190,281 @@ class VisionLanguageTrainer:
         console.print(f"[green]✓[/green] Loaded {len(dataset)} examples")
         return dataset
 
+    def load_dataset_from_hub(
+        self,
+        dataset_name: str,
+        split: str = "train",
+        **kwargs
+    ) -> Dataset:
+        """Load multimodal dataset from HuggingFace Hub.
+
+        Args:
+            dataset_name: HuggingFace dataset identifier (e.g., "user/dataset-name")
+            split: Dataset split to load (default: "train")
+            **kwargs: Additional arguments passed to load_dataset
+
+        Returns:
+            Loaded dataset
+        """
+        console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset_name}[/cyan]")
+        
+        try:
+            dataset = load_dataset(dataset_name, split=split, **kwargs)
+            console.print(f"[green]✓[/green] Loaded {len(dataset)} examples from Hub")
+            return dataset
+        except Exception as e:
+            console.print(f"[red]❌ Failed to load dataset from Hub: {e}[/red]")
+            raise
+
+    def load_dataset(
+        self,
+        dataset_path: str,
+        from_hub: bool = False,
+        split: str = "train",
+        **kwargs
+    ) -> Dataset:
+        """Load multimodal dataset from file or HuggingFace Hub.
+
+        Args:
+            dataset_path: Path to local file or HuggingFace dataset identifier
+            from_hub: If True, load from HuggingFace Hub; if False, load from local file
+            split: Dataset split to load (for Hub datasets)
+            **kwargs: Additional arguments passed to load_dataset
+
+        Returns:
+            Loaded dataset
+        """
+        if from_hub:
+            return self.load_dataset_from_hub(dataset_path, split=split, **kwargs)
+        else:
+            return self.load_dataset_from_file(dataset_path)
+
+    def _decode_base64_image(self, image_str: str) -> Image.Image:
+        """Decode a base64-encoded image string to PIL Image.
+
+        Args:
+            image_str: Base64-encoded image string (with or without data URI prefix)
+
+        Returns:
+            PIL Image object
+        """
+        try:
+            # Remove data URI prefix if present (e.g., "data:image/jpeg;base64,")
+            if image_str.startswith("data:"):
+                image_str = image_str.split(",", 1)[1]
+            
+            # Decode base64 to bytes
+            image_bytes = base64.b64decode(image_str)
+            
+            # Convert bytes to PIL Image
+            image = Image.open(io.BytesIO(image_bytes))
+            return image
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Failed to decode base64 image: {e}[/yellow]")
+            # Return blank image as fallback
+            return Image.new("RGB", (224, 224))
+
+    def _load_image(self, image_data: Any) -> Image.Image:
+        """Load image from various sources (file path, base64, PIL Image, etc.).
+
+        Args:
+            image_data: Image data (file path, base64 string, PIL Image, etc.)
+
+        Returns:
+            PIL Image object
+        """
+        # Already a PIL Image
+        if isinstance(image_data, Image.Image):
+            return image_data
+        
+        # File path
+        if isinstance(image_data, str):
+            if image_data.startswith("data:image") or (len(image_data) > 100 and not os.path.exists(image_data)):
+                # Looks like base64
+                return self._decode_base64_image(image_data)
+            elif os.path.exists(image_data):
+                # File path
+                return Image.open(image_data)
+        
+        # Fallback: create blank image
+        console.print(f"[yellow]⚠️  Unknown image format, using blank image[/yellow]")
+        return Image.new("RGB", (224, 224))
+
+    def _convert_messages_to_simple_format(self, messages: List[Dict]) -> Dict[str, str]:
+        """Convert OpenAI messages format to simple format.
+        
+        Extracts the first image and text from user message, and assistant's response.
+        This ensures compatibility with UnslothVisionDataCollator.
+        
+        Args:
+            messages: List of OpenAI-style messages
+            
+        Returns:
+            Dict with 'text', 'image', and 'response' keys
+        """
+        result = {
+            "text": "",
+            "image": None,
+            "response": ""
+        }
+        
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", [])
+            
+            if role == "user":
+                # Extract text and image from user message
+                for item in content:
+                    item_type = item.get("type", "")
+                    if item_type == "text" and not result["text"]:
+                        result["text"] = item.get("text", "")
+                    elif item_type == "image" and not result["image"]:
+                        image_data = item.get("image", item.get("image_url", {}))
+                        if isinstance(image_data, dict):
+                            image_data = image_data.get("url", "")
+                        result["image"] = image_data
+            
+            elif role == "assistant":
+                # Extract response from assistant message
+                for item in content:
+                    if item.get("type") == "text" and not result["response"]:
+                        result["response"] = item.get("text", "")
+        
+        return result
+
     def format_dataset(
         self,
         dataset: Dataset,
         text_field: str = "text",
         image_field: str = "image",
         system_message: Optional[str] = None,
+        messages_field: Optional[str] = None,
     ) -> list:
         """Format dataset for vision-language training using OpenAI message format.
 
-        Expected input format:
-        {
-            "text": "Question about the image",
-            "image": "/path/to/image.jpg",
-            "response": "Answer text"
-        }
+        Supports two input formats:
+        
+        1. Simple format (custom datasets):
+           {
+               "text": "Question about the image",
+               "image": "/path/to/image.jpg" or "data:image/jpeg;base64,...",
+               "response": "Answer text"
+           }
+        
+        2. OpenAI messages format (HuggingFace datasets):
+           {
+               "messages": [
+                   {"role": "system", "content": [{"type": "text", "text": "..."}]},
+                   {"role": "user", "content": [
+                       {"type": "image", "image": "data:image/jpeg;base64,..."},
+                       {"type": "text", "text": "..."}
+                   ]},
+                   {"role": "assistant", "content": [{"type": "text", "text": "..."}]}
+               ]
+           }
+           
+        Note: OpenAI messages format is automatically converted to simple format
+        for compatibility with UnslothVisionDataCollator.
 
         Returns list of message dictionaries for UnslothVisionDataCollator.
 
         Args:
             dataset: Input dataset
-            text_field: Field name for text/questions
-            image_field: Field name for images
-            system_message: Optional system message
+            text_field: Field name for text/questions (for simple format)
+            image_field: Field name for images (for simple format)
+            system_message: Optional system message (for simple format)
+            messages_field: Field name for messages (for OpenAI format, default: "messages")
 
         Returns:
             List of formatted message dictionaries
         """
-        from PIL import Image
-        
         console.print("[cyan]Formatting vision-language dataset...[/cyan]")
 
         if system_message is None:
             system_message = "You are a helpful assistant that can analyze images."
 
         formatted_data = []
+        
+        # Check if dataset uses OpenAI messages format
+        if messages_field is None:
+            messages_field = "messages"
+        
+        has_messages_field = messages_field in dataset.column_names
+        
         for example in dataset:
-            text = example.get(text_field, "")
-            response = example.get("response", example.get("output", ""))
-            image_path = example.get(image_field, "")
-            
-            # Load image as PIL Image
-            if isinstance(image_path, str) and os.path.exists(image_path):
-                image = Image.open(image_path)
+            if has_messages_field and messages_field in example:
+                # OpenAI messages format - convert to simple format first
+                console.print("[yellow]Converting OpenAI messages format to simple format for compatibility...[/yellow]") if len(formatted_data) == 0 else None
+                
+                messages = example[messages_field]
+                simple = self._convert_messages_to_simple_format(messages)
+                
+                # Now process as simple format
+                text = simple.get("text", "")
+                response = simple.get("response", "")
+                image_data = simple.get("image", "")
+                
+                # Load image (handles base64, file paths, etc.)
+                pil_image = self._load_image(image_data)
+                
+                # Format as OpenAI messages (simple structure)
+                formatted_messages = {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": system_message}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": pil_image},
+                                {"type": "text", "text": text},
+                            ],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": response}],
+                        },
+                    ],
+                }
+                formatted_data.append(formatted_messages)
             else:
-                # Create blank image if path doesn't exist
-                image = Image.new("RGB", (224, 224))
-            
-            # Format as OpenAI messages
-            messages = {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": system_message}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": image},
-                            {"type": "text", "text": text},
-                        ],
-                    },
-                    {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": response}],
-                    },
-                ],
-            }
-            formatted_data.append(messages)
+                # Simple format - build OpenAI messages structure
+                text = example.get(text_field, "")
+                response = example.get("response", example.get("output", ""))
+                image_data = example.get(image_field, "")
+                
+                # Load image (handles file paths, base64, etc.)
+                pil_image = self._load_image(image_data)
+                
+                # Format as OpenAI messages
+                messages = {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": system_message}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": pil_image},
+                                {"type": "text", "text": text},
+                            ],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": response}],
+                        },
+                    ],
+                }
+                formatted_data.append(messages)
 
         console.print(f"[green]✓[/green] Dataset formatted ({len(formatted_data)} examples)")
         return formatted_data
 
     def train(
         self,
-        dataset: Dataset,
+        dataset: Union[Dataset, List[Dict]],
         output_dir: str,
         num_train_epochs: int = 3,
         per_device_train_batch_size: int = 1,  # Smaller for vision models
@@ -276,7 +479,7 @@ class VisionLanguageTrainer:
         """Train the vision-language model.
 
         Args:
-            dataset: Training dataset with 'text' and 'image' fields
+            dataset: Training dataset (Dataset object or list of formatted messages)
             output_dir: Directory to save checkpoints
             num_train_epochs: Number of training epochs
             per_device_train_batch_size: Batch size per device (use 1 for vision models)
@@ -292,6 +495,14 @@ class VisionLanguageTrainer:
 
         from trl import SFTTrainer, SFTConfig
         from unsloth.trainer import UnslothVisionDataCollator
+        
+        # For vision models, keep data as list - don't convert to Dataset
+        # The UnslothVisionDataCollator expects PIL Images which don't survive PyArrow serialization
+        if isinstance(dataset, list):
+            console.print(f"[cyan]Using formatted data directly ({len(dataset)} examples)[/cyan]")
+            train_dataset = dataset
+        else:
+            train_dataset = dataset
         
         # When using max_steps, still need to provide num_train_epochs
         use_max_steps = max_steps > 0
@@ -326,7 +537,7 @@ class VisionLanguageTrainer:
             model=self.model,
             tokenizer=self.tokenizer,
             args=training_args,
-            train_dataset=dataset,
+            train_dataset=train_dataset,
             data_collator=UnslothVisionDataCollator(self.model, self.processor),
         )
 

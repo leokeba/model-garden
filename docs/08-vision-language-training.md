@@ -24,7 +24,9 @@ This creates a template dataset. **Important**: You must replace the placeholder
 
 ### 2. Dataset Format
 
-Your vision-language dataset should be in JSONL format with these fields:
+Your vision-language dataset can be in one of two formats:
+
+#### Local Dataset Format (JSONL)
 
 ```json
 {"text": "What is shown in this image?", "image": "/path/to/image1.jpg", "response": "A cat sitting on a windowsill"}
@@ -34,15 +36,37 @@ Your vision-language dataset should be in JSONL format with these fields:
 
 **Required fields:**
 - `text` - The question or instruction about the image
-- `image` - Path to the image file (JPEG, PNG, etc.)
+- `image` - Path to the image file (JPEG, PNG, etc.) or base64-encoded image
 - `response` - The expected answer or description
 
-**Image paths can be:**
-- Absolute paths: `/home/user/images/photo.jpg`
-- Relative paths: `./data/images/photo.jpg`
-- URLs: `https://example.com/image.jpg` (if your setup supports it)
+**Image formats supported:**
+- File paths (absolute or relative): `/path/to/image.jpg` or `./data/images/photo.jpg`
+- Base64-encoded images: `data:image/jpeg;base64,/9j/4AAQSkZJRg...`
+- URLs: `https://example.com/image.jpg`
+
+#### HuggingFace Hub Format (OpenAI Messages)
+
+You can also load datasets directly from HuggingFace Hub that use the OpenAI messages format:
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": [{"type": "text", "text": "You are a helpful assistant."}]},
+    {"role": "user", "content": [
+      {"type": "image", "image": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."},
+      {"type": "text", "text": "What is in this image?"}
+    ]},
+    {"role": "assistant", "content": [{"type": "text", "text": "A cat sitting on a table"}]}
+  ]
+}
+```
+
+**Example datasets:**
+- `Barth371/train_pop_valet_no_wrong_doc` - Form extraction from smartphone pictures
 
 ### 3. Fine-tune the Model
+
+#### Local Dataset
 
 ```bash
 uv run model-garden train-vision \
@@ -53,6 +77,25 @@ uv run model-garden train-vision \
   --batch-size 1 \
   --learning-rate 2e-5
 ```
+
+#### HuggingFace Hub Dataset
+
+```bash
+uv run model-garden train-vision \
+  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
+  --dataset Barth371/train_pop_valet_no_wrong_doc \
+  --from-hub \
+  --output-dir ./models/form-extraction-model \
+  --max-steps 100 \
+  --batch-size 1 \
+  --learning-rate 2e-5
+```
+
+**Benefits of HuggingFace Hub datasets:**
+- No need to download images separately
+- Automatic base64 image decoding
+- Easy dataset sharing and versioning
+- Support for large datasets with streaming
 
 ## Advanced Usage
 

@@ -94,6 +94,7 @@ def run_training_job(job_id: str):
         
         # Check if this is a vision-language model
         is_vision = job.get("is_vision", False)
+        from_hub = job.get("from_hub", False)
         
         if is_vision:
             # Use VisionLanguageTrainer for vision models
@@ -117,8 +118,11 @@ def run_training_job(job_id: str):
                 lora_alpha=lora_config.get("lora_alpha", 16),
             )
             
-            # Load and format dataset
-            train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
+            # Load and format dataset (handles both file and Hub, base64 and file paths)
+            train_dataset = trainer.load_dataset(
+                dataset_path=job["dataset_path"],
+                from_hub=from_hub,
+            )
             formatted_dataset = trainer.format_dataset(train_dataset)
             
             # Train
@@ -156,7 +160,7 @@ def run_training_job(job_id: str):
             )
             
             # Load dataset
-            if job["from_hub"]:
+            if from_hub:
                 train_dataset = trainer.load_dataset_from_hub(job["dataset_path"])
             else:
                 train_dataset = trainer.load_dataset_from_file(job["dataset_path"])

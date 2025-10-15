@@ -408,7 +408,12 @@ def serve(host: str, port: int, reload: bool) -> None:
     "--dataset",
     "-d",
     required=True,
-    help="Path to vision-language dataset file (JSONL with text and image fields)",
+    help="Path to dataset file or HuggingFace dataset identifier",
+)
+@click.option(
+    "--from-hub",
+    is_flag=True,
+    help="Load dataset from HuggingFace Hub instead of local file",
 )
 @click.option(
     "--output-dir",
@@ -492,6 +497,7 @@ def serve(host: str, port: int, reload: bool) -> None:
 def train_vision(
     base_model: str,
     dataset: str,
+    from_hub: bool,
     output_dir: str,
     epochs: int,
     batch_size: int,
@@ -508,10 +514,10 @@ def train_vision(
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
 
-    Example:
+    Examples:
 
         \b
-        # Train Qwen2.5-VL with vision-language dataset
+        # Train with local dataset
         uv run model-garden train-vision \\
             --base-model Qwen/Qwen2.5-VL-3B-Instruct \\
             --dataset ./data/vision_dataset.jsonl \\
@@ -519,15 +525,34 @@ def train_vision(
             --epochs 3 \\
             --batch-size 1
 
-    Dataset format (JSONL):
-        {"text": "What is in this image?", "image": "/path/to/img.jpg", "response": "A cat"}
+        \b
+        # Train with HuggingFace Hub dataset
+        uv run model-garden train-vision \\
+            --base-model Qwen/Qwen2.5-VL-3B-Instruct \\
+            --dataset Barth371/train_pop_valet_no_wrong_doc \\
+            --from-hub \\
+            --output-dir ./models/form-extraction-model \\
+            --max-steps 100
+
+    Dataset formats:
+        
+        Local JSONL:
+            {"text": "What is in this image?", "image": "/path/to/img.jpg", "response": "A cat"}
+        
+        HuggingFace Hub (OpenAI messages format):
+            {"messages": [{"role": "user", "content": [{"type": "image", "image": "data:image/jpeg;base64,..."}]}]}
     """
     try:
         from model_garden.vision_training import VisionLanguageTrainer
         
         console.print("\n[bold cyan]🌱 Model Garden - Vision-Language Fine-tuning[/bold cyan]\n")
-        console.print("[yellow]⚠️  Vision-language training is experimental[/yellow]")
-        console.print("[yellow]⚠️  Ensure your dataset has proper image paths and text[/yellow]\n")
+        
+        if from_hub:
+            console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset}[/cyan]")
+        else:
+            console.print(f"[cyan]Loading dataset from local file: {dataset}[/cyan]")
+        
+        console.print("[yellow]⚠️  Vision-language training is experimental[/yellow]\n")
 
         # Initialize trainer
         trainer = VisionLanguageTrainer(
@@ -545,8 +570,11 @@ def train_vision(
             lora_alpha=lora_alpha,
         )
 
-        # Load dataset
-        train_dataset = trainer.load_dataset_from_file(dataset)
+        # Load dataset (handles both local files and HuggingFace Hub)
+        train_dataset = trainer.load_dataset(
+            dataset_path=dataset,
+            from_hub=from_hub,
+        )
 
         # Format dataset
         train_dataset = trainer.format_dataset(
