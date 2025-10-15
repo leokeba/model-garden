@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Model files and data
+models/
+*.pth
+*.pt
+*.bin
+*.safetensors
+*.gguf
+*.h5
+
+# Datasets
+data/
+datasets/
+*.jsonl
+*.csv
+*.parquet
+
+# Logs
+logs/
+*.log
+
+# Carbon tracking data
+emissions.csv
+codecarbon/
+
+# Environment variables
+.env
+.env.local
+
+# FastAPI
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Node (for frontend when added)
+node_modules/
+.npm/
+package-lock.json
+yarn.lock
+
+# Build artifacts
+*.whl
