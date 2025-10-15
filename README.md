@@ -127,23 +127,31 @@ uv run model-garden generate ./models/my-model \
 uv run model-garden carbon report <model-id>
 ```
 
-### API Usage
+### Web UI & API
 
-**🎉 NEW: REST API now available!**
+**🎉 NEW: Web UI and REST API now available!**
 
 ```bash
-# Start the API server
+# Start the server (serves both UI and API)
 uv run model-garden serve
 
 # Or with custom settings
 uv run model-garden serve --host 127.0.0.1 --port 3000 --reload
 ```
 
-The API will be available at `http://localhost:8000` with:
-- **📚 Interactive API docs**: `http://localhost:8000/docs`
-- **📖 ReDoc documentation**: `http://localhost:8000/redoc`
+Once started, access:
+- **🌐 Web Dashboard**: `http://localhost:8000` - Interactive web interface
+- **📚 API Documentation**: `http://localhost:8000/docs` - Swagger UI
+- **📖 ReDoc Documentation**: `http://localhost:8000/redoc` - Alternative API docs
 
-**Key endpoints:**
+**Key features:**
+- Browse and manage your fine-tuned models
+- Monitor training jobs in real-time
+- Create new training jobs with a simple form
+- View system status and resource usage
+- RESTful API for programmatic access
+
+**Key API endpoints:**
 - `GET /api/v1/models` - List all models
 - `POST /api/v1/training/jobs` - Create training job  
 - `GET /api/v1/training/jobs/{job_id}` - Get job status
@@ -253,17 +261,19 @@ pre-commit run --all-files
 - [x] **FastAPI backend with REST endpoints** 
 - [x] **Model and training job management API**
 - [x] **System status and monitoring endpoints**
+- [x] **Web UI with SvelteKit (dashboard, models, training jobs)**
+- [x] **Static frontend served by FastAPI backend**
 
-**Current Focus**: Testing and expanding API functionality
+**Current Status**: Phase 1 complete! Ready for production testing.
 
-### Phase 2: Core Features 🚧 (In Progress)
-- [ ] vLLM inference integration
+### Phase 2: Core Features 🚧 (Next Up)
+- [ ] vLLM inference integration with streaming
+- [ ] Text generation endpoint for models
+- [ ] Dataset management UI and API endpoints
 - [ ] Carbon tracking with CodeCarbon
 - [ ] Job queue and background processing
-- [ ] Web dashboard (Svelte + TailwindCSS)
-- [ ] Real-time training monitoring
-- [ ] Dataset management UI
-- [ ] Advanced carbon analytics
+- [ ] Real-time training monitoring via WebSocket
+- [ ] Advanced carbon analytics dashboard
 
 ### Phase 3: Production Features 📋
 - [ ] User authentication and authorization

@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from model_garden.training import ModelTrainer
@@ -153,13 +154,7 @@ app.add_middleware(
 )
 
 
-# Root endpoint
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {"message": "🌱 Model Garden API", "version": "0.1.0"}
-
-
+# API endpoints (must be defined before static files to take precedence)
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
@@ -383,6 +378,36 @@ async def system_status():
             "active_jobs": len([j for j in training_jobs.values() if j["status"] in ["running", "queued"]]),
         },
     }
+
+
+# Mount static files for the frontend (must be last to not override API routes)
+frontend_build_path = Path(__file__).parent.parent / "frontend" / "build"
+if frontend_build_path.exists():
+    # Serve static assets
+    app.mount("/_app", StaticFiles(directory=str(frontend_build_path / "_app")), name="static-assets")
+    
+    # Catch-all route for SvelteKit client-side routing
+    from fastapi.responses import FileResponse
+    
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the SvelteKit SPA for all non-API routes."""
+        # Try to serve specific HTML files first (e.g., models.html)
+        html_file = frontend_build_path / f"{full_path}.html"
+        if html_file.exists():
+            return FileResponse(html_file)
+        
+        # Check if it's a directory with an index.html
+        dir_path = frontend_build_path / full_path
+        if dir_path.is_dir():
+            index_file = dir_path / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file)
+        
+        # Fallback to main index.html for client-side routing
+        return FileResponse(frontend_build_path / "index.html")
+else:
+    print("⚠️  Frontend build not found. Run 'cd frontend && npm run build' to build the frontend.")
 
 
 if __name__ == "__main__":

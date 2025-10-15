@@ -1,0 +1,86 @@
+/* 
+  TailwindCSS directives - these are processed by PostCSS
+  @see https://tailwindcss.com/docs/functions-and-directives
+*/
+/* stylelint-disable at-rule-no-unknown */
+/* postcss-bem-linter: ignore */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom components */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg font-medium
+           transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 
+           focus:ring-primary-500;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-200 text-gray-900 hover:bg-gray-300 
+           focus:ring-gray-500;
+  }
+  
+  .btn-danger {
+    @apply bg-red-600 text-white hover:bg-red-700 
+           focus:ring-red-500;
+  }
+  
+  .btn-ghost {
+    @apply text-gray-700 hover:bg-gray-100 
+           focus:ring-gray-500;
+  }
+  
+  .btn-sm {
+    @apply px-3 py-1.5 text-sm;
+  }
+  
+  .btn-md {
+    @apply px-4 py-2 text-base;
+  }
+  
+  .btn-lg {
+    @apply px-6 py-3 text-lg;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow border border-gray-200;
+  }
+  
+  .card-hoverable {
+    @apply transition-shadow hover:shadow-md cursor-pointer;
+  }
+  
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full font-medium;
+  }
+  
+  .badge-sm {
+    @apply px-2 py-0.5 text-xs;
+  }
+  
+  .badge-md {
+    @apply px-3 py-1 text-sm;
+  }
+  
+  .badge-success {
+    @apply bg-green-100 text-green-700;
+  }
+  
+  .badge-warning {
+    @apply bg-yellow-100 text-yellow-700;
+  }
+  
+  .badge-error {
+    @apply bg-red-100 text-red-700;
+  }
+  
+  .badge-info {
+    @apply bg-blue-100 text-blue-700;
+  }
+}
