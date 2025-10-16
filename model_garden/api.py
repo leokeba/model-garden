@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -240,12 +240,35 @@ async def lifespan(app: FastAPI):
     scan_existing_models()
     
     print(f"✓ Found {len(models_storage)} existing models")
-    print("🚀 Model Garden API ready!")
+    
+    # Auto-load inference model if specified
+    autoload_model = os.getenv("MODEL_GARDEN_AUTOLOAD_MODEL")
+    if autoload_model:
+        print(f"🔄 Auto-loading inference model: {autoload_model}")
+        try:
+            from model_garden.inference import InferenceService
+            global inference_service
+            inference_service = InferenceService(model_path=autoload_model)
+            await inference_service.load_model()
+            print(f"✅ Inference model loaded: {autoload_model}")
+        except Exception as e:
+            print(f"❌ Failed to auto-load model: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print("�🚀 Model Garden API ready!")
     
     yield
     
     # Shutdown
     print("🌱 Model Garden API shutting down...")
+    
+    # Cleanup inference service if loaded
+    if inference_service is not None:
+        try:
+            await inference_service.close()
+        except Exception as e:
+            print(f"Warning: Error closing inference service: {e}")
 
 
 def scan_existing_models():
@@ -296,6 +319,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Add validation error handler to debug 422 errors
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """Log and return validation errors."""
+    print(f"🔴 Validation Error on {request.method} {request.url.path}")
+    
+    # Get error details but truncate any large input values
+    errors = exc.errors()
+    truncated_errors = []
+    for error in errors:
+        error_copy = error.copy()
+        # Truncate large input values in the error
+        if 'input' in error_copy and isinstance(error_copy['input'], str) and len(error_copy['input']) > 200:
+            error_copy['input'] = f"{error_copy['input'][:200]}... [truncated {len(error_copy['input'])} chars]"
+        truncated_errors.append(error_copy)
+    
+    print(f"   Error count: {len(truncated_errors)}")
+    for i, error in enumerate(truncated_errors[:3]):  # Only show first 3 errors
+        print(f"   Error {i+1}: {error}")
+    if len(truncated_errors) > 3:
+        print(f"   ... and {len(truncated_errors) - 3} more errors")
+    
+    # Don't include the full body or large inputs in the response
+    return JSONResponse(
+        status_code=422,
+        content={"detail": truncated_errors, "error_count": len(truncated_errors)}
+    )
 
 
 # API endpoints (must be defined before static files to take precedence)
@@ -485,7 +540,359 @@ async def cancel_training_job(job_id: str):
     )
 
 
+# ============================================================================
+# Inference Endpoints
+# ============================================================================
+
+class InferenceRequest(BaseModel):
+    """Request for text generation."""
+    prompt: str
+    max_tokens: int = 256
+    temperature: float = 0.7
+    top_p: float = 0.95
+    top_k: int = -1
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
+    stop: Optional[List[str]] = None
+    stream: bool = False
+
+
+class ChatMessage(BaseModel):
+    """Chat message with support for both text and multimodal content."""
+    role: str  # system, user, assistant
+    content: Union[str, List[Dict], Dict]  # Can be string or structured content for vision
+    name: Optional[str] = None
+    
+    class Config:
+        extra = "allow"  # Allow extra fields like 'image' for compatibility
+
+
+class ChatCompletionRequest(BaseModel):
+    """OpenAI-compatible chat completion request."""
+    model: Optional[str] = None  # Model name (optional, we use the loaded model)
+    messages: List[ChatMessage]
+    max_tokens: Optional[int] = 256
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 0.95
+    top_k: Optional[int] = -1
+    frequency_penalty: Optional[float] = 0.0
+    presence_penalty: Optional[float] = 0.0
+    repetition_penalty: Optional[float] = 1.0
+    stream: Optional[bool] = False
+    stop: Optional[Union[str, List[str]]] = None
+    n: Optional[int] = 1  # Number of completions to generate
+    best_of: Optional[int] = None
+    logprobs: Optional[int] = None
+    echo: Optional[bool] = False
+    user: Optional[str] = None  # User identifier
+    
+    class Config:
+        extra = "allow"  # Allow extra fields for compatibility
+
+
+class LoadModelRequest(BaseModel):
+    """Request to load a model for inference."""
+    model_path: str
+    tensor_parallel_size: int = 1
+    gpu_memory_utilization: float = 0.9
+    max_model_len: Optional[int] = None
+    dtype: str = "auto"
+    quantization: Optional[str] = None
+
+
+@app.post("/api/v1/inference/load", response_model=APIResponse)
+async def load_inference_model(request: LoadModelRequest):
+    """Load a model for inference."""
+    from model_garden.inference import InferenceService, get_inference_service, set_inference_service
+    
+    # Check if a model is already loaded
+    current_service = get_inference_service()
+    if current_service and current_service.is_loaded:
+        return APIResponse(
+            success=False,
+            message=f"Model already loaded: {current_service.model_path}. Unload it first."
+        )
+    
+    try:
+        # Create new inference service
+        service = InferenceService(
+            model_path=request.model_path,
+            tensor_parallel_size=request.tensor_parallel_size,
+            gpu_memory_utilization=request.gpu_memory_utilization,
+            max_model_len=request.max_model_len,
+            dtype=request.dtype,
+            quantization=request.quantization,
+        )
+        
+        # Load the model
+        await service.load_model()
+        
+        # Set as global service
+        set_inference_service(service)
+        
+        return APIResponse(
+            success=True,
+            data=service.get_model_info(),
+            message=f"Model loaded successfully: {request.model_path}"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load model: {str(e)}"
+        )
+
+
+@app.post("/api/v1/inference/unload", response_model=APIResponse)
+async def unload_inference_model():
+    """Unload the currently loaded model."""
+    from model_garden.inference import get_inference_service, set_inference_service
+    
+    service = get_inference_service()
+    if not service or not service.is_loaded:
+        return APIResponse(
+            success=False,
+            message="No model currently loaded"
+        )
+    
+    try:
+        await service.unload_model()
+        set_inference_service(None)
+        
+        return APIResponse(
+            success=True,
+            message="Model unloaded successfully"
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unload model: {str(e)}"
+        )
+
+
+@app.get("/api/v1/inference/status")
+async def get_inference_status():
+    """Get inference service status."""
+    from model_garden.inference import get_inference_service
+    
+    service = get_inference_service()
+    if not service:
+        return {
+            "loaded": False,
+            "model_info": None,
+        }
+    
+    return {
+        "loaded": service.is_loaded,
+        "model_info": service.get_model_info() if service.is_loaded else None,
+    }
+
+
+@app.post("/api/v1/inference/generate")
+async def generate_text(request: InferenceRequest):
+    """Generate text from a prompt."""
+    from model_garden.inference import get_inference_service
+    from fastapi.responses import StreamingResponse
+    import json
+    
+    service = get_inference_service()
+    if not service or not service.is_loaded:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No model loaded. Load a model first using /api/v1/inference/load"
+        )
+    
+    try:
+        if request.stream:
+            # Streaming response
+            async def generate_stream():
+                stream = await service.generate(
+                    prompt=request.prompt,
+                    max_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    top_k=request.top_k,
+                    frequency_penalty=request.frequency_penalty,
+                    presence_penalty=request.presence_penalty,
+                    stop=request.stop,
+                    stream=True,
+                )
+                
+                async for chunk in stream:
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
+                
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(generate_stream(), media_type="text/event-stream")
+        else:
+            # Complete response
+            text = await service.generate(
+                prompt=request.prompt,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                top_p=request.top_p,
+                top_k=request.top_k,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                stop=request.stop,
+                stream=False,
+            )
+            
+            return {
+                "text": text,
+                "model": service.model_path,
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Generation failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
+    """OpenAI-compatible chat completions endpoint with vision support."""
+    from model_garden.inference import get_inference_service
+    from fastapi.responses import StreamingResponse
+    import json
+    import base64
+    import re
+    
+    # Log the incoming request for debugging
+    print(f"📨 Received chat completion request: model={request.model}, messages={len(request.messages)}, stream={request.stream}")
+    
+    service = get_inference_service()
+    if not service or not service.is_loaded:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No model loaded. Load a model first using /api/v1/inference/load"
+        )
+    
+    try:
+        # Process messages and extract multimodal content
+        processed_messages = []
+        image_data = None
+        
+        for msg in request.messages:
+            msg_dict = msg.dict()
+            content = msg_dict.get("content", "")
+            
+            # Handle multimodal content (OpenAI format)
+            if isinstance(content, list):
+                # Content is an array of content parts (text + images)
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif part.get("type") == "image_url":
+                            # Extract image URL or base64 data
+                            image_url = part.get("image_url", {})
+                            if isinstance(image_url, dict):
+                                url = image_url.get("url", "")
+                            else:
+                                url = image_url
+                            
+                            # Check if it's a base64 data URL
+                            if url.startswith("data:image/"):
+                                # Extract base64 data
+                                match = re.match(r"data:image/[^;]+;base64,(.+)", url)
+                                if match:
+                                    image_data = match.group(1)
+                                    print(f"🖼️  Extracted base64 image data ({len(image_data)} chars)")
+                            else:
+                                # It's a regular URL
+                                image_data = url
+                                print(f"🖼️  Using image URL: {url[:100]}...")
+                    else:
+                        text_parts.append(str(part))
+                
+                # Combine text parts
+                msg_dict["content"] = " ".join(text_parts)
+            elif isinstance(content, dict):
+                # Single content part
+                if content.get("type") == "text":
+                    msg_dict["content"] = content.get("text", "")
+                elif content.get("type") == "image_url":
+                    image_url = content.get("image_url", {})
+                    if isinstance(image_url, dict):
+                        url = image_url.get("url", "")
+                    else:
+                        url = image_url
+                    
+                    if url.startswith("data:image/"):
+                        match = re.match(r"data:image/[^;]+;base64,(.+)", url)
+                        if match:
+                            image_data = match.group(1)
+                    else:
+                        image_data = url
+            # else: content is already a string, keep as-is
+            
+            # Check for 'image' field in message (custom format)
+            if "image" in msg_dict and msg_dict["image"]:
+                image_data = msg_dict["image"]
+                print(f"🖼️  Found image in custom 'image' field")
+            
+            processed_messages.append(msg_dict)
+        
+        # Prepare generation parameters
+        gen_params = {
+            "messages": processed_messages,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+            "top_p": request.top_p,
+            "stream": request.stream or False,
+        }
+        
+        # Add image if found
+        if image_data:
+            gen_params["image"] = image_data
+            print(f"✅ Added image to generation parameters")
+        
+        # Add stop sequences if provided
+        if request.stop:
+            gen_params["stop"] = request.stop if isinstance(request.stop, list) else [request.stop]
+        
+        if request.stream:
+            # Streaming response
+            async def generate_stream():
+                stream = await service.chat_completion(**gen_params)
+                
+                async for chunk in stream:
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(generate_stream(), media_type="text/event-stream")
+        else:
+            # Complete response
+            response = await service.chat_completion(**gen_params)
+            
+            return response
+            
+    except Exception as e:
+        import traceback
+        print(f"❌ Chat completion error: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chat completion failed: {str(e)}"
+        )
+
+
+# OpenAI-compatible endpoint (without /api prefix for compatibility)
+@app.post("/v1/chat/completions")
+async def openai_chat_completions(request: ChatCompletionRequest):
+    """OpenAI-compatible chat completions endpoint (standard path)."""
+    # Forward to the main handler
+    return await chat_completions(request)
+
+
+# ============================================================================
 # System endpoints
+# ============================================================================
 @app.get("/api/v1/system/status")
 async def system_status():
     """Get system status information."""

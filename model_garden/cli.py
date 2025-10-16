@@ -3,8 +3,6 @@
 import click
 from rich.console import Console
 
-from model_garden.training import ModelTrainer, create_sample_dataset
-
 console = Console()
 
 
@@ -164,6 +162,9 @@ def train(
             --from-hub
     """
     try:
+        # Lazy import to avoid loading unsloth for inference commands
+        from model_garden.training import ModelTrainer
+        
         console.print("\n[bold cyan]🌱 Model Garden - Fine-tuning[/bold cyan]\n")
 
         # Initialize trainer
@@ -245,6 +246,9 @@ def create_dataset(output: str, num_examples: int) -> None:
             --num-examples 100
     """
     try:
+        # Lazy import to avoid loading unsloth for inference commands
+        from model_garden.training import create_sample_dataset
+        
         console.print("\n[bold cyan]🌱 Model Garden - Dataset Creation[/bold cyan]\n")
         create_sample_dataset(output, num_examples)
         console.print("\n[bold green]✨ Dataset created successfully![/bold green]\n")
@@ -640,6 +644,287 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
         create_vision_sample_dataset(output, num_examples)
         console.print("\n[bold green]✨ Dataset created successfully![/bold green]\n")
         console.print("[yellow]⚠️  Remember to replace placeholder image paths with real images[/yellow]\n")
+    except Exception as e:
+        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        raise click.Abort()
+
+
+@main.command(name="serve-model")
+@click.option("--model-path", required=True, help="Path to the model to serve")
+@click.option("--port", default=8000, help="Port to run the inference server on")
+@click.option("--host", default="0.0.0.0", help="Host to bind the server to")
+@click.option("--tensor-parallel-size", default=1, help="Number of GPUs to use for tensor parallelism")
+@click.option("--gpu-memory-utilization", default=0.9, type=float, help="GPU memory utilization (0.0-1.0)")
+@click.option("--quantization", type=click.Choice(["awq", "gptq", "squeezellm", "fp8"]), help="Quantization method")
+@click.option("--max-model-len", type=int, help="Maximum model context length")
+def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len):
+    """
+    Start an inference server with vLLM for high-throughput model serving.
+    
+    This command loads a model using vLLM and starts a FastAPI server
+    with OpenAI-compatible endpoints for text generation and chat completions.
+    
+    Examples:
+    
+        \b
+        # Serve a model on default port 8000
+        uv run model-garden serve-model --model-path ./models/my-model
+        
+        \b
+        # Serve with custom port and GPU settings
+        uv run model-garden serve-model \\
+            --model-path ./models/my-model \\
+            --port 8080 \\
+            --tensor-parallel-size 2 \\
+            --gpu-memory-utilization 0.8
+        
+        \b
+        # Serve with quantization
+        uv run model-garden serve-model \\
+            --model-path ./models/my-model \\
+            --quantization awq
+    """
+    try:
+        from model_garden.inference import InferenceService, set_inference_service
+        import uvicorn
+        import asyncio
+        
+        console.print("\n[bold cyan]🚀 Model Garden - Inference Server[/bold cyan]\n")
+        console.print(f"[cyan]Loading model:[/cyan] {model_path}")
+        
+        # Create inference service
+        service = InferenceService(
+            model_path=model_path,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            quantization=quantization,
+            max_model_len=max_model_len
+        )
+        
+        # Load model
+        async def load_model():
+            await service.load_model()
+        
+        asyncio.run(load_model())
+        set_inference_service(service)
+        
+        console.print(f"[green]✅ Model loaded successfully![/green]")
+        console.print(f"\n[cyan]Starting server on[/cyan] http://{host}:{port}")
+        console.print(f"[cyan]API docs available at[/cyan] http://{host}:{port}/docs\n")
+        console.print("[yellow]Press Ctrl+C to stop the server[/yellow]\n")
+        
+        # Start the server with minimal logging
+        import logging
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        uvicorn.run(
+            "model_garden.api:app", 
+            host=host, 
+            port=port, 
+            reload=False,
+            log_level="warning",
+            access_log=False
+        )
+        
+    except Exception as e:
+        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        raise click.Abort()
+
+
+@main.command(name="inference-generate")
+@click.option("--model-path", required=True, help="Path to the model to use")
+@click.option("--prompt", required=True, help="Prompt for text generation")
+@click.option("--max-tokens", default=256, help="Maximum number of tokens to generate")
+@click.option("--temperature", default=0.7, type=float, help="Sampling temperature")
+@click.option("--top-p", default=0.9, type=float, help="Top-p (nucleus) sampling parameter")
+@click.option("--stream/--no-stream", default=False, help="Enable streaming output")
+@click.option("--tensor-parallel-size", default=1, help="Number of GPUs for tensor parallelism")
+@click.option("--quantization", type=click.Choice(["awq", "gptq", "squeezellm", "fp8"]), help="Quantization method")
+def inference_generate(model_path, prompt, max_tokens, temperature, top_p, stream, tensor_parallel_size, quantization):
+    """
+    Generate text using vLLM inference engine (one-off generation).
+    
+    This command loads a model, generates a response, and exits.
+    For persistent serving, use the 'serve-model' command instead.
+    
+    Examples:
+    
+        \b
+        # Generate text with default settings
+        uv run model-garden inference-generate \\
+            --model-path ./models/my-model \\
+            --prompt "Once upon a time"
+        
+        \b
+        # Generate with custom parameters
+        uv run model-garden inference-generate \\
+            --model-path ./models/my-model \\
+            --prompt "Explain quantum computing" \\
+            --max-tokens 512 \\
+            --temperature 0.8 \\
+            --stream
+        
+        \b
+        # Generate with quantization
+        uv run model-garden inference-generate \\
+            --model-path ./models/my-model \\
+            --prompt "Write a poem" \\
+            --quantization awq
+    """
+    try:
+        from model_garden.inference import InferenceService
+        import asyncio
+        
+        console.print("\n[bold cyan]🤖 Model Garden - Text Generation[/bold cyan]\n")
+        console.print(f"[cyan]Loading model:[/cyan] {model_path}\n")
+        
+        # Create inference service
+        service = InferenceService(
+            model_path=model_path,
+            tensor_parallel_size=tensor_parallel_size,
+            quantization=quantization
+        )
+        
+        async def generate():
+            # Load model
+            await service.load_model()
+            console.print("[green]✅ Model loaded![/green]\n")
+            console.print(f"[cyan]Prompt:[/cyan] {prompt}\n")
+            console.print("[cyan]Generated text:[/cyan]\n")
+            
+            # Generate
+            if stream:
+                async for chunk in service.generate(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    stream=True
+                ):
+                    console.print(chunk["text"], end="")
+                console.print("\n")
+            else:
+                result = await service.generate(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    stream=False
+                )
+                console.print(result["text"])
+                console.print(f"\n[dim]Tokens: {result['usage']['total_tokens']}[/dim]\n")
+            
+            # Cleanup
+            await service.unload_model()
+        
+        asyncio.run(generate())
+        console.print("[green]✨ Generation complete![/green]\n")
+        
+    except Exception as e:
+        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        raise click.Abort()
+
+
+@main.command(name="inference-chat")
+@click.option("--model-path", required=True, help="Path to the model to use")
+@click.option("--system-prompt", help="System prompt for the chat")
+@click.option("--max-tokens", default=512, help="Maximum tokens per response")
+@click.option("--temperature", default=0.7, type=float, help="Sampling temperature")
+@click.option("--tensor-parallel-size", default=1, help="Number of GPUs for tensor parallelism")
+@click.option("--quantization", type=click.Choice(["awq", "gptq", "squeezellm", "fp8"]), help="Quantization method")
+def inference_chat(model_path, system_prompt, max_tokens, temperature, tensor_parallel_size, quantization):
+    """
+    Interactive chat interface using vLLM inference engine.
+    
+    This command starts an interactive chat session with the model.
+    Type your messages and press Enter. Type 'exit', 'quit', or press Ctrl+D to end.
+    
+    Examples:
+    
+        \b
+        # Start a chat session
+        uv run model-garden inference-chat --model-path ./models/my-model
+        
+        \b
+        # Chat with system prompt
+        uv run model-garden inference-chat \\
+            --model-path ./models/my-model \\
+            --system-prompt "You are a helpful AI assistant"
+        
+        \b
+        # Chat with custom parameters
+        uv run model-garden inference-chat \\
+            --model-path ./models/my-model \\
+            --temperature 0.8 \\
+            --max-tokens 1024
+    """
+    try:
+        from model_garden.inference import InferenceService
+        import asyncio
+        
+        console.print("\n[bold cyan]💬 Model Garden - Interactive Chat[/bold cyan]\n")
+        console.print(f"[cyan]Loading model:[/cyan] {model_path}\n")
+        
+        # Create inference service
+        service = InferenceService(
+            model_path=model_path,
+            tensor_parallel_size=tensor_parallel_size,
+            quantization=quantization
+        )
+        
+        async def chat():
+            # Load model
+            await service.load_model()
+            console.print("[green]✅ Model loaded![/green]\n")
+            console.print("[yellow]Type your message and press Enter. Type 'exit' or 'quit' to end.[/yellow]\n")
+            
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            
+            try:
+                while True:
+                    # Get user input
+                    try:
+                        user_input = console.input("[bold blue]You:[/bold blue] ")
+                    except EOFError:
+                        break
+                    
+                    if user_input.strip().lower() in ["exit", "quit", ""]:
+                        break
+                    
+                    # Add user message
+                    messages.append({"role": "user", "content": user_input})
+                    
+                    # Generate response
+                    console.print("\n[bold green]Assistant:[/bold green] ", end="")
+                    
+                    full_response = ""
+                    async for chunk in service.chat_completion(
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        stream=True
+                    ):
+                        if chunk["choices"][0]["delta"].get("content"):
+                            content = chunk["choices"][0]["delta"]["content"]
+                            console.print(content, end="")
+                            full_response += content
+                    
+                    console.print("\n")
+                    
+                    # Add assistant response to history
+                    messages.append({"role": "assistant", "content": full_response})
+            
+            except KeyboardInterrupt:
+                console.print("\n")
+            
+            # Cleanup
+            console.print("\n[cyan]Cleaning up...[/cyan]")
+            await service.unload_model()
+        
+        asyncio.run(chat())
+        console.print("[green]✨ Chat session ended![/green]\n")
+        
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
         raise click.Abort()

@@ -19,11 +19,14 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - **🆕 Vision-Language Models** - Fine-tune Qwen2.5-VL (3B/7B/72B) for image + text tasks
 - **🎨 Multimodal Training** - Unified interface for text-only and vision-language models
 
-### ⚡ Efficient Inference
+### ⚡ Efficient Inference (NEW!)
 - **High-throughput serving** powered by vLLM
-- PagedAttention for optimized memory usage
-- OpenAI-compatible API endpoints
-- Continuous batching for better GPU utilization
+- **OpenAI-compatible API** - Drop-in replacement for OpenAI client
+- **Streaming support** for real-time responses
+- **PagedAttention** for optimized memory usage
+- **Continuous batching** for better GPU utilization
+- **Multi-GPU support** via tensor parallelism
+- **Quantization support** (AWQ, GPTQ, FP8) for memory efficiency
 
 ### 🌍 Carbon Footprint Tracking
 - Real-time emissions monitoring with CodeCarbon
@@ -158,6 +161,62 @@ uv run model-garden train-vision \
 
 📖 **Full guide**: [Vision-Language Training](./docs/08-vision-language-training.md)
 
+### 🆕 Model Inference & Serving
+
+Serve your fine-tuned models with high-throughput inference:
+
+```bash
+# Start an inference server
+uv run model-garden serve-model --model-path ./models/my-model
+
+# One-off text generation
+uv run model-garden inference-generate \
+  --model-path ./models/my-model \
+  --prompt "Explain machine learning" \
+  --max-tokens 512 \
+  --stream
+
+# Interactive chat interface
+uv run model-garden inference-chat \
+  --model-path ./models/my-model \
+  --system-prompt "You are a helpful AI assistant"
+
+# With multi-GPU and quantization
+uv run model-garden serve-model \
+  --model-path ./models/my-model \
+  --tensor-parallel-size 2 \
+  --quantization awq \
+  --gpu-memory-utilization 0.8
+```
+
+**Key features:**
+- OpenAI-compatible API (use OpenAI Python client!)
+- Streaming responses for real-time output
+- Multi-GPU tensor parallelism
+- Quantization support (AWQ, GPTQ, FP8)
+- Interactive CLI chat interface
+
+**Use with OpenAI Python client:**
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8000/api/v1",
+    api_key="dummy"
+)
+
+response = client.chat.completions.create(
+    model="my-model",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content, end="")
+```
+
+📖 **Full guide**: [Inference Serving](./docs/09-inference-serving.md)
+
 ### Web UI & API
 
 **🎉 NEW: Web UI and REST API now available!**
@@ -225,6 +284,8 @@ Comprehensive design documentation is available in the [`docs/`](./docs) directo
 - [**Data Models**](./docs/04-data-models.md) - Database and API schemas
 - [**Development Workflow**](./docs/05-development-workflow.md) - Setup, testing, and deployment
 - [**Frontend Design**](./docs/06-frontend-design.md) - UI/UX guidelines and components
+- [**Vision-Language Training**](./docs/08-vision-language-training.md) - Fine-tune multimodal models
+- [**Inference Serving**](./docs/09-inference-serving.md) - vLLM inference and serving guide
 
 ---
 
@@ -300,9 +361,11 @@ pre-commit run --all-files
 
 **Current Status**: Phase 1 complete! Ready for production testing.
 
-### Phase 2: Core Features 🚧 (Next Up)
-- [ ] vLLM inference integration with streaming
-- [ ] Text generation endpoint for models
+### Phase 2: Core Features 🚧 (In Progress)
+- [x] **vLLM inference integration with streaming**
+- [x] **OpenAI-compatible inference API endpoints**
+- [x] **CLI commands for inference (serve, generate, chat)**
+- [ ] Inference UI in web dashboard
 - [ ] Dataset management UI and API endpoints
 - [ ] Carbon tracking with CodeCarbon
 - [ ] Job queue and background processing
