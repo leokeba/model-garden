@@ -1,4 +1,14 @@
-const API_BASE = 'http://localhost:8000/api/v1';
+// Use the current hostname and port, or fall back to localhost for development
+const getApiBase = () => {
+  if (typeof window !== 'undefined') {
+    // In browser, use the current origin
+    return `${window.location.origin}/api/v1`;
+  }
+  // During SSR/build, use a placeholder
+  return 'http://localhost:8000/api/v1';
+};
+
+const API_BASE = getApiBase();
 
 interface Model {
   id: string;

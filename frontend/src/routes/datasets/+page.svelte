@@ -95,7 +95,7 @@
         error = 'Upload failed: Network error';
       });
 
-      xhr.open('POST', 'http://localhost:8000/api/v1/datasets/upload');
+      xhr.open('POST', `${window.location.origin}/api/v1/datasets/upload`);
       xhr.send(formData);
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to upload dataset';
