@@ -32,6 +32,11 @@ Model Garden is a comprehensive platform for fine-tuning and serving Large Langu
 - Regional carbon intensity awareness
 - Emissions reporting and visualization
 - Recommendations for reducing carbon footprint
+- **BoAmps datamodel integration**: Standardized JSON format for emissions reporting
+  - Compliance with Boavizta's open standard for AI energy consumption reporting
+  - Interoperable emissions data for open data repositories
+  - Comprehensive metadata: algorithms, datasets, hardware, infrastructure details
+  - Support for both training and inference emissions tracking
 
 ### 4. Web Interface
 - Dashboard for model management
@@ -65,7 +70,7 @@ Model Garden is a comprehensive platform for fine-tuning and serving Large Langu
 - **Backend**: Python, FastAPI, Pydantic
 - **Fine-tuning**: Unsloth, HuggingFace Transformers
 - **Inference**: vLLM
-- **Carbon Tracking**: CodeCarbon
+- **Carbon Tracking**: CodeCarbon, BoAmps (Boavizta)
 - **Frontend**: Svelte, TailwindCSS
 - **Package Management**: uv
 - **CLI**: Click

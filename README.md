@@ -287,6 +287,8 @@ Comprehensive design documentation is available in the [`docs/`](./docs) directo
 - [**Frontend Design**](./docs/06-frontend-design.md) - UI/UX guidelines and components
 - [**Vision-Language Training**](./docs/08-vision-language-training.md) - Fine-tune multimodal models
 - [**Inference Serving**](./docs/09-inference-serving.md) - vLLM inference and serving guide
+- [**Structured Outputs**](./docs/10-structured-outputs.md) - Constrained generation and JSON mode
+- [**BoAmps Integration**](./docs/11-boamps-integration.md) - Standardized emissions reporting
 
 ---
 
@@ -368,6 +370,7 @@ pre-commit run --all-files
 - [x] **CLI commands for inference (serve, generate, chat)**
 - [ ] Inference UI in web dashboard
 - [ ] Dataset management UI and API endpoints
+- [ ] **BoAmps integration for standardized emissions reporting**
 - [ ] Carbon tracking with CodeCarbon
 - [ ] Job queue and background processing
 - [ ] Real-time training monitoring via WebSocket

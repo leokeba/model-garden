@@ -363,11 +363,11 @@ storage/
 Training Flow:
 ├── Pre-training: Initialize tracker
 ├── During training: Continuous monitoring
-└── Post-training: Generate report
+└── Post-training: Generate report + BoAmps export
 
 Inference Flow:
 ├── Per-request: Track single inference
-└── Aggregated: Daily/weekly reports
+└── Aggregated: Daily/weekly reports + BoAmps export
 ```
 
 #### Data Collection
@@ -384,10 +384,142 @@ class CarbonMetrics:
     location: str
 ```
 
+#### BoAmps Datamodel Integration
+
+**BoAmps** is Boavizta's standardized JSON schema for reporting AI/ML energy consumption. It enables:
+- Interoperable emissions data across platforms
+- Contribution to open data repositories
+- Standardized comparison of model efficiency
+- Comprehensive metadata capture
+
+**BoAmps Report Structure:**
+```json
+{
+  "header": {
+    "reportId": "uuid4",
+    "reportDatetime": "2025-10-16T10:00:00",
+    "reportStatus": "final",
+    "publisher": {
+      "name": "Organization",
+      "confidentialityLevel": "public"
+    }
+  },
+  "task": {
+    "taskFamily": "textGeneration",
+    "taskStage": "training|finetuning|inference",
+    "nbRequest": 1,
+    "algorithms": [{
+      "algorithmType": "llm",
+      "foundationModelName": "llama-3.1-8b",
+      "foundationModelUri": "https://...",
+      "parametersNumber": 8,
+      "quantization": "fp16"
+    }],
+    "dataset": [{
+      "dataUsage": "input|output",
+      "dataType": "text",
+      "items": 1000,
+      "volume": 50,
+      "volumeUnit": "megabyte"
+    }]
+  },
+  "measures": [{
+    "measurementMethod": "codecarbon",
+    "version": "2.x.x",
+    "cpuTrackingMode": "machine",
+    "gpuTrackingMode": "machine",
+    "unit": "kWh",
+    "powerConsumption": 1.234,
+    "measurementDuration": 3600.0,
+    "powerCalibrationMeasurement": 0.1,
+    "durationCalibrationMeasurement": 300.0
+  }],
+  "infrastructure": {
+    "infraType": "onPremise|publicCloud|privateCloud",
+    "cloudProvider": "aws|azure|...",
+    "components": [{
+      "componentName": "GPU",
+      "manufacturer": "NVIDIA",
+      "family": "A100",
+      "nbComponent": 1,
+      "memorySize": 80
+    }]
+  },
+  "system": {
+    "os": "Linux",
+    "distribution": "Ubuntu",
+    "distributionVersion": "22.04"
+  },
+  "software": {
+    "language": "python",
+    "version": "3.10"
+  },
+  "environment": {
+    "country": "France",
+    "location": "Paris",
+    "powerSourceCarbonIntensity": 60.0
+  }
+}
+```
+
+**Model Garden Integration:**
+```python
+class BoAmpsReportGenerator:
+    """Converts CodeCarbon output to BoAmps format"""
+    
+    def __init__(self, codecarbon_tracker, job_config):
+        self.tracker = codecarbon_tracker
+        self.job_config = job_config
+    
+    def generate_report(self) -> dict:
+        """Generate BoAmps compliant report"""
+        return {
+            "header": self._build_header(),
+            "task": self._build_task(),
+            "measures": self._build_measures(),
+            "infrastructure": self._build_infrastructure(),
+            "system": self._build_system(),
+            "software": self._build_software(),
+            "environment": self._build_environment()
+        }
+    
+    def export_json(self, filepath: str):
+        """Export to BoAmps JSON file"""
+        report = self.generate_report()
+        with open(filepath, 'w') as f:
+            json.dump(report, f, indent=2)
+    
+    def validate_schema(self, report: dict) -> bool:
+        """Validate against BoAmps JSON schema"""
+        # Use jsonschema validator with BoAmps schema
+        pass
+```
+
+**Storage Integration:**
+```
+storage/
+├── logs/
+│   └── job-{id}/
+│       ├── training.log
+│       ├── emissions.csv          # CodeCarbon output
+│       └── emissions_boamps.json  # BoAmps standardized report
+```
+
+**API Endpoints:**
+```python
+# New endpoints for BoAmps integration
+GET  /api/v1/carbon/boamps/{job_id}     # Get BoAmps report for job
+GET  /api/v1/carbon/boamps              # List all BoAmps reports
+POST /api/v1/carbon/boamps/validate     # Validate BoAmps format
+POST /api/v1/carbon/boamps/export       # Export to open data repository
+```
+
 #### Reporting
 - Real-time dashboard updates
-- CSV export for analysis
+- CSV export for analysis (CodeCarbon)
+- **BoAmps JSON export for standardized reporting**
 - Comparison across jobs
+- **Contribution to Boavizta open data repository**
 - Recommendations for optimization
 
 ---
@@ -531,7 +663,7 @@ GET /health
 | **API Framework** | FastAPI | High performance, async, auto docs, type safety |
 | **Fine-tuning** | Unsloth | 2x faster, 70% less VRAM, easy integration |
 | **Inference** | vLLM | State-of-art throughput, OpenAI compatible |
-| **Carbon Tracking** | CodeCarbon | Comprehensive, accurate, Python-native |
+| **Carbon Tracking** | CodeCarbon + BoAmps | Comprehensive measurement + standardized reporting |
 | **Frontend** | Svelte | Lightweight, reactive, fast |
 | **Styling** | TailwindCSS | Utility-first, rapid development |
 | **Package Manager** | uv | 10-100x faster than pip, modern |
