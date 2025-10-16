@@ -188,13 +188,28 @@ class InferenceService:
 
         console.print("[cyan]Unloading model...[/cyan]")
         
-        # vLLM doesn't have explicit unload, but we can delete the engine
+        # Delete the vLLM engine first
         if self.engine:
             del self.engine
             self.engine = None
         
+        # Force garbage collection to release Python references
+        import gc
+        gc.collect()
+        console.print("[green]✓[/green] Garbage collection completed")
+        
+        # Clear CUDA cache to free GPU memory
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                console.print("[green]✓[/green] GPU cache cleared")
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not clear GPU cache: {e}[/yellow]")
+        
         self.is_loaded = False
-        console.print("[green]✓[/green] Model unloaded")
+        console.print("[green]✓[/green] Model unloaded successfully")
 
     async def generate(
         self,

@@ -30,6 +30,7 @@ interface TrainingJob {
   status: string;
   base_model: string;
   dataset_path: string;
+  validation_dataset_path?: string;
   output_dir: string;
   created_at: string;
   started_at?: string;
@@ -45,6 +46,7 @@ interface TrainingJob {
   error_message?: string;
   hyperparameters?: any;
   lora_config?: any;
+  model_type?: string;
   config?: {
     name: string;
     base_model: string;
@@ -52,6 +54,18 @@ interface TrainingJob {
     output_dir: string;
     hyperparameters: any;
     lora_config: any;
+    model_type?: string;
+  };
+  metrics?: {
+    training?: Array<{
+      step: number;
+      loss: number;
+      learning_rate?: number;
+    }>;
+    validation?: Array<{
+      step: number;
+      loss: number;
+    }>;
   };
   logs?: string[];
 }

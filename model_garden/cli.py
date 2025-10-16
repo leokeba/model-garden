@@ -698,6 +698,9 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
         console.print("\n[bold cyan]🚀 Model Garden - Inference Server[/bold cyan]\n")
         console.print(f"[cyan]Loading model:[/cyan] {model_path}")
         
+        # Reduce torch compile workers to save memory (default is 24, we use 8)
+        os.environ["TORCH_COMPILE_MAX_WORKERS"] = "8"
+        
         # Set environment variables for the API to pick up during lifespan startup
         # This ensures the model is loaded in the same process as the API
         os.environ["MODEL_GARDEN_AUTOLOAD_MODEL"] = model_path

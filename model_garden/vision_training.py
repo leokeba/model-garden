@@ -644,16 +644,13 @@ class VisionLanguageTrainer:
     def save_model(
         self,
         output_dir: str,
-        save_method: str = "merged_16bit",  # Default to merged with auto-cleaned config for vLLM
+        save_method: str = "merged_16bit",
     ) -> None:
         """Save the fine-tuned vision-language model.
 
         Args:
             output_dir: Directory to save the model
             save_method: How to save ('lora', 'merged_16bit', 'merged_4bit')
-                        - 'lora': LoRA adapters + base model (works with vLLM)
-                        - 'merged_16bit': Merged FP16 model (recommended, auto-cleaned for vLLM)
-                        - 'merged_4bit': Merged 4-bit model (auto-cleaned for vLLM)
         """
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
 
@@ -661,82 +658,79 @@ class VisionLanguageTrainer:
         output_path.mkdir(parents=True, exist_ok=True)
 
         if save_method == "lora":
-            # Save LoRA adapters + base model files for vLLM compatibility
-            console.print("[cyan]Saving LoRA adapters + base model files...[/cyan]")
+            # Save only LoRA adapters
             self.model.save_pretrained(output_dir)
             if self.tokenizer:
                 self.tokenizer.save_pretrained(output_dir)
             if self.processor:
                 self.processor.save_pretrained(output_dir)
-            
-            # Copy base model files for vLLM compatibility
-            console.print("[cyan]Copying base model files for vLLM...[/cyan]")
-            try:
-                import shutil
-                from huggingface_hub import snapshot_download
-                
-                # Get base model path from adapter config
-                adapter_config_path = Path(output_dir) / "adapter_config.json"
-                if adapter_config_path.exists():
-                    import json
-                    with open(adapter_config_path) as f:
-                        adapter_config = json.load(f)
-                    base_model = adapter_config.get("base_model_name_or_path", "")
-                    
-                    if base_model:
-                        console.print(f"[cyan]Downloading base model: {base_model}[/cyan]")
-                        # Download base model to cache
-                        base_model_path = snapshot_download(
-                            base_model,
-                            allow_patterns=["*.safetensors", "*.json", "config.json", "*.index.json"]
-                        )
-                        
-                        # Copy model files to output directory
-                        for pattern in ["model*.safetensors", "config.json", "*.index.json"]:
-                            for file_path in Path(base_model_path).glob(pattern):
-                                dest_path = Path(output_dir) / file_path.name
-                                if not dest_path.exists():  # Don't overwrite existing files
-                                    shutil.copy2(file_path, dest_path)
-                                    console.print(f"[green]✓ Copied: {file_path.name}[/green]")
-                        
-                        console.print("[green]✓ Base model files copied successfully[/green]")
-                    else:
-                        console.print("[yellow]⚠️  No base model path found in adapter config[/yellow]")
-                else:
-                    console.print("[yellow]⚠️  adapter_config.json not found[/yellow]")
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to copy base model files: {e}[/yellow]")
-                console.print("[yellow]   Model will work with PEFT but may not load in vLLM directly[/yellow]")
-            
-            console.print("[green]✓ LoRA adapters + base model saved[/green]")
         elif save_method == "merged_16bit":
-            # Merge LoRA weights and save in 16-bit using PEFT (like model v)
+            # Merge LoRA weights and save in 16-bit
             console.print("[cyan]Merging LoRA weights and saving in 16-bit...[/cyan]")
             try:
-                from peft import PeftModel
-                # Merge adapters using PEFT
-                console.print("[cyan]Merging adapters with base model...[/cyan]")
-                merged_model = self.model.merge_and_unload()
-                merged_model.save_pretrained(output_dir)
-                if self.tokenizer:
-                    self.tokenizer.save_pretrained(output_dir)
+                from unsloth import FastLanguageModel
+                # Merge and save
+                self.model = FastLanguageModel.for_inference(self.model)
+                self.model.save_pretrained_merged(
+                    output_dir,
+                    self.tokenizer,
+                    save_method="merged_16bit"
+                )
                 if self.processor:
                     self.processor.save_pretrained(output_dir)
-                console.print("[green]✓ Model merged and saved successfully[/green]")
+                console.print("[green]✓ Merged model saved in 16-bit precision[/green]")
             except Exception as e:
-                console.print(f"[red]❌ Merge failed: {e}[/red]")
-                console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
-                self.model.save_pretrained(output_dir)
-                if self.tokenizer:
-                    self.tokenizer.save_pretrained(output_dir)
+                console.print(f"[yellow]⚠️  Unsloth merge failed: {e}[/yellow]")
+                console.print("[cyan]Trying manual merge...[/cyan]")
+                # Manual merge using PEFT
+                try:
+                    from peft import PeftModel
+                    # Merge adapters
+                    merged_model = self.model.merge_and_unload()
+                    merged_model.save_pretrained(output_dir)
+                    if self.tokenizer:
+                        self.tokenizer.save_pretrained(output_dir)
+                    if self.processor:
+                        self.processor.save_pretrained(output_dir)
+                    console.print("[green]✓ Model merged and saved successfully[/green]")
+                except Exception as merge_error:
+                    console.print(f"[red]❌ Merge failed: {merge_error}[/red]")
+                    console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
+                    self.model.save_pretrained(output_dir)
+                    if self.tokenizer:
+                        self.tokenizer.save_pretrained(output_dir)
+                    if self.processor:
+                        self.processor.save_pretrained(output_dir)
+        elif save_method == "merged_4bit":
+            # Merge LoRA weights and save in 4-bit
+            console.print("[cyan]Merging LoRA weights and saving in 4-bit...[/cyan]")
+            try:
+                from unsloth import FastLanguageModel
+                # Merge and save
+                self.model = FastLanguageModel.for_inference(self.model)
+                self.model.save_pretrained_merged(
+                    output_dir,
+                    self.tokenizer,
+                    save_method="merged_4bit"
+                )
                 if self.processor:
                     self.processor.save_pretrained(output_dir)
-        elif save_method == "merged_4bit":
-            # 4-bit merge not supported, fall back to 16-bit
-            console.print("[yellow]⚠️  4-bit merge not supported for vision models[/yellow]")
-            console.print("[cyan]Falling back to 16-bit merge...[/cyan]")
-            self.save_model(output_dir, save_method="merged_16bit")
-            return
+                console.print("[green]✓ Merged model saved in 4-bit precision[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ 4-bit merge not supported: {e}[/red]")
+                console.print("[yellow]Falling back to 16-bit merge[/yellow]")
+                # Fall back to 16-bit
+                self.save_model(output_dir, save_method="merged_16bit")
+                return
+        else:
+            # For vision models, merging is more complex
+            console.print("[yellow]⚠️  Merged saving for vision models not yet implemented[/yellow]")
+            console.print("[yellow]⚠️  Saving LoRA adapters only[/yellow]")
+            self.model.save_pretrained(output_dir)
+            if self.tokenizer:
+                self.tokenizer.save_pretrained(output_dir)
+            if self.processor:
+                self.processor.save_pretrained(output_dir)
 
         console.print("[bold green]✓ Model saved successfully![/bold green]")
 

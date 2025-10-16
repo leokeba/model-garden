@@ -1814,6 +1814,62 @@ async def system_status():
     }
 
 
+@app.post("/api/v1/system/cleanup")
+async def cleanup_gpu_memory():
+    """Force cleanup of GPU memory and Python garbage collection.
+    
+    This endpoint is useful when GPU memory isn't properly released
+    after model operations. It performs:
+    - Garbage collection
+    - CUDA cache clearing
+    - Memory synchronization
+    
+    Note: This doesn't unload models, use /inference/unload for that.
+    """
+    import gc
+    
+    result = {
+        "success": True,
+        "actions": [],
+        "gpu_memory_before": None,
+        "gpu_memory_after": None,
+    }
+    
+    try:
+        # Get initial GPU memory if available
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            mem_before = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+            result["gpu_memory_before"] = f"{mem_before:.2f} GB"
+        
+        # Force garbage collection
+        collected = gc.collect()
+        result["actions"].append(f"Garbage collection: {collected} objects collected")
+        
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            result["actions"].append("CUDA cache cleared")
+            
+            # Get final GPU memory
+            mem_after = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+            result["gpu_memory_after"] = f"{mem_after:.2f} GB"
+            result["actions"].append(f"Freed: {mem_before - mem_after:.2f} GB")
+        else:
+            result["actions"].append("CUDA not available")
+        
+        result["message"] = "GPU memory cleanup completed"
+        
+    except Exception as e:
+        result["success"] = False
+        result["message"] = f"Cleanup failed: {str(e)}"
+        result["actions"].append(f"Error: {str(e)}")
+    
+    return result
+
+
 # Mount static files for the frontend (must be last to not override API routes)
 frontend_build_path = Path(__file__).parent.parent / "frontend" / "build"
 if frontend_build_path.exists():
