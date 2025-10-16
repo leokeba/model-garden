@@ -1,14 +1,5 @@
-// Use the current hostname and port, or fall back to localhost for development
-const getApiBase = () => {
-  if (typeof window !== 'undefined') {
-    // In browser, use the current origin
-    return `${window.location.origin}/api/v1`;
-  }
-  // During SSR/build, use a placeholder
-  return 'http://localhost:8000/api/v1';
-};
-
-const API_BASE = getApiBase();
+// Use relative URL for API - works with any host (localhost, remote IP, domain)
+const API_BASE = '/api/v1';
 
 interface Model {
   id: string;
@@ -77,17 +68,41 @@ interface PaginatedResponse<T> {
 interface SystemStatus {
   system: {
     cpu_count: number;
+    cpu_percent?: number;
     memory_total: number;
     memory_available: number;
+    memory_used: number;
+    memory_percent: number;
     disk_usage: {
       total: number;
       used: number;
       free: number;
+      percent: number;
     };
   };
   gpu: {
     available: boolean;
     device_count?: number;
+    devices?: Array<{
+      id: number;
+      name: string;
+      memory: {
+        total: number;
+        used: number;
+        free: number;
+        used_percent: number;
+      };
+      utilization: {
+        gpu: number | null;
+        memory: number | null;
+      };
+      temperature: number | null;
+      power: {
+        usage: number;
+        limit: number;
+      } | null;
+    }>;
+    // Backward compatibility fields
     current_device?: number;
     device_name?: string;
     memory_allocated?: number;

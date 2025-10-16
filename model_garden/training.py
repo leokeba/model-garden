@@ -9,7 +9,7 @@ import json
 import os
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 # Suppress non-critical warnings
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -227,6 +227,7 @@ class ModelTrainer:
         logging_steps: int = 10,
         save_steps: int = 100,
         optim: str = "adamw_8bit",
+        callbacks: Optional[List] = None,
     ) -> None:
         """Train the model.
 
@@ -242,6 +243,7 @@ class ModelTrainer:
             logging_steps: Log every N steps
             save_steps: Save checkpoint every N steps
             optim: Optimizer to use
+            callbacks: Optional list of TrainerCallback instances
         """
         console.print("[cyan]Starting training...[/cyan]")
 
@@ -269,6 +271,7 @@ class ModelTrainer:
             model=self.model,
             train_dataset=dataset,
             args=training_args,
+            callbacks=callbacks if callbacks else [],
         )
 
         # Train

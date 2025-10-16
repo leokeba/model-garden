@@ -3,13 +3,29 @@
   import Button from '$lib/components/Button.svelte';
   import Card from '$lib/components/Card.svelte';
   import { api, type TrainingJob } from '$lib/api/client';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
   const jobId = $derived($page.params.id);
   
   let job: TrainingJob | null = $state(null);
   let loading = $state(true);
   let error = $state('');
+  let ws: WebSocket | null = null;
+  let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempts = $state(0);
+  let maxReconnectAttempts = 5;
+  let isConnected = $state(false);
+  let logs: string[] = $state([]);
+  let logsContainer = $state<HTMLDivElement | null>(null);
+
+  // Get WebSocket URL dynamically
+  function getWebSocketUrl(jobId: string): string {
+    if (typeof window === 'undefined') return '';
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    return `${protocol}//${host}/ws/training/${jobId}`;
+  }
 
   async function loadJob() {
     if (!jobId) return;
@@ -18,10 +34,109 @@
       loading = true;
       const response = await api.getTrainingJob(jobId);
       job = response;
+      error = '';
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load training job';
     } finally {
       loading = false;
+    }
+  }
+
+  function connectWebSocket() {
+    if (!jobId || typeof window === 'undefined') return;
+    
+    // Don't reconnect if job is completed or failed
+    if (job && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')) {
+      return;
+    }
+
+    try {
+      const wsUrl = getWebSocketUrl(jobId);
+      console.log(`Connecting to WebSocket: ${wsUrl}`);
+      
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+        isConnected = true;
+        reconnectAttempts = 0;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const update = JSON.parse(event.data);
+          console.log('WebSocket update:', update);
+          
+          // Handle different update types
+          if (update.type === 'status' && job) {
+            job.status = update.status;
+            if (update.completed_at) {
+              job.completed_at = update.completed_at;
+            }
+          } else if (update.type === 'progress' && job) {
+            job.progress = update.progress;
+            job.current_step = update.progress?.current_step;
+            job.total_steps = update.progress?.total_steps;
+            job.current_epoch = update.progress?.epoch;
+          } else if (update.type === 'log') {
+            logs = [...logs, `[${new Date().toLocaleTimeString()}] ${update.message}`];
+            // Keep only last 100 log lines
+            if (logs.length > 100) {
+              logs = logs.slice(-100);
+            }
+            // Auto-scroll to bottom
+            setTimeout(() => scrollLogsToBottom(), 10);
+          } else if (update.type === 'error' && job) {
+            job.error_message = update.message;
+            error = update.message;
+          }
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err);
+        }
+      };
+
+      ws.onerror = (event) => {
+        console.error('WebSocket error:', event);
+        isConnected = false;
+      };
+
+      ws.onclose = (event) => {
+        console.log('WebSocket closed:', event.code, event.reason);
+        isConnected = false;
+        ws = null;
+
+        // Attempt to reconnect if job is still running
+        if (job && job.status === 'running' && reconnectAttempts < maxReconnectAttempts) {
+          reconnectAttempts++;
+          console.log(`Reconnecting... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
+          reconnectTimeout = setTimeout(() => {
+            connectWebSocket();
+          }, Math.min(1000 * Math.pow(2, reconnectAttempts), 30000)); // Exponential backoff, max 30s
+        }
+      };
+    } catch (err) {
+      console.error('Failed to create WebSocket:', err);
+      isConnected = false;
+    }
+  }
+
+  function disconnectWebSocket() {
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+    
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    
+    isConnected = false;
+  }
+
+  function scrollLogsToBottom() {
+    if (logsContainer) {
+      logsContainer.scrollTop = logsContainer.scrollHeight;
     }
   }
 
@@ -39,6 +154,10 @@
       return Math.round(progress * 100);
     }
     if (progress && typeof progress.current_step === 'number' && typeof progress.total_steps === 'number') {
+      // Handle 0/0 case (returns NaN)
+      if (progress.total_steps === 0) {
+        return 0;
+      }
       return Math.round((progress.current_step / progress.total_steps) * 100);
     }
     return 0;
@@ -48,17 +167,17 @@
     return new Date(dateString).toLocaleString();
   }
 
-  onMount(() => {
-    loadJob();
+  onMount(async () => {
+    await loadJob();
     
-    // Poll for updates every 5 seconds if job is running
-    const interval = setInterval(() => {
-      if (job?.status === 'running') {
-        loadJob();
-      }
-    }, 5000);
+    // Connect WebSocket if job is running or queued
+    if (job && (job.status === 'running' || job.status === 'queued')) {
+      connectWebSocket();
+    }
+  });
 
-    return () => clearInterval(interval);
+  onDestroy(() => {
+    disconnectWebSocket();
   });
 </script>
 
@@ -77,6 +196,19 @@
         </div>
         {#if job}
           <div class="flex items-center gap-2">
+            {#if job.status === 'running'}
+              {#if isConnected}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-green-600 bg-green-100">
+                  <span class="w-2 h-2 bg-green-600 rounded-full mr-1.5 animate-pulse"></span>
+                  Live Updates
+                </span>
+              {:else}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-yellow-600 bg-yellow-100">
+                  <span class="w-2 h-2 bg-yellow-600 rounded-full mr-1.5"></span>
+                  Reconnecting...
+                </span>
+              {/if}
+            {/if}
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {getStatusColor(job.status)}">
               {job.status}
             </span>
@@ -200,7 +332,30 @@
             </Card>
           {/if}
 
-          <!-- Logs -->
+          <!-- Real-time Logs -->
+          {#if (job.status === 'running' || job.status === 'queued') && logs.length > 0}
+            <Card>
+              <div class="p-6">
+                <div class="flex justify-between items-center mb-4">
+                  <h2 class="text-xl font-semibold text-gray-900">Real-time Logs</h2>
+                  {#if isConnected}
+                    <span class="text-xs text-gray-500">Live</span>
+                  {/if}
+                </div>
+                
+                <div 
+                  bind:this={logsContainer}
+                  class="bg-gray-900 text-green-400 p-4 rounded-lg overflow-auto max-h-96 text-sm font-mono"
+                >
+                  {#each logs as log}
+                    <div class="mb-1">{log}</div>
+                  {/each}
+                </div>
+              </div>
+            </Card>
+          {/if}
+
+          <!-- Historical Logs -->
           {#if job.logs && job.logs.length > 0}
             <Card>
               <div class="p-6">

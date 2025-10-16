@@ -133,23 +133,34 @@
         <div class="mb-8">
           <Card>
             <h3 class="text-lg font-semibold text-gray-900 mb-4">System Status</h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            
+            <!-- System Metrics -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <div>
                 <div class="text-sm text-gray-500">CPU Cores</div>
                 <div class="font-medium">{systemStatus.system.cpu_count}</div>
+                {#if systemStatus.system.cpu_percent}
+                  <div class="text-xs text-gray-400">{systemStatus.system.cpu_percent.toFixed(1)}% used</div>
+                {/if}
               </div>
               <div>
-                <div class="text-sm text-gray-500">Memory</div>
+                <div class="text-sm text-gray-500">System Memory</div>
                 <div class="font-medium">
-                  {formatBytes(systemStatus.system.memory_available)} / {formatBytes(systemStatus.system.memory_total)}
+                  {formatBytes(systemStatus.system.memory_used)} / {formatBytes(systemStatus.system.memory_total)}
                 </div>
+                {#if systemStatus.system.memory_percent}
+                  <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                    <div class="bg-blue-600 h-1.5 rounded-full" style="width: {systemStatus.system.memory_percent}%"></div>
+                  </div>
+                  <div class="text-xs text-gray-400 mt-0.5">{systemStatus.system.memory_percent.toFixed(1)}% used</div>
+                {/if}
               </div>
               <div>
-                <div class="text-sm text-gray-500">GPU</div>
+                <div class="text-sm text-gray-500">GPU Status</div>
                 <div class="font-medium">
                   {#if systemStatus.gpu.available}
                     <Badge variant="success" size="sm">
-                      {systemStatus.gpu.device_name || 'Available'}
+                      {systemStatus.gpu.device_count || 0} GPU{(systemStatus.gpu.device_count || 0) > 1 ? 's' : ''}
                     </Badge>
                   {:else}
                     <Badge variant="error" size="sm">Not Available</Badge>
@@ -157,12 +168,90 @@
                 </div>
               </div>
               <div>
-                <div class="text-sm text-gray-500">Disk</div>
+                <div class="text-sm text-gray-500">Disk Space</div>
                 <div class="font-medium">
                   {formatBytes(systemStatus.system.disk_usage.free)} free
                 </div>
+                {#if systemStatus.system.disk_usage.percent}
+                  <div class="text-xs text-gray-400">{systemStatus.system.disk_usage.percent.toFixed(1)}% used</div>
+                {/if}
               </div>
             </div>
+
+            <!-- GPU Details -->
+            {#if systemStatus.gpu.available && systemStatus.gpu.devices}
+              <div class="border-t pt-4">
+                <h4 class="text-sm font-semibold text-gray-700 mb-3">GPU Details</h4>
+                <div class="space-y-4">
+                  {#each systemStatus.gpu.devices as gpu}
+                    <div class="bg-gray-50 rounded-lg p-4">
+                      <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2">
+                          <span class="text-lg">🎮</span>
+                          <div>
+                            <div class="font-medium text-gray-900">{gpu.name}</div>
+                            <div class="text-xs text-gray-500">GPU {gpu.id}</div>
+                          </div>
+                        </div>
+                        {#if gpu.temperature}
+                          <div class="text-sm">
+                            <span class="text-gray-500">Temp:</span>
+                            <span class="font-medium" class:text-orange-600={gpu.temperature > 80} class:text-yellow-600={gpu.temperature > 70 && gpu.temperature <= 80} class:text-green-600={gpu.temperature <= 70}>
+                              {gpu.temperature}°C
+                            </span>
+                          </div>
+                        {/if}
+                      </div>
+                      
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <!-- VRAM Usage -->
+                        <div>
+                          <div class="flex justify-between text-xs text-gray-600 mb-1">
+                            <span>VRAM</span>
+                            <span>{formatBytes(gpu.memory.used)} / {formatBytes(gpu.memory.total)}</span>
+                          </div>
+                          <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              class="h-2 rounded-full transition-all"
+                              class:bg-red-500={gpu.memory.used_percent > 90}
+                              class:bg-yellow-500={gpu.memory.used_percent > 70 && gpu.memory.used_percent <= 90}
+                              class:bg-green-500={gpu.memory.used_percent <= 70}
+                              style="width: {gpu.memory.used_percent}%"
+                            ></div>
+                          </div>
+                          <div class="text-xs text-gray-500 mt-0.5">{gpu.memory.used_percent}% used</div>
+                        </div>
+
+                        <!-- GPU Utilization -->
+                        {#if gpu.utilization.gpu !== null}
+                          <div>
+                            <div class="flex justify-between text-xs text-gray-600 mb-1">
+                              <span>GPU Utilization</span>
+                              <span>{gpu.utilization.gpu}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                              <div 
+                                class="bg-blue-500 h-2 rounded-full transition-all"
+                                style="width: {gpu.utilization.gpu}%"
+                              ></div>
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
+
+                      <!-- Power Usage -->
+                      {#if gpu.power}
+                        <div class="mt-3 text-xs text-gray-600">
+                          <span>Power:</span>
+                          <span class="font-medium text-gray-900">{gpu.power.usage.toFixed(1)}W</span>
+                          <span class="text-gray-400">/ {gpu.power.limit.toFixed(0)}W</span>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
           </Card>
         </div>
       {/if}

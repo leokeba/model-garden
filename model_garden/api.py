@@ -7,11 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from transformers import TrainerCallback
 
 from model_garden.training import ModelTrainer
 
@@ -58,6 +59,14 @@ class TrainingJobInfo(BaseModel):
     completed_at: Optional[str] = None
     progress: Optional[Dict] = None
     error_message: Optional[str] = None
+    hyperparameters: Optional[Dict] = None
+    lora_config: Optional[Dict] = None
+    from_hub: Optional[bool] = False
+    is_vision: Optional[bool] = False
+    model_type: Optional[str] = None
+    current_step: Optional[int] = None
+    total_steps: Optional[int] = None
+    current_epoch: Optional[int] = None
 
 
 class APIResponse(BaseModel):
@@ -80,6 +89,131 @@ class PaginatedResponse(BaseModel):
 training_jobs: Dict[str, Dict] = {}
 models_storage: Dict[str, Dict] = {}
 
+# Get the project root directory
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+
+def resolve_path(path_str: str) -> str:
+    """Resolve a path relative to the project root if it's not absolute.
+    
+    Args:
+        path_str: Path string (can be relative or absolute)
+        
+    Returns:
+        Absolute path string
+    """
+    path = Path(path_str)
+    if path.is_absolute():
+        return str(path)
+    else:
+        # Resolve relative to project root
+        resolved = (PROJECT_ROOT / path).resolve()
+        return str(resolved)
+
+
+# WebSocket connection manager
+class ConnectionManager:
+    """Manages WebSocket connections for real-time updates."""
+    
+    def __init__(self):
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+    
+    async def connect(self, websocket: WebSocket, job_id: str):
+        """Accept and store a new WebSocket connection."""
+        await websocket.accept()
+        if job_id not in self.active_connections:
+            self.active_connections[job_id] = []
+        self.active_connections[job_id].append(websocket)
+        print(f"✓ WebSocket connected for job {job_id} (total: {len(self.active_connections[job_id])})")
+    
+    def disconnect(self, websocket: WebSocket, job_id: str):
+        """Remove a WebSocket connection."""
+        if job_id in self.active_connections:
+            if websocket in self.active_connections[job_id]:
+                self.active_connections[job_id].remove(websocket)
+            if not self.active_connections[job_id]:
+                del self.active_connections[job_id]
+        print(f"✓ WebSocket disconnected for job {job_id}")
+    
+    async def send_update(self, job_id: str, message: dict):
+        """Send an update to all connections for a specific job."""
+        if job_id in self.active_connections:
+            disconnected = []
+            for connection in self.active_connections[job_id]:
+                try:
+                    await connection.send_json(message)
+                except Exception as e:
+                    print(f"Error sending to WebSocket: {e}")
+                    disconnected.append(connection)
+            
+            # Remove disconnected clients
+            for connection in disconnected:
+                self.disconnect(connection, job_id)
+    
+    async def broadcast_system_update(self, message: dict):
+        """Send a system-wide update to all connections."""
+        for job_id in list(self.active_connections.keys()):
+            await self.send_update(job_id, message)
+
+manager = ConnectionManager()
+
+
+class ProgressCallback(TrainerCallback):
+    """Custom callback to send training progress via WebSocket."""
+    
+    def __init__(self, job_id: str, manager: ConnectionManager):
+        self.job_id = job_id
+        self.manager = manager
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        """Called at the end of each training step."""
+        if state.global_step > 0:
+            # Calculate progress
+            if state.max_steps > 0:
+                total_steps = state.max_steps
+            else:
+                # Estimate total steps from num_train_epochs
+                total_steps = state.max_steps if state.max_steps > 0 else (len(state.train_dataloader) * args.num_train_epochs)
+            
+            current_epoch = state.epoch if hasattr(state, 'epoch') else 0
+            
+            # Update job progress
+            if self.job_id in training_jobs:
+                training_jobs[self.job_id]["progress"] = {
+                    "current_step": state.global_step,
+                    "total_steps": total_steps,
+                    "epoch": int(current_epoch) if current_epoch else 0
+                }
+                training_jobs[self.job_id]["current_step"] = state.global_step
+                training_jobs[self.job_id]["total_steps"] = total_steps
+                training_jobs[self.job_id]["current_epoch"] = int(current_epoch) if current_epoch else 0
+            
+            # Send WebSocket update
+            asyncio.run(self.manager.send_update(self.job_id, {
+                "type": "progress",
+                "job_id": self.job_id,
+                "progress": {
+                    "current_step": state.global_step,
+                    "total_steps": total_steps,
+                    "epoch": int(current_epoch) if current_epoch else 0
+                },
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }))
+    
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        """Called when logging occurs."""
+        if logs:
+            log_message = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" 
+                                       for k, v in logs.items() if k != "epoch"])
+            
+            # Send log via WebSocket
+            asyncio.run(self.manager.send_update(self.job_id, {
+                "type": "log",
+                "job_id": self.job_id,
+                "message": log_message,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }))
+
 
 def run_training_job(job_id: str):
     """Execute a training job in the background."""
@@ -89,6 +223,15 @@ def run_training_job(job_id: str):
         # Update job status to running
         job["status"] = "running"
         job["started_at"] = datetime.utcnow().isoformat() + "Z"
+        
+        # Notify WebSocket clients
+        asyncio.run(manager.send_update(job_id, {
+            "type": "status_update",
+            "job_id": job_id,
+            "status": "running",
+            "started_at": job["started_at"],
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }))
         
         print(f"🚀 Starting training job {job_id}: {job['name']}")
         
@@ -125,8 +268,9 @@ def run_training_job(job_id: str):
             )
             formatted_dataset = trainer.format_dataset(train_dataset)
             
-            # Train
+            # Train with progress callback
             hyperparams = job["hyperparameters"]
+            progress_callback = ProgressCallback(job_id, manager)
             trainer.train(
                 dataset=formatted_dataset,
                 output_dir=job["output_dir"],
@@ -137,6 +281,7 @@ def run_training_job(job_id: str):
                 max_steps=hyperparams.get("max_steps", -1),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
+                callbacks=[progress_callback],
             )
             
             # Save model
@@ -173,8 +318,9 @@ def run_training_job(job_id: str):
                 output_field=job["hyperparameters"].get("output_field", "output"),
             )
             
-            # Train
+            # Train with progress callback
             hyperparams = job["hyperparameters"]
+            progress_callback = ProgressCallback(job_id, manager)
             trainer.train(
                 dataset=train_dataset,
                 output_dir=job["output_dir"],
@@ -185,6 +331,7 @@ def run_training_job(job_id: str):
                 max_steps=hyperparams.get("max_steps", -1),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
+                callbacks=[progress_callback],
             )
             
             # Save final model
@@ -196,6 +343,16 @@ def run_training_job(job_id: str):
         job["status"] = "completed"
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
         job["progress"] = {"current_step": 100, "total_steps": 100, "epoch": hyperparams.get("num_epochs", 3)}
+        
+        # Notify WebSocket clients
+        asyncio.run(manager.send_update(job_id, {
+            "type": "status_update",
+            "job_id": job_id,
+            "status": "completed",
+            "completed_at": job["completed_at"],
+            "progress": job["progress"],
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }))
         
         # Add model to storage
         model_id = Path(job["output_dir"]).name
@@ -218,6 +375,17 @@ def run_training_job(job_id: str):
         job["status"] = "failed"
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
         job["error_message"] = str(e)
+        
+        # Notify WebSocket clients
+        asyncio.run(manager.send_update(job_id, {
+            "type": "status_update",
+            "job_id": job_id,
+            "status": "failed",
+            "completed_at": job["completed_at"],
+            "error_message": str(e),
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }))
+        
         print(f"❌ Training job {job_id} failed: {e}")
 
 
@@ -473,14 +641,18 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     
     job_id = str(uuid.uuid4())
     
+    # Resolve paths relative to project root
+    dataset_path = resolve_path(job_request.dataset_path)
+    output_dir = resolve_path(job_request.output_dir)
+    
     # Create job record
     job_info = {
         "id": job_id,
         "name": job_request.name,
         "status": "queued",
         "base_model": job_request.base_model,
-        "dataset_path": job_request.dataset_path,
-        "output_dir": job_request.output_dir,
+        "dataset_path": dataset_path,
+        "output_dir": output_dir,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "started_at": None,
         "completed_at": None,
@@ -538,10 +710,66 @@ async def cancel_training_job(job_id: str):
     # Update job status
     job["status"] = "cancelled"
     
+    # Notify WebSocket clients
+    await manager.send_update(job_id, {
+        "type": "status_update",
+        "job_id": job_id,
+        "status": "cancelled",
+        "timestamp": datetime.utcnow().isoformat() + "Z"
+    })
+    
     return APIResponse(
         success=True,
         message=f"Training job {job_id} cancelled successfully"
     )
+
+
+@app.websocket("/ws/training/{job_id}")
+async def websocket_training_updates(websocket: WebSocket, job_id: str):
+    """WebSocket endpoint for real-time training job updates.
+    
+    Sends updates about:
+    - Job status changes (queued -> running -> completed/failed)
+    - Training progress (steps, epochs, loss)
+    - Logs and error messages
+    """
+    await manager.connect(websocket, job_id)
+    
+    try:
+        # Send initial job status
+        if job_id in training_jobs:
+            await websocket.send_json({
+                "type": "initial_state",
+                "job": training_jobs[job_id],
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            })
+        else:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Training job {job_id} not found",
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            })
+            await websocket.close()
+            return
+        
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                # Wait for messages from client (e.g., ping/pong for keepalive)
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": datetime.utcnow().isoformat() + "Z"
+                    })
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"WebSocket error: {e}")
+                break
+    
+    finally:
+        manager.disconnect(websocket, job_id)
 
 
 # ============================================================================
@@ -1327,29 +1555,106 @@ async def system_status():
     import psutil
     import torch
     
-    # GPU information
+    # GPU information with detailed metrics
     gpu_info = {}
     if torch.cuda.is_available():
-        gpu_info = {
-            "available": True,
-            "device_count": torch.cuda.device_count(),
-            "current_device": torch.cuda.current_device(),
-            "device_name": torch.cuda.get_device_name(),
-            "memory_allocated": torch.cuda.memory_allocated(),
-            "memory_reserved": torch.cuda.memory_reserved(),
-        }
+        try:
+            # Try to use pynvml for detailed GPU metrics
+            import pynvml
+            pynvml.nvmlInit()
+            
+            device_count = torch.cuda.device_count()
+            gpus = []
+            
+            for i in range(device_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                
+                # Get GPU info
+                name = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(name, bytes):
+                    name = name.decode('utf-8')
+                
+                # Memory info
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                
+                # Utilization info
+                try:
+                    utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    gpu_util = utilization.gpu
+                    mem_util = utilization.memory
+                except:
+                    gpu_util = None
+                    mem_util = None
+                
+                # Temperature
+                try:
+                    temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                except:
+                    temperature = None
+                
+                # Power usage
+                try:
+                    power_usage = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0  # Convert mW to W
+                    power_limit = pynvml.nvmlDeviceGetPowerManagementLimit(handle) / 1000.0
+                except:
+                    power_usage = None
+                    power_limit = None
+                
+                gpus.append({
+                    "id": i,
+                    "name": name,
+                    "memory": {
+                        "total": mem_info.total,
+                        "used": mem_info.used,
+                        "free": mem_info.free,
+                        "used_percent": round((mem_info.used / mem_info.total) * 100, 1),
+                    },
+                    "utilization": {
+                        "gpu": gpu_util,
+                        "memory": mem_util,
+                    },
+                    "temperature": temperature,
+                    "power": {
+                        "usage": power_usage,
+                        "limit": power_limit,
+                    } if power_usage is not None else None,
+                })
+            
+            pynvml.nvmlShutdown()
+            
+            gpu_info = {
+                "available": True,
+                "device_count": device_count,
+                "devices": gpus,
+            }
+            
+        except Exception as e:
+            # Fallback to basic torch info if pynvml fails
+            print(f"Failed to get detailed GPU info: {e}")
+            gpu_info = {
+                "available": True,
+                "device_count": torch.cuda.device_count(),
+                "current_device": torch.cuda.current_device(),
+                "device_name": torch.cuda.get_device_name(),
+                "memory_allocated": torch.cuda.memory_allocated(),
+                "memory_reserved": torch.cuda.memory_reserved(),
+            }
     else:
         gpu_info = {"available": False}
     
     return {
         "system": {
             "cpu_count": psutil.cpu_count(),
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
             "memory_total": psutil.virtual_memory().total,
             "memory_available": psutil.virtual_memory().available,
+            "memory_used": psutil.virtual_memory().used,
+            "memory_percent": psutil.virtual_memory().percent,
             "disk_usage": {
                 "total": psutil.disk_usage("/").total,
                 "used": psutil.disk_usage("/").used,
                 "free": psutil.disk_usage("/").free,
+                "percent": psutil.disk_usage("/").percent,
             },
         },
         "gpu": gpu_info,

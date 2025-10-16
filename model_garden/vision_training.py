@@ -475,6 +475,7 @@ class VisionLanguageTrainer:
         logging_steps: int = 10,
         save_steps: int = 100,
         optim: str = "adamw_8bit",
+        callbacks: Optional[List] = None,
     ) -> None:
         """Train the vision-language model.
 
@@ -490,6 +491,7 @@ class VisionLanguageTrainer:
             logging_steps: Log every N steps
             save_steps: Save checkpoint every N steps
             optim: Optimizer to use
+            callbacks: Optional list of TrainerCallback instances
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
 
@@ -539,6 +541,7 @@ class VisionLanguageTrainer:
             args=training_args,
             train_dataset=train_dataset,
             data_collator=UnslothVisionDataCollator(self.model, self.processor),
+            callbacks=callbacks if callbacks else [],
         )
 
         console.print("[cyan]Training in progress...[/cyan]")
