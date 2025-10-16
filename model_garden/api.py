@@ -976,6 +976,349 @@ async def openai_chat_completions(request: ChatCompletionRequest):
 
 
 # ============================================================================
+# Dataset endpoints
+# ============================================================================
+from fastapi import UploadFile, File
+import json
+import pandas as pd
+
+@app.get("/api/v1/datasets")
+async def list_datasets():
+    """List all available datasets."""
+    datasets_dir = Path("./storage/datasets")
+    datasets_dir.mkdir(parents=True, exist_ok=True)
+    
+    datasets = []
+    for dataset_file in datasets_dir.iterdir():
+        if dataset_file.is_file():
+            # Get file stats
+            stat = dataset_file.stat()
+            
+            # Try to count examples
+            example_count = 0
+            try:
+                if dataset_file.suffix == ".jsonl":
+                    with open(dataset_file, "r") as f:
+                        example_count = sum(1 for _ in f)
+                elif dataset_file.suffix == ".json":
+                    with open(dataset_file, "r") as f:
+                        data = json.load(f)
+                        example_count = len(data) if isinstance(data, list) else 1
+                elif dataset_file.suffix == ".csv":
+                    df = pd.read_csv(dataset_file)
+                    example_count = len(df)
+                elif dataset_file.suffix == ".parquet":
+                    df = pd.read_parquet(dataset_file)
+                    example_count = len(df)
+            except Exception as e:
+                print(f"Warning: Could not count examples in {dataset_file.name}: {e}")
+            
+            datasets.append({
+                "name": dataset_file.name,
+                "path": str(dataset_file),
+                "size": stat.st_size,
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat() + "Z",
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z",
+                "format": dataset_file.suffix.lstrip('.'),
+                "examples": example_count,
+            })
+    
+    # Sort by modified date (newest first)
+    datasets.sort(key=lambda x: x["modified_at"], reverse=True)
+    
+    return {"datasets": datasets}
+
+
+@app.post("/api/v1/datasets/upload")
+async def upload_dataset(file: UploadFile = File(...)):
+    """Upload a dataset file."""
+    datasets_dir = Path("./storage/datasets")
+    datasets_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Validate file extension
+    allowed_extensions = [".json", ".jsonl", ".csv", ".txt", ".parquet"]
+    file_ext = Path(file.filename).suffix.lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file format. Allowed formats: {', '.join(allowed_extensions)}"
+        )
+    
+    # Save file
+    file_path = datasets_dir / file.filename
+    
+    # Check if file already exists
+    if file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Dataset {file.filename} already exists"
+        )
+    
+    try:
+        # Write file in chunks
+        with open(file_path, "wb") as f:
+            while chunk := await file.read(8192):  # Read 8KB at a time
+                f.write(chunk)
+        
+        # Get file stats
+        stat = file_path.stat()
+        
+        # Try to count examples
+        example_count = 0
+        try:
+            if file_ext == ".jsonl":
+                with open(file_path, "r") as f:
+                    example_count = sum(1 for _ in f)
+            elif file_ext == ".json":
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+                    example_count = len(data) if isinstance(data, list) else 1
+            elif file_ext == ".csv":
+                df = pd.read_csv(file_path)
+                example_count = len(df)
+            elif file_ext == ".parquet":
+                df = pd.read_parquet(file_path)
+                example_count = len(df)
+        except Exception as e:
+            print(f"Warning: Could not count examples: {e}")
+        
+        return {
+            "success": True,
+            "message": f"Dataset {file.filename} uploaded successfully",
+            "dataset": {
+                "name": file.filename,
+                "path": str(file_path),
+                "size": stat.st_size,
+                "format": file_ext.lstrip('.'),
+                "examples": example_count,
+            }
+        }
+        
+    except Exception as e:
+        # Clean up on error
+        if file_path.exists():
+            file_path.unlink()
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload dataset: {str(e)}"
+        )
+
+
+@app.get("/api/v1/datasets/{dataset_name}/preview")
+async def preview_dataset(dataset_name: str, limit: int = 10):
+    """Preview samples from a dataset."""
+    datasets_dir = Path("./storage/datasets")
+    file_path = datasets_dir / dataset_name
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset {dataset_name} not found"
+        )
+    
+    try:
+        samples = []
+        file_ext = file_path.suffix.lower()
+        
+        if file_ext == ".jsonl":
+            with open(file_path, "r") as f:
+                for i, line in enumerate(f):
+                    if i >= limit:
+                        break
+                    try:
+                        samples.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        samples.append({"_error": "Invalid JSON", "_raw": line})
+        
+        elif file_ext == ".json":
+            with open(file_path, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    samples = data[:limit]
+                else:
+                    samples = [data]
+        
+        elif file_ext == ".csv":
+            df = pd.read_csv(file_path, nrows=limit)
+            samples = df.to_dict('records')
+        
+        elif file_ext == ".parquet":
+            df = pd.read_parquet(file_path)
+            samples = df.head(limit).to_dict('records')
+        
+        elif file_ext == ".txt":
+            with open(file_path, "r") as f:
+                for i, line in enumerate(f):
+                    if i >= limit:
+                        break
+                    samples.append({"text": line.strip()})
+        
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot preview {file_ext} files"
+            )
+        
+        return {"samples": samples, "count": len(samples)}
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to preview dataset: {str(e)}"
+        )
+
+
+@app.delete("/api/v1/datasets/{dataset_name}")
+async def delete_dataset(dataset_name: str):
+    """Delete a dataset."""
+    datasets_dir = Path("./storage/datasets")
+    file_path = datasets_dir / dataset_name
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset {dataset_name} not found"
+        )
+    
+    try:
+        file_path.unlink()
+        return {
+            "success": True,
+            "message": f"Dataset {dataset_name} deleted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete dataset: {str(e)}"
+        )
+
+
+# ============================================================================
+# Carbon/Emissions endpoints
+# ============================================================================
+
+# Mock emissions data storage (in production, this would be in a database)
+emissions_data = []
+
+@app.get("/api/v1/carbon/emissions")
+async def list_emissions():
+    """List all carbon emissions records."""
+    # If no data, generate some mock data for testing
+    if not emissions_data:
+        # Generate mock emissions for the training jobs we have
+        for job_id, job in training_jobs.items():
+            if job["status"] in ["completed", "running"]:
+                # Calculate mock emissions based on job duration and GPU usage
+                duration_hours = 0.5  # Mock duration
+                
+                emissions_data.append({
+                    "id": f"emission-{job_id}",
+                    "job_id": job_id,
+                    "job_name": job["name"],
+                    "job_type": "training",
+                    "stage": "training",
+                    "timestamp": job.get("completed_at") or job.get("started_at") or job["created_at"],
+                    "duration": duration_hours * 3600,  # seconds
+                    "emissions": round(duration_hours * 0.12, 4),  # kg CO2e
+                    "emissions_rate": 0.12,  # kg CO2e/hour
+                    "energy_consumed": round(duration_hours * 0.5, 4),  # kWh
+                    "cpu_energy": round(duration_hours * 0.1, 4),
+                    "gpu_energy": round(duration_hours * 0.35, 4),
+                    "ram_energy": round(duration_hours * 0.05, 4),
+                    "cpu_power": 100,  # watts
+                    "gpu_power": 350,
+                    "ram_power": 50,
+                    "carbon_intensity": 240,  # g CO2e/kWh
+                    "location": "US-CA",
+                    "has_boamps_report": True,
+                })
+    
+    return {"emissions": emissions_data}
+
+
+@app.get("/api/v1/carbon/boamps/{job_id}")
+async def get_boamps_report(job_id: str):
+    """Get BoAmps report for a specific job."""
+    # Check if job exists
+    if job_id not in training_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training job {job_id} not found"
+        )
+    
+    job = training_jobs[job_id]
+    
+    # Generate mock BoAmps report
+    report = {
+        "job_id": job_id,
+        "job_name": job["name"],
+        "model": job["base_model"],
+        "timestamp": job.get("completed_at") or datetime.utcnow().isoformat() + "Z",
+        
+        # Summary
+        "summary": {
+            "total_emissions": 0.12,  # kg CO2e
+            "total_energy": 0.5,  # kWh
+            "duration": 1800,  # seconds (30 minutes)
+            "carbon_intensity": 240,  # g CO2e/kWh
+        },
+        
+        # Detailed breakdown
+        "breakdown": {
+            "cpu": {
+                "energy_kwh": 0.1,
+                "emissions_kg": 0.024,
+                "power_w": 100,
+                "utilization": 0.75,
+            },
+            "gpu": {
+                "energy_kwh": 0.35,
+                "emissions_kg": 0.084,
+                "power_w": 350,
+                "utilization": 0.95,
+            },
+            "ram": {
+                "energy_kwh": 0.05,
+                "emissions_kg": 0.012,
+                "power_w": 50,
+                "utilization": 0.60,
+            },
+        },
+        
+        # Location and grid info
+        "location": {
+            "region": "US-CA",
+            "country": "United States",
+            "grid_carbon_intensity": 240,
+        },
+        
+        # Training specifics
+        "training": {
+            "base_model": job["base_model"],
+            "dataset": job["dataset_path"],
+            "num_epochs": job["hyperparameters"].get("num_epochs", 3),
+            "batch_size": job["hyperparameters"].get("batch_size", 2),
+            "learning_rate": job["hyperparameters"].get("learning_rate", 2e-4),
+        },
+        
+        # Comparisons
+        "comparisons": {
+            "equivalent_miles_driven": round(0.12 / 0.000411, 2),  # miles
+            "equivalent_hours_of_tv": round(0.5 / 0.097, 1),  # hours
+            "trees_to_offset": round(0.12 / 21, 4),  # trees for one year
+        },
+        
+        # Report metadata
+        "report_version": "1.0",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    
+    return report
+
+
+# ============================================================================
 # System endpoints
 # ============================================================================
 @app.get("/api/v1/system/status")
@@ -1024,13 +1367,17 @@ if frontend_build_path.exists():
     # Serve static assets
     app.mount("/_app", StaticFiles(directory=str(frontend_build_path / "_app")), name="static-assets")
     
-    # Catch-all route for SvelteKit client-side routing
+    # Catch-all route for SvelteKit client-side routing (must be last!)
     from fastapi.responses import FileResponse
     
-    @app.get("/{full_path:path}")
+    @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
-        """Serve the SvelteKit SPA for all non-API routes."""
-        # Try to serve specific HTML files first (e.g., models.html)
+        """Serve the SvelteKit SPA for all non-API routes.
+        
+        Note: This route is defined last so API routes take priority.
+        FastAPI matches routes in the order they're defined.
+        """
+        # Try to serve specific HTML files first (e.g., datasets.html, models.html)
         html_file = frontend_build_path / f"{full_path}.html"
         if html_file.exists():
             return FileResponse(html_file)

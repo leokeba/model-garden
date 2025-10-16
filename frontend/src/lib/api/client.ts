@@ -57,6 +57,7 @@ interface TrainingJob {
 
 interface PaginatedResponse<T> {
   items: T[];
+  models?: T[]; // For backward compatibility
   total: number;
   page: number;
   page_size: number;
@@ -173,6 +174,31 @@ class APIClient {
   async getHealth(): Promise<{ status: string; message: string }> {
     const response = await fetch(`${this.baseURL.replace('/api/v1', '')}/health`);
     return response.json();
+  }
+  
+  // Generic methods for other endpoints
+  async get<T = any>(endpoint: string): Promise<T> {
+    return this.request(endpoint);
+  }
+  
+  async post<T = any>(endpoint: string, data?: any): Promise<T> {
+    return this.request(endpoint, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+  
+  async put<T = any>(endpoint: string, data?: any): Promise<T> {
+    return this.request(endpoint, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+  
+  async delete<T = any>(endpoint: string): Promise<T> {
+    return this.request(endpoint, {
+      method: 'DELETE',
+    });
   }
 }
 
