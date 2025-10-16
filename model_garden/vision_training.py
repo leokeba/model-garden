@@ -54,6 +54,9 @@ class VisionLanguageTrainer:
         """
         console.print(f"[cyan]Loading vision-language model: {self.base_model}[/cyan]")
         
+        # Get HuggingFace token from environment for private models
+        hf_token = os.getenv('HF_TOKEN')
+        
         try:
             # Try loading with Unsloth first (if supported)
             from unsloth import FastLanguageModel
@@ -71,23 +74,25 @@ class VisionLanguageTrainer:
                         max_seq_length=self.max_seq_length,
                         dtype=self.dtype,
                         load_in_4bit=self.load_in_4bit,
+                        token=hf_token,
                     )
                     # Load processor for vision models
                     from transformers import AutoProcessor
-                    self.processor = AutoProcessor.from_pretrained(self.base_model)
+                    self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
                     console.print("[green]✓[/green] Model loaded with Unsloth optimizations")
                 except Exception as unsloth_error:
                     # Fall back to transformers for vision models
                     console.print(f"[yellow]⚠️  Unsloth not supported, using transformers[/yellow]")
                     from transformers import AutoModelForVision2Seq, AutoProcessor
                     
-                    self.processor = AutoProcessor.from_pretrained(self.base_model)
+                    self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
                     self.tokenizer = self.processor.tokenizer
                     
                     self.model = AutoModelForVision2Seq.from_pretrained(
                         self.base_model,
                         device_map="auto",
                         load_in_4bit=self.load_in_4bit if self.load_in_4bit else None,
+                        token=hf_token,
                     )
                     console.print("[green]✓[/green] Model loaded with transformers")
                     
@@ -208,8 +213,11 @@ class VisionLanguageTrainer:
         """
         console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset_name}[/cyan]")
         
+        # Get HuggingFace token from environment for private datasets
+        hf_token = os.getenv('HF_TOKEN')
+        
         try:
-            dataset = load_dataset(dataset_name, split=split, **kwargs)
+            dataset = load_dataset(dataset_name, split=split, token=hf_token, **kwargs)
             console.print(f"[green]✓[/green] Loaded {len(dataset)} examples from Hub")
             return dataset
         except Exception as e:
@@ -318,7 +326,9 @@ class VisionLanguageTrainer:
                     item_type = item.get("type", "")
                     if item_type == "text" and not result["text"]:
                         result["text"] = item.get("text", "")
-                    elif item_type == "image" and not result["image"]:
+                    elif item_type in ("image", "image_url") and not result["image"]:
+                        # Handle both old format (type: "image", image: "...") 
+                        # and new format (type: "image_url", image_url: {url: "..."})
                         image_data = item.get("image", item.get("image_url", {}))
                         if isinstance(image_data, dict):
                             image_data = image_data.get("url", "")
@@ -356,7 +366,7 @@ class VisionLanguageTrainer:
                "messages": [
                    {"role": "system", "content": [{"type": "text", "text": "..."}]},
                    {"role": "user", "content": [
-                       {"type": "image", "image": "data:image/jpeg;base64,..."},
+                       {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
                        {"type": "text", "text": "..."}
                    ]},
                    {"role": "assistant", "content": [{"type": "text", "text": "..."}]}
@@ -365,6 +375,7 @@ class VisionLanguageTrainer:
            
         Note: OpenAI messages format is automatically converted to simple format
         for compatibility with UnslothVisionDataCollator.
+        Also supports older format with {"type": "image", "image": "..."}.
 
         Returns list of message dictionaries for UnslothVisionDataCollator.
 

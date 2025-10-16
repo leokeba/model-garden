@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
+from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,6 +16,9 @@ from pydantic import BaseModel
 from transformers import TrainerCallback
 
 from model_garden.training import ModelTrainer
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # Pydantic models for API
@@ -371,10 +375,15 @@ def run_training_job(job_id: str):
         print(f"✅ Training job {job_id} completed successfully!")
         
     except Exception as e:
+        import traceback
         # Update job status to failed
         job["status"] = "failed"
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
         job["error_message"] = str(e)
+        
+        # Print full traceback for debugging
+        print(f"❌ Training job {job_id} failed: {e}")
+        traceback.print_exc()
         
         # Notify WebSocket clients
         asyncio.run(manager.send_update(job_id, {
@@ -385,8 +394,6 @@ def run_training_job(job_id: str):
             "error_message": str(e),
             "timestamp": datetime.utcnow().isoformat() + "Z"
         }))
-        
-        print(f"❌ Training job {job_id} failed: {e}")
 
 
 @asynccontextmanager
@@ -641,8 +648,8 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     
     job_id = str(uuid.uuid4())
     
-    # Resolve paths relative to project root
-    dataset_path = resolve_path(job_request.dataset_path)
+    # Only resolve paths for local files, not HuggingFace Hub datasets
+    dataset_path = job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
     output_dir = resolve_path(job_request.output_dir)
     
     # Create job record

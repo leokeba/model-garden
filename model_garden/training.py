@@ -63,11 +63,15 @@ class ModelTrainer:
         ) as progress:
             progress.add_task(description="Loading model...", total=None)
 
+            # Get HuggingFace token from environment for private models
+            hf_token = os.getenv('HF_TOKEN')
+            
             self.model, self.tokenizer = FastLanguageModel.from_pretrained(
                 model_name=self.base_model,
                 max_seq_length=self.max_seq_length,
                 dtype=self.dtype,
                 load_in_4bit=self.load_in_4bit,
+                token=hf_token,
             )
 
         console.print("[green]✓[/green] Model loaded successfully")
@@ -159,7 +163,11 @@ class ModelTrainer:
             Loaded dataset
         """
         console.print(f"[cyan]Loading dataset from Hub: {dataset_name}[/cyan]")
-        dataset = load_dataset(dataset_name, split=split)
+        
+        # Get HuggingFace token from environment for private datasets
+        hf_token = os.getenv('HF_TOKEN')
+        
+        dataset = load_dataset(dataset_name, split=split, token=hf_token)
         console.print(f"[green]✓[/green] Loaded {len(dataset)} examples")
         return dataset
 
