@@ -97,7 +97,7 @@ class InferenceService:
     async def generate(
         self,
         prompt: str,
-        max_tokens: int = 256,
+        max_tokens: Optional[int] = None,
         temperature: float = 0.7,
         top_p: float = 0.95,
         top_k: int = -1,
@@ -112,7 +112,7 @@ class InferenceService:
 
         Args:
             prompt: Input text prompt
-            max_tokens: Maximum number of tokens to generate
+            max_tokens: Maximum number of tokens to generate (None = auto, default 512)
             temperature: Sampling temperature (0.0-2.0)
             top_p: Nucleus sampling probability
             top_k: Top-k sampling (-1 to disable)
@@ -130,6 +130,13 @@ class InferenceService:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
         from vllm import SamplingParams
+        
+        # Set default max_tokens if not provided
+        if max_tokens is None:
+            if structured_outputs:
+                max_tokens = 2048  # Higher default for structured outputs
+            else:
+                max_tokens = 512  # Standard default
         
         # Create structured outputs params if provided
         structured_outputs_params = None
@@ -190,8 +197,28 @@ class InferenceService:
                     # Fall through to base64 handling
                 
                 if img_data.startswith(('http://', 'https://')):
-                    # Pass URL directly - vLLM will handle loading
-                    loaded_images.append(img_data)
+                    # Download the image from URL and save to temp file
+                    # vLLM's Qwen2.5-VL processor doesn't handle URL downloading
+                    try:
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                        }
+                        response = requests.get(img_data, timeout=10, headers=headers)
+                        response.raise_for_status()
+                        img = Image.open(BytesIO(response.content))
+                        # Ensure image is in RGB mode for vLLM compatibility
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        
+                        # Save to temporary file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.png', mode='wb') as tmp_file:
+                            img.save(tmp_file, format='PNG')
+                            img_path = tmp_file.name
+                            print(f"✅ Downloaded image from URL: {img.size} {img.mode}, saved to {img_path}")
+                            loaded_images.append(img_path)
+                    except Exception as e:
+                        print(f"❌ Failed to download image from URL {img_data}: {e}")
+                        raise
                 elif '/' not in img_data or len(img_data) > 200:
                     # Likely base64 data (no path separators, or long string)
                     # For vLLM multiprocessing, we need to save to a temp file instead of passing PIL objects
@@ -296,7 +323,7 @@ class InferenceService:
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
-        max_tokens: int = 256,
+        max_tokens: Optional[int] = None,
         temperature: float = 0.7,
         top_p: float = 0.95,
         stream: bool = False,
@@ -308,7 +335,7 @@ class InferenceService:
 
         Args:
             messages: List of message dicts with 'role' and 'content'
-            max_tokens: Maximum tokens to generate
+            max_tokens: Maximum tokens to generate (None = auto-determine, default 512)
             temperature: Sampling temperature
             top_p: Nucleus sampling probability
             stream: Whether to stream the response
@@ -321,6 +348,13 @@ class InferenceService:
         """
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        # Set default max_tokens if not provided
+        if max_tokens is None:
+            if structured_outputs:
+                max_tokens = 2048  # Higher default for structured outputs
+            else:
+                max_tokens = 512  # Standard default
 
         # Format messages into a single prompt
         # This is a simple implementation - you may need to customize for specific models

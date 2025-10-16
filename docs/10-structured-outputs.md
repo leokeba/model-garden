@@ -13,6 +13,7 @@ Structured outputs leverage vLLM's guided generation capabilities to ensure that
 - ✅ **Pydantic Integration**: Generate schemas from Pydantic models
 - ✅ **Complex Schemas**: Nested objects, arrays, and `$ref` support
 - ✅ **Type Safety**: Guaranteed valid JSON matching your schema
+- ✅ **Vision Model Support**: Works with image inputs for multimodal structured extraction
 
 ## Quick Start
 
@@ -265,6 +266,52 @@ for item in items.items:
     print(f"{item.title}: ${item.price}")
 ```
 
+### Example 4: Vision Model with Structured Output
+
+Extract structured information from images using vision-language models:
+
+```python
+from pydantic import BaseModel
+from typing import List
+
+class ImageAnalysis(BaseModel):
+    description: str
+    main_objects: List[str]
+    colors: List[str]
+    scene_type: str
+
+schema = ImageAnalysis.model_json_schema()
+
+response = requests.post(
+    "http://localhost:8000/v1/chat/completions",
+    json={
+        "model": "Qwen/Qwen2.5-VL-7B-Instruct",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this image"},
+                    {"type": "image_url", "image_url": {"url": "https://example.com/image.jpg"}}
+                ]
+            }
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ImageAnalysis",
+                "schema": schema
+            }
+        }
+    }
+)
+
+analysis = ImageAnalysis.model_validate_json(
+    response.json()["choices"][0]["message"]["content"]
+)
+print(f"Description: {analysis.description}")
+print(f"Objects: {', '.join(analysis.main_objects)}")
+```
+
 ## Using with curl
 
 ### Generic JSON Object
@@ -416,6 +463,49 @@ Model Garden converts OpenAI's `response_format` to vLLM's `StructuredOutputsPar
 - Falls back gracefully for older versions with a warning
 - Tested with Qwen, Llama, and other popular models
 
+### Vision Model Support
+
+Structured outputs work seamlessly with vision-language models:
+
+- **Supported Models**: Qwen2.5-VL, LLaVA, and other multimodal models
+- **Image Formats**: URLs, file paths, and base64-encoded data
+- **Use Cases**: 
+  - Product extraction from images
+  - Document parsing with structured data
+  - Image classification with detailed attributes
+  - Scene understanding with object detection
+
+Example workflow:
+```python
+# 1. Define schema for image analysis
+class ProductInfo(BaseModel):
+    name: str
+    category: str
+    features: List[str]
+    price_estimate: Optional[str]
+
+# 2. Send image + structured output request
+response = client.chat.completions.create(
+    model="Qwen/Qwen2.5-VL-7B-Instruct",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Extract product info"},
+            {"type": "image_url", "image_url": {"url": image_url}}
+        ]
+    }],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {"name": "ProductInfo", "schema": schema}
+    }
+)
+
+# 3. Get validated structured data
+product = ProductInfo.model_validate_json(result)
+```
+
+See `examples/structured_output_vision_test.py` for complete examples.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -458,7 +548,7 @@ logging.basicConfig(level=logging.INFO)
 Run the test suite to verify everything works:
 
 ```bash
-# Start the API server
+# Text-only models
 model-garden serve --model Qwen/Qwen2.5-3B-Instruct
 
 # In another terminal, run tests
@@ -472,6 +562,22 @@ Expected output:
 ✅ Test 3: Complex Nested Schema - PASSED
 ✅ Test 4: Without Structured Output (Control) - PASSED
 ```
+
+### Testing with Vision Models
+
+```bash
+# Start with a vision model
+model-garden serve --model Qwen/Qwen2.5-VL-7B-Instruct
+
+# Run vision-specific tests
+python examples/structured_output_vision_test.py
+```
+
+This will test:
+- Generic JSON extraction from images
+- Specific schema validation with image inputs
+- Product information extraction from images
+- Local image file support with structured outputs
 
 ## Future Enhancements
 

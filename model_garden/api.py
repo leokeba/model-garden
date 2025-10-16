@@ -243,37 +243,21 @@ async def lifespan(app: FastAPI):
     
     # Auto-load inference model if specified
     autoload_model = os.getenv("MODEL_GARDEN_AUTOLOAD_MODEL")
-    loaded_service = None
-    
     if autoload_model:
         print(f"🔄 Auto-loading inference model: {autoload_model}")
         try:
             from model_garden.inference import InferenceService, set_inference_service
             
-            # Get optional parameters from environment
-            tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
-            gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.9"))
-            quantization = os.getenv("MODEL_GARDEN_QUANTIZATION")
-            max_model_len = os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")
-            if max_model_len:
-                max_model_len = int(max_model_len)
-            
-            loaded_service = InferenceService(
-                model_path=autoload_model,
-                tensor_parallel_size=tensor_parallel_size,
-                gpu_memory_utilization=gpu_memory_utilization,
-                quantization=quantization,
-                max_model_len=max_model_len
-            )
-            await loaded_service.load_model()
-            set_inference_service(loaded_service)
+            inference_service = InferenceService(model_path=autoload_model)
+            await inference_service.load_model()
+            set_inference_service(inference_service)  # Register globally
             print(f"✅ Inference model loaded: {autoload_model}")
         except Exception as e:
             print(f"❌ Failed to auto-load model: {e}")
             import traceback
             traceback.print_exc()
     
-    print("�🚀 Model Garden API ready!")
+    print("🚀 Model Garden API ready!")
     
     yield
     
@@ -281,9 +265,12 @@ async def lifespan(app: FastAPI):
     print("🌱 Model Garden API shutting down...")
     
     # Cleanup inference service if loaded
-    if loaded_service is not None:
+    from model_garden.inference import get_inference_service, set_inference_service
+    inference_service = get_inference_service()
+    if inference_service is not None:
         try:
-            await loaded_service.close()
+            await inference_service.close()
+            set_inference_service(None)
         except Exception as e:
             print(f"Warning: Error closing inference service: {e}")
 
@@ -644,7 +631,7 @@ class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
     model: Optional[str] = None  # Model name (optional, we use the loaded model)
     messages: List[ChatMessage]
-    max_tokens: Optional[int] = 256
+    max_tokens: Optional[int] = None  # None = auto-determine based on response_format
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.95
     top_k: Optional[int] = -1
@@ -935,6 +922,23 @@ async def chat_completions(request: ChatCompletionRequest):
             if structured_outputs:
                 gen_params["structured_outputs"] = structured_outputs
                 print(f"✅ Added structured output parameters: {list(structured_outputs.keys())}")
+                
+                # Auto-increase max_tokens for structured outputs if not specified
+                if request.max_tokens is None:
+                    # Estimate needed tokens based on schema complexity
+                    if request.response_format.type == "json_schema" and request.response_format.json_schema:
+                        # For schemas, use 2048 tokens as a safe default
+                        gen_params["max_tokens"] = 2048
+                        print(f"⚙️  Auto-set max_tokens=2048 for JSON schema output")
+                    else:
+                        # For generic json_object, use 1024 tokens
+                        gen_params["max_tokens"] = 1024
+                        print(f"⚙️  Auto-set max_tokens=1024 for generic JSON output")
+        
+        # If still no max_tokens set, use reasonable default
+        if gen_params["max_tokens"] is None:
+            gen_params["max_tokens"] = 512  # Higher than old 256 default
+            print(f"⚙️  Using default max_tokens=512")
         
         if request.stream:
             # Streaming response

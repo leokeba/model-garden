@@ -685,27 +685,33 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
             --quantization awq
     """
     try:
+        from model_garden.inference import InferenceService, set_inference_service
         import uvicorn
-        import os
+        import asyncio
         
         console.print("\n[bold cyan]🚀 Model Garden - Inference Server[/bold cyan]\n")
         console.print(f"[cyan]Loading model:[/cyan] {model_path}")
         
-        # Set environment variable for the API lifespan to load the model
-        os.environ["MODEL_GARDEN_AUTOLOAD_MODEL"] = model_path
-        if tensor_parallel_size != 1:
-            os.environ["MODEL_GARDEN_TENSOR_PARALLEL_SIZE"] = str(tensor_parallel_size)
-        if gpu_memory_utilization != 0.9:
-            os.environ["MODEL_GARDEN_GPU_MEMORY_UTILIZATION"] = str(gpu_memory_utilization)
-        if quantization:
-            os.environ["MODEL_GARDEN_QUANTIZATION"] = quantization
-        if max_model_len:
-            os.environ["MODEL_GARDEN_MAX_MODEL_LEN"] = str(max_model_len)
+        # Create inference service
+        service = InferenceService(
+            model_path=model_path,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            quantization=quantization,
+            max_model_len=max_model_len
+        )
         
+        # Load model
+        async def load_model():
+            await service.load_model()
+        
+        asyncio.run(load_model())
+        set_inference_service(service)
+        
+        console.print(f"[green]✅ Model loaded successfully![/green]")
         console.print(f"\n[cyan]Starting server on[/cyan] http://{host}:{port}")
         console.print(f"[cyan]API docs available at[/cyan] http://{host}:{port}/docs\n")
         console.print("[yellow]Press Ctrl+C to stop the server[/yellow]\n")
-        console.print("[dim]Model will be loaded when the server starts...[/dim]\n")
         
         # Start the server with minimal logging
         import logging

@@ -105,6 +105,24 @@ class ItemList(BaseModel):
     items: List[Item]
 ```
 
+### Vision Model Analysis
+```python
+class ImageAnalysis(BaseModel):
+    description: str
+    main_objects: List[str]
+    colors: List[str]
+    scene_type: str
+
+# Use with vision models
+messages = [{
+    "role": "user",
+    "content": [
+        {"type": "text", "text": "Analyze this image"},
+        {"type": "image_url", "image_url": {"url": image_url}}
+    ]
+}]
+```
+
 ## Tips
 
 ✅ Use `json_schema` for production applications  
@@ -121,6 +139,7 @@ class ItemList(BaseModel):
 
 - **Documentation**: `docs/10-structured-outputs.md`
 - **Test Suite**: `examples/structured_output_test.py`
+- **Vision Tests**: `examples/structured_output_vision_test.py`
 - **OpenAI Client**: `examples/structured_output_openai_client.py`
 - **Curl Examples**: `examples/structured_output_curl.sh`
 
@@ -129,13 +148,17 @@ class ItemList(BaseModel):
 - vLLM >= 0.11.0
 - OpenAI client (optional): `pip install openai`
 - Model Garden API running
+- For vision: Vision-language model (e.g., Qwen2.5-VL)
 
 ## More Info
 
 Run examples:
 ```bash
-# Test suite
+# Test suite (text models)
 python examples/structured_output_test.py
+
+# Vision model tests
+python examples/structured_output_vision_test.py
 
 # OpenAI client examples
 python examples/structured_output_openai_client.py
