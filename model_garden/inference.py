@@ -66,7 +66,6 @@ class InferenceService:
                 trust_remote_code=self.trust_remote_code,
                 enforce_eager=False,  # Use CUDA graphs for better performance
                 disable_log_stats=False,
-                enable_chunked_prefill=False,  # Disable V1 engine for multimodal support
             )
             
             # Create async engine
@@ -107,6 +106,7 @@ class InferenceService:
         stop: Optional[List[str]] = None,
         stream: bool = False,
         images: Optional[List[str]] = None,
+        structured_outputs: Optional[Dict] = None,
     ) -> Union[Dict, AsyncIterator[str]]:
         """Generate text from a prompt with optional multimodal inputs.
 
@@ -121,6 +121,7 @@ class InferenceService:
             stop: List of stop sequences
             stream: Whether to stream the response
             images: List of image URLs or file paths (for vision models)
+            structured_outputs: Optional structured output parameters (json, regex, choice, grammar, structural_tag)
 
         Returns:
             Dict with text and usage, or async iterator of text chunks if streaming
@@ -129,6 +130,15 @@ class InferenceService:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
         from vllm import SamplingParams
+        
+        # Create structured outputs params if provided
+        structured_outputs_params = None
+        if structured_outputs:
+            try:
+                from vllm.sampling_params import StructuredOutputsParams
+                structured_outputs_params = StructuredOutputsParams(**structured_outputs)
+            except ImportError:
+                console.print("[yellow]Warning: StructuredOutputsParams not available in this vLLM version[/yellow]")
         
         # Create sampling parameters
         sampling_params = SamplingParams(
@@ -139,6 +149,7 @@ class InferenceService:
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
             stop=stop,
+            structured_outputs=structured_outputs_params,
         )
         
         # Prepare inputs (text + optional images)
@@ -290,6 +301,7 @@ class InferenceService:
         top_p: float = 0.95,
         stream: bool = False,
         image: Optional[str] = None,
+        structured_outputs: Optional[Dict] = None,
         **kwargs
     ) -> Union[Dict, AsyncIterator[Dict]]:
         """OpenAI-compatible chat completion with vision support.
@@ -301,6 +313,7 @@ class InferenceService:
             top_p: Nucleus sampling probability
             stream: Whether to stream the response
             image: Optional image URL or base64 data for vision models
+            structured_outputs: Optional structured output parameters
             **kwargs: Additional generation parameters
 
         Returns:
@@ -314,9 +327,9 @@ class InferenceService:
         prompt = self._format_chat_messages(messages)
         
         if stream:
-            return self._chat_completion_stream(messages, prompt, max_tokens, temperature, top_p, image=image, **kwargs)
+            return self._chat_completion_stream(messages, prompt, max_tokens, temperature, top_p, image=image, structured_outputs=structured_outputs, **kwargs)
         else:
-            return await self._chat_completion_complete(messages, prompt, max_tokens, temperature, top_p, image=image, **kwargs)
+            return await self._chat_completion_complete(messages, prompt, max_tokens, temperature, top_p, image=image, structured_outputs=structured_outputs, **kwargs)
 
     def _format_chat_messages(self, messages: List[Dict[str, str]]) -> str:
         """Format chat messages into a prompt string.
@@ -349,6 +362,7 @@ class InferenceService:
         temperature: float,
         top_p: float,
         image: Optional[str] = None,
+        structured_outputs: Optional[Dict] = None,
         **kwargs
     ) -> Dict:
         """Generate complete chat completion response."""
@@ -365,6 +379,7 @@ class InferenceService:
             top_p=top_p,
             stream=False,
             images=images,
+            structured_outputs=structured_outputs,
             **kwargs
         )
         
@@ -403,6 +418,7 @@ class InferenceService:
         temperature: float,
         top_p: float,
         image: Optional[str] = None,
+        structured_outputs: Optional[Dict] = None,
         **kwargs
     ) -> AsyncIterator[Dict]:
         """Generate streaming chat completion response."""
@@ -416,6 +432,7 @@ class InferenceService:
             top_p=top_p,
             stream=True,
             images=images,
+            structured_outputs=structured_outputs,
             **kwargs
         )
         

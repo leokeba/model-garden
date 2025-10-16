@@ -15,6 +15,7 @@
 4. **System Monitoring**: CPU, GPU, memory, and disk usage
 5. **RESTful API**: Complete backend with FastAPI
 6. **API Documentation**: Auto-generated Swagger UI and ReDoc
+7. **🆕 Structured Outputs**: JSON generation following strict schemas with OpenAI-compatible API
 
 ### ✅ Code Quality
 - Zero linting errors or warnings

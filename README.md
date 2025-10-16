@@ -22,6 +22,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 ### ⚡ Efficient Inference (NEW!)
 - **High-throughput serving** powered by vLLM
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI client
+- **🎯 Structured Outputs** - Generate JSON that strictly follows schemas
 - **Streaming support** for real-time responses
 - **PagedAttention** for optimized memory usage
 - **Continuous batching** for better GPU utilization
@@ -451,6 +452,12 @@ Model Garden is built on top of incredible open-source projects:
 ## 📞 Support
 
 - **Documentation**: [docs/](./docs)
+  - [Installation Guide](./INSTALL.md)
+  - [Quick Start](./QUICKSTART.md)
+  - [Vision-Language Models](./VISION_SUPPORT.md)
+  - [Inference Serving](./docs/09-inference-serving.md)
+  - [**Structured Outputs**](./docs/10-structured-outputs.md) 🆕
+  - [HuggingFace Hub Integration](./HUGGINGFACE_HUB_SUPPORT.md)
 - **Issues**: [GitHub Issues](https://github.com/yourusername/model-garden/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/yourusername/model-garden/discussions)
 

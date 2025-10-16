@@ -243,13 +243,30 @@ async def lifespan(app: FastAPI):
     
     # Auto-load inference model if specified
     autoload_model = os.getenv("MODEL_GARDEN_AUTOLOAD_MODEL")
+    loaded_service = None
+    
     if autoload_model:
         print(f"🔄 Auto-loading inference model: {autoload_model}")
         try:
-            from model_garden.inference import InferenceService
-            global inference_service
-            inference_service = InferenceService(model_path=autoload_model)
-            await inference_service.load_model()
+            from model_garden.inference import InferenceService, set_inference_service
+            
+            # Get optional parameters from environment
+            tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
+            gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.9"))
+            quantization = os.getenv("MODEL_GARDEN_QUANTIZATION")
+            max_model_len = os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")
+            if max_model_len:
+                max_model_len = int(max_model_len)
+            
+            loaded_service = InferenceService(
+                model_path=autoload_model,
+                tensor_parallel_size=tensor_parallel_size,
+                gpu_memory_utilization=gpu_memory_utilization,
+                quantization=quantization,
+                max_model_len=max_model_len
+            )
+            await loaded_service.load_model()
+            set_inference_service(loaded_service)
             print(f"✅ Inference model loaded: {autoload_model}")
         except Exception as e:
             print(f"❌ Failed to auto-load model: {e}")
@@ -264,9 +281,9 @@ async def lifespan(app: FastAPI):
     print("🌱 Model Garden API shutting down...")
     
     # Cleanup inference service if loaded
-    if inference_service is not None:
+    if loaded_service is not None:
         try:
-            await inference_service.close()
+            await loaded_service.close()
         except Exception as e:
             print(f"Warning: Error closing inference service: {e}")
 
@@ -567,6 +584,62 @@ class ChatMessage(BaseModel):
         extra = "allow"  # Allow extra fields like 'image' for compatibility
 
 
+class ResponseFormat(BaseModel):
+    """OpenAI-compatible response format for structured outputs."""
+    type: str  # "json_object" or "json_schema" or "text"
+    json_schema: Optional[Dict] = None  # JSON schema for structured output
+
+
+def convert_response_format_to_structured_outputs(response_format: Optional[ResponseFormat]) -> Optional[Dict]:
+    """Convert OpenAI response_format to vLLM structured_outputs parameters.
+    
+    Args:
+        response_format: OpenAI-style response format specification
+        
+    Returns:
+        Dictionary with structured output parameters for vLLM, or None if not applicable
+    """
+    if not response_format:
+        return None
+    
+    if response_format.type == "text":
+        # No structured output needed
+        return None
+    
+    elif response_format.type == "json_object":
+        # Generic JSON object - use a permissive JSON schema
+        return {
+            "json": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True
+            }
+        }
+    
+    elif response_format.type == "json_schema":
+        # Specific JSON schema provided
+        if not response_format.json_schema:
+            raise ValueError("json_schema must be provided when type is 'json_schema'")
+        
+        # Extract the schema from the OpenAI format
+        # OpenAI format: {"name": "schema_name", "schema": {...}, "strict": true}
+        schema = response_format.json_schema
+        if isinstance(schema, dict):
+            # If it has a 'schema' key, extract it
+            if "schema" in schema:
+                actual_schema = schema["schema"]
+            else:
+                actual_schema = schema
+            
+            return {"json": actual_schema}
+        
+        return {"json": schema}
+    
+    else:
+        # Unknown type, return None
+        return None
+
+
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
     model: Optional[str] = None  # Model name (optional, we use the loaded model)
@@ -585,6 +658,7 @@ class ChatCompletionRequest(BaseModel):
     logprobs: Optional[int] = None
     echo: Optional[bool] = False
     user: Optional[str] = None  # User identifier
+    response_format: Optional[ResponseFormat] = None  # Structured output format
     
     class Config:
         extra = "allow"  # Allow extra fields for compatibility
@@ -854,6 +928,13 @@ async def chat_completions(request: ChatCompletionRequest):
         # Add stop sequences if provided
         if request.stop:
             gen_params["stop"] = request.stop if isinstance(request.stop, list) else [request.stop]
+        
+        # Add structured output parameters if response_format is provided
+        if request.response_format:
+            structured_outputs = convert_response_format_to_structured_outputs(request.response_format)
+            if structured_outputs:
+                gen_params["structured_outputs"] = structured_outputs
+                print(f"✅ Added structured output parameters: {list(structured_outputs.keys())}")
         
         if request.stream:
             # Streaming response
