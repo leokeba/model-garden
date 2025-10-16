@@ -489,6 +489,12 @@ def serve(host: str, port: int, reload: bool) -> None:
     help="Save checkpoint every N steps",
 )
 @click.option(
+    "--save-method",
+    type=click.Choice(["lora", "merged_16bit", "merged_4bit"]),
+    default="merged_16bit",
+    help="How to save the final model (default: merged_16bit)",
+)
+@click.option(
     "--text-field",
     default="text",
     help="Dataset field name for text/questions",
@@ -513,6 +519,7 @@ def train_vision(
     max_steps: int,
     logging_steps: int,
     save_steps: int,
+    save_method: str,
     text_field: str,
     image_field: str,
 ) -> None:
@@ -600,8 +607,8 @@ def train_vision(
             save_steps=save_steps,
         )
 
-        # Save final model (LoRA adapters)
-        trainer.save_model(output_dir, save_method="lora")
+        # Save final model with specified method
+        trainer.save_model(output_dir, save_method=save_method)
 
         console.print("\n[bold green]✨ Vision-language training completed successfully![/bold green]\n")
         console.print(f"[green]Model saved to: {output_dir}[/green]\n")

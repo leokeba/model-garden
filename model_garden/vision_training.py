@@ -562,7 +562,7 @@ class VisionLanguageTrainer:
     def save_model(
         self,
         output_dir: str,
-        save_method: str = "lora",
+        save_method: str = "merged_16bit",
     ) -> None:
         """Save the fine-tuned vision-language model.
 
@@ -577,20 +577,70 @@ class VisionLanguageTrainer:
 
         if save_method == "lora":
             # Save only LoRA adapters
+            console.print("[cyan]Saving LoRA adapters only...[/cyan]")
             self.model.save_pretrained(output_dir)
             if self.tokenizer:
                 self.tokenizer.save_pretrained(output_dir)
             if self.processor:
                 self.processor.save_pretrained(output_dir)
-        else:
-            # For vision models, merging is more complex
-            console.print("[yellow]⚠️  Merged saving for vision models not yet implemented[/yellow]")
-            console.print("[yellow]⚠️  Saving LoRA adapters only[/yellow]")
-            self.model.save_pretrained(output_dir)
-            if self.tokenizer:
-                self.tokenizer.save_pretrained(output_dir)
-            if self.processor:
-                self.processor.save_pretrained(output_dir)
+        elif save_method == "merged_16bit":
+            # Merge LoRA weights and save in 16-bit
+            console.print("[cyan]Merging LoRA weights and saving in 16-bit...[/cyan]")
+            try:
+                from unsloth import FastLanguageModel
+                # Merge and save
+                self.model = FastLanguageModel.for_inference(self.model)
+                self.model.save_pretrained_merged(
+                    output_dir,
+                    self.tokenizer,
+                    save_method="merged_16bit"
+                )
+                if self.processor:
+                    self.processor.save_pretrained(output_dir)
+                console.print("[green]✓ Merged model saved in 16-bit precision[/green]")
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Unsloth merge failed: {e}[/yellow]")
+                console.print("[cyan]Trying manual merge...[/cyan]")
+                # Manual merge using PEFT
+                try:
+                    from peft import PeftModel
+                    # Merge adapters
+                    merged_model = self.model.merge_and_unload()
+                    merged_model.save_pretrained(output_dir)
+                    if self.tokenizer:
+                        self.tokenizer.save_pretrained(output_dir)
+                    if self.processor:
+                        self.processor.save_pretrained(output_dir)
+                    console.print("[green]✓ Model merged and saved successfully[/green]")
+                except Exception as merge_error:
+                    console.print(f"[red]❌ Merge failed: {merge_error}[/red]")
+                    console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
+                    self.model.save_pretrained(output_dir)
+                    if self.tokenizer:
+                        self.tokenizer.save_pretrained(output_dir)
+                    if self.processor:
+                        self.processor.save_pretrained(output_dir)
+        elif save_method == "merged_4bit":
+            # Merge LoRA weights and save in 4-bit
+            console.print("[cyan]Merging LoRA weights and saving in 4-bit...[/cyan]")
+            try:
+                from unsloth import FastLanguageModel
+                # Merge and save
+                self.model = FastLanguageModel.for_inference(self.model)
+                self.model.save_pretrained_merged(
+                    output_dir,
+                    self.tokenizer,
+                    save_method="merged_4bit"
+                )
+                if self.processor:
+                    self.processor.save_pretrained(output_dir)
+                console.print("[green]✓ Merged model saved in 4-bit precision[/green]")
+            except Exception as e:
+                console.print(f"[red]❌ 4-bit merge not supported: {e}[/red]")
+                console.print("[yellow]Falling back to 16-bit merge[/yellow]")
+                # Fall back to 16-bit
+                self.save_model(output_dir, save_method="merged_16bit")
+                return
 
         console.print("[bold green]✓ Model saved successfully![/bold green]")
 

@@ -21,7 +21,8 @@
       r: 16,
       lora_alpha: 16,
     },
-    from_hub: false
+    from_hub: false,
+    save_method: 'merged_16bit'
   });
 
   let submitting = $state(false);
@@ -413,6 +414,37 @@
                 min="1"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Save Options -->
+        <div>
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">Model Save Options</h3>
+          
+          <div>
+            <label for="save_method" class="block text-sm font-medium text-gray-700 mb-2">
+              Save Method
+            </label>
+            <select
+              id="save_method"
+              bind:value={formData.save_method}
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            >
+              <option value="merged_16bit">Save Merged Model (16-bit) - Recommended</option>
+              <option value="merged_4bit">Save Merged Model (4-bit) - Smaller Size</option>
+              <option value="lora">Save LoRA Adapters Only - Advanced</option>
+            </select>
+            <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p class="text-sm text-blue-800">
+                {#if formData.save_method === 'merged_16bit'}
+                  <strong>💎 Merged 16-bit (Recommended):</strong> Full model with LoRA weights merged in FP16 format. Best for inference quality and compatibility.
+                {:else if formData.save_method === 'merged_4bit'}
+                  <strong>📦 Merged 4-bit:</strong> Full model with LoRA weights merged in 4-bit quantized format. Smaller file size but may lose some precision.
+                {:else}
+                  <strong>🔧 LoRA Adapters Only (Advanced):</strong> Saves only the adapter weights. Requires the base model to load. Note: vLLM LoRA support for vision models is experimental.
+                {/if}
+              </p>
             </div>
           </div>
         </div>

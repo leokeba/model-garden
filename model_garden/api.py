@@ -48,6 +48,7 @@ class TrainingJobRequest(BaseModel):
     from_hub: bool = False
     is_vision: bool = False  # Flag for vision-language models
     model_type: Optional[str] = None  # 'text' or 'vision'
+    save_method: str = "merged_16bit"  # How to save: 'lora', 'merged_16bit', 'merged_4bit'
 
 
 class TrainingJobInfo(BaseModel):
@@ -71,6 +72,7 @@ class TrainingJobInfo(BaseModel):
     current_step: Optional[int] = None
     total_steps: Optional[int] = None
     current_epoch: Optional[int] = None
+    save_method: Optional[str] = "merged_16bit"
 
 
 class APIResponse(BaseModel):
@@ -289,7 +291,8 @@ def run_training_job(job_id: str):
             )
             
             # Save model
-            trainer.save_model(job["output_dir"], save_method="lora")
+            save_method = job.get("save_method", "merged_16bit")
+            trainer.save_model(job["output_dir"], save_method=save_method)
         else:
             # Use standard ModelTrainer for text-only models
             trainer = ModelTrainer(
@@ -670,6 +673,7 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "from_hub": job_request.from_hub,
         "is_vision": job_request.is_vision or False,
         "model_type": job_request.model_type or ("vision" if job_request.is_vision else "text"),
+        "save_method": job_request.save_method,
     }
     
     training_jobs[job_id] = job_info
