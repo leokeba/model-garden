@@ -2,6 +2,7 @@
   import { page } from '$app/stores';
   import Button from '$lib/components/Button.svelte';
   import Card from '$lib/components/Card.svelte';
+  import LossChart from '$lib/components/LossChart.svelte';
   import { api, type TrainingJob } from '$lib/api/client';
   import { onMount, onDestroy } from 'svelte';
 
@@ -17,6 +18,8 @@
   let isConnected = $state(false);
   let logs: string[] = $state([]);
   let logsContainer = $state<HTMLDivElement | null>(null);
+  let trainingMetrics = $state<any[]>([]);
+  let validationMetrics = $state<any[]>([]);
 
   // Get WebSocket URL dynamically
   function getWebSocketUrl(jobId: string): string {
@@ -35,6 +38,16 @@
       const response = await api.getTrainingJob(jobId);
       job = response;
       error = '';
+      
+      // Load existing metrics if available
+      if (job.metrics) {
+        if (job.metrics.training) {
+          trainingMetrics = job.metrics.training;
+        }
+        if (job.metrics.validation) {
+          validationMetrics = job.metrics.validation;
+        }
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to load training job';
     } finally {
@@ -78,6 +91,12 @@
             job.current_step = update.progress?.current_step;
             job.total_steps = update.progress?.total_steps;
             job.current_epoch = update.progress?.epoch;
+          } else if (update.type === 'training_metrics') {
+            // Add new training metric point
+            trainingMetrics = [...trainingMetrics, update.metrics];
+          } else if (update.type === 'validation_metrics') {
+            // Add new validation metric point
+            validationMetrics = [...validationMetrics, update.metrics];
           } else if (update.type === 'log') {
             logs = [...logs, `[${new Date().toLocaleTimeString()}] ${update.message}`];
             // Keep only last 100 log lines
@@ -288,6 +307,71 @@
             </div>
           </Card>
 
+          <!-- Loss Curves -->
+          {#if trainingMetrics.length > 0 || validationMetrics.length > 0}
+            <Card>
+              <div class="p-6">
+                <LossChart 
+                  trainingMetrics={trainingMetrics}
+                  validationMetrics={validationMetrics}
+                  title="Training & Validation Loss"
+                  height={350}
+                />
+                
+                <!-- Metrics Table -->
+                <div class="mt-6">
+                  <h4 class="text-sm font-semibold text-gray-900 mb-3">Recent Metrics</h4>
+                  <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                      <thead class="bg-gray-50">
+                        <tr>
+                          <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Step
+                          </th>
+                          <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Training Loss
+                          </th>
+                          {#if validationMetrics.length > 0}
+                            <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Validation Loss
+                            </th>
+                          {/if}
+                          <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Learning Rate
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody class="bg-white divide-y divide-gray-200">
+                        {#each trainingMetrics.slice(-10).reverse() as metric}
+                          <tr>
+                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {metric.step}
+                            </td>
+                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {metric.loss.toFixed(4)}
+                            </td>
+                            {#if validationMetrics.length > 0}
+                              <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                {#if validationMetrics.find(v => v.step === metric.step)}
+                                  {validationMetrics.find(v => v.step === metric.step)?.loss.toFixed(4)}
+                                {:else}
+                                  -
+                                {/if}
+                              </td>
+                            {/if}
+                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {metric.learning_rate ? metric.learning_rate.toExponential(2) : '-'}
+                            </td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          {/if}
+
           <!-- Progress -->
           {#if job.status === 'running' && job.progress}
             <Card>
@@ -379,6 +463,24 @@
               <h3 class="text-lg font-semibold text-gray-900 mb-4">Configuration</h3>
               
               <div class="space-y-3 text-sm">
+                <div>
+                  <dt class="block text-gray-700 font-medium">Model Type</dt>
+                  <dd>{job.config?.model_type || job.model_type || 'text'}</dd>
+                </div>
+                
+                <div>
+                  <dt class="block text-gray-700 font-medium">Validation Dataset</dt>
+                  <dd>
+                    {#if job.validation_dataset_path}
+                      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                        ✓ Enabled
+                      </span>
+                    {:else}
+                      <span class="text-gray-500">Not provided</span>
+                    {/if}
+                  </dd>
+                </div>
+                
                 <div>
                   <dt class="block text-gray-700 font-medium">Learning Rate</dt>
                   <dd>{job.config?.hyperparameters?.learning_rate || job.hyperparameters?.learning_rate}</dd>

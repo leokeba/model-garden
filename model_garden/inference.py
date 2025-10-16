@@ -1,12 +1,98 @@
 """vLLM-powered inference service for Model Garden."""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, Union
 
 from rich.console import Console
 
 console = Console()
+
+
+def detect_quantization_method(model_path: str) -> Optional[str]:
+    """Auto-detect the appropriate quantization method for a model.
+    
+    Args:
+        model_path: Path to the model directory
+        
+    Returns:
+        Quantization method ('awq', 'gptq', or None)
+        
+    Note:
+        - Merged fine-tuned models (from Unsloth with save_method="merged_16bit") 
+          have quantization_config in config.json but weights are actually FP16.
+          These should NOT use quantization in vLLM.
+        - True quantized models (AWQ, GPTQ) have special weight formats.
+        - LoRA adapters should use None (load base model separately).
+    """
+    model_dir = Path(model_path)
+    
+    # Check if directory exists
+    if not model_dir.exists() or not model_dir.is_dir():
+        console.print(f"[yellow]⚠️  Model path {model_path} not found, skipping auto-detection[/yellow]")
+        return None
+    
+    # Check for adapter config (LoRA adapters only)
+    if (model_dir / "adapter_config.json").exists():
+        console.print("[cyan]📦 Detected LoRA adapters (no quantization)[/cyan]")
+        return None
+    
+    # Check if it's a merged fine-tuned model with standard weights
+    # Unsloth's merged_16bit models have regular safetensors/bin files
+    has_safetensors = list(model_dir.glob("*.safetensors"))
+    has_bin = list(model_dir.glob("*.bin"))
+    
+    if has_safetensors or has_bin:
+        # Check the first weight file to see if it's standard format
+        weight_file = has_safetensors[0] if has_safetensors else has_bin[0]
+        
+        # Merged models have standard weight files (not quantized tensors)
+        # AWQ/GPTQ models have special file names like *-awq.safetensors or contain qweight/qzeros
+        file_name = weight_file.name.lower()
+        
+        if "-awq" in file_name or "awq" in file_name:
+            console.print("[cyan]🔢 Detected AWQ quantized model[/cyan]")
+            return "awq"
+        elif "-gptq" in file_name or "gptq" in file_name:
+            console.print("[cyan]🔢 Detected GPTQ quantized model[/cyan]")
+            return "gptq"
+        else:
+            # Standard weight file - this is a merged/native format model
+            console.print("[cyan]💎 Detected merged/native format model (no quantization)[/cyan]")
+            return None
+    
+    # Check for quantization config in config.json (less reliable due to Unsloth)
+    config_file = model_dir / "config.json"
+    if config_file.exists():
+        try:
+            with open(config_file) as f:
+                config = json.load(f)
+            
+            # Check quantization config
+            quant_config = config.get("quantization_config", {})
+            if quant_config:
+                quant_method = quant_config.get("quant_method", "").lower()
+                
+                # Only trust AWQ/GPTQ configs, not BitsAndBytes
+                # (Unsloth leaves BnB config even after merging to FP16)
+                if "awq" in quant_method:
+                    console.print("[cyan]🔢 Config indicates AWQ quantization[/cyan]")
+                    return "awq"
+                elif "gptq" in quant_method:
+                    console.print("[cyan]🔢 Config indicates GPTQ quantization[/cyan]")
+                    return "gptq"
+                elif "bitsandbytes" in quant_method or "bnb" in quant_method:
+                    # Don't trust BnB config - check if weights are actually quantized
+                    console.print("[yellow]⚠️  BitsAndBytes config found but weights appear to be FP16 (Unsloth merged model)[/yellow]")
+                    console.print("[cyan]💎 Using native format (no quantization)[/cyan]")
+                    return None
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Failed to parse config.json: {e}[/yellow]")
+    
+    # Default: no quantization
+    console.print("[cyan]ℹ️  No quantization detected, loading in native format[/cyan]")
+    return None
 
 
 class InferenceService:
@@ -19,7 +105,7 @@ class InferenceService:
         gpu_memory_utilization: float = 0.9,
         max_model_len: Optional[int] = None,
         dtype: str = "auto",
-        quantization: Optional[str] = None,
+        quantization: Optional[str] = "auto",
         trust_remote_code: bool = False,
     ):
         """Initialize the inference service.
@@ -30,7 +116,7 @@ class InferenceService:
             gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0)
             max_model_len: Maximum sequence length
             dtype: Data type (auto, float16, bfloat16, float32)
-            quantization: Quantization method (awq, gptq, squeezellm, fp8)
+            quantization: Quantization method (auto, awq, gptq, squeezellm, fp8, bitsandbytes, or None)
             trust_remote_code: Whether to trust remote code
         """
         self.model_path = model_path
@@ -55,6 +141,21 @@ class InferenceService:
         try:
             from vllm import AsyncEngineArgs, AsyncLLMEngine
             
+            # Auto-detect quantization if not specified
+            quantization = self.quantization
+            load_format = "auto"  # Default to auto-detection
+            
+            if quantization == "auto" or quantization is None:
+                detected = detect_quantization_method(self.model_path)
+                if detected:
+                    quantization = detected
+                    console.print(f"[green]✓[/green] Auto-detected quantization: {quantization}")
+                else:
+                    quantization = None
+                    load_format = "safetensors"  # Force standard format, ignore config.json quantization
+                    console.print("[green]✓[/green] No quantization needed (merged or native format)")
+                    console.print("[cyan]   Using load_format=safetensors to ignore quantization_config in model[/cyan]")
+            
             # Configure engine arguments
             engine_args = AsyncEngineArgs(
                 model=self.model_path,
@@ -62,7 +163,8 @@ class InferenceService:
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 max_model_len=self.max_model_len,
                 dtype=self.dtype,
-                quantization=self.quantization,
+                quantization=quantization,
+                load_format=load_format,
                 trust_remote_code=self.trust_remote_code,
                 enforce_eager=False,  # Use CUDA graphs for better performance
                 disable_log_stats=False,

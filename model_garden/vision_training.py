@@ -487,6 +487,8 @@ class VisionLanguageTrainer:
         save_steps: int = 100,
         optim: str = "adamw_8bit",
         callbacks: Optional[List] = None,
+        eval_dataset: Optional[Union[Dataset, List[Dict]]] = None,
+        eval_steps: Optional[int] = None,
     ) -> None:
         """Train the vision-language model.
 
@@ -503,6 +505,8 @@ class VisionLanguageTrainer:
             save_steps: Save checkpoint every N steps
             optim: Optimizer to use
             callbacks: Optional list of TrainerCallback instances
+            eval_dataset: Optional validation dataset for evaluation
+            eval_steps: Optional number of steps between evaluations (defaults to save_steps)
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
 
@@ -517,32 +521,52 @@ class VisionLanguageTrainer:
         else:
             train_dataset = dataset
         
+        # Handle eval dataset similarly
+        if isinstance(eval_dataset, list):
+            console.print(f"[cyan]Using validation dataset ({len(eval_dataset)} examples)[/cyan]")
+        
+        # Set evaluation strategy if validation dataset provided
+        do_eval = eval_dataset is not None
+        eval_steps_value = eval_steps if eval_steps is not None else save_steps
+        
         # When using max_steps, still need to provide num_train_epochs
         use_max_steps = max_steps > 0
         
-        training_args = SFTConfig(
-            output_dir=output_dir,
-            per_device_train_batch_size=per_device_train_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            warmup_steps=warmup_steps,
-            max_steps=max_steps if use_max_steps else -1,
-            num_train_epochs=1.0 if use_max_steps else num_train_epochs,
-            learning_rate=learning_rate,
-            fp16=not self.load_in_4bit,
-            bf16=self.load_in_4bit,
-            logging_steps=logging_steps,
-            optim=optim,
-            weight_decay=0.01,
-            lr_scheduler_type="cosine",
-            seed=42,
-            save_steps=save_steps,
-            save_total_limit=3,
-            report_to="none",
+        # Build training args - SFTConfig has different parameters than TrainingArguments
+        training_args_dict = {
+            "output_dir": output_dir,
+            "per_device_train_batch_size": per_device_train_batch_size,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "warmup_steps": warmup_steps,
+            "max_steps": max_steps if use_max_steps else -1,
+            "num_train_epochs": 1.0 if use_max_steps else num_train_epochs,
+            "learning_rate": learning_rate,
+            "fp16": not self.load_in_4bit,
+            "bf16": self.load_in_4bit,
+            "logging_steps": logging_steps,
+            "optim": optim,
+            "weight_decay": 0.01,
+            "lr_scheduler_type": "cosine",
+            "seed": 42,
+            "save_steps": save_steps,
+            "save_total_limit": 3,
+            "report_to": "none",
             # CRITICAL for vision models - Unsloth requirements:
-            remove_unused_columns=False,
-            dataset_text_field="",
-            dataset_kwargs={"skip_prepare_dataset": True},
-        )
+            "remove_unused_columns": False,
+            "dataset_text_field": "",
+            "dataset_kwargs": {"skip_prepare_dataset": True},
+        }
+        
+        # Add evaluation settings if validation dataset provided
+        if do_eval:
+            training_args_dict["per_device_eval_batch_size"] = per_device_train_batch_size
+            training_args_dict["do_eval"] = True
+            training_args_dict["eval_strategy"] = "steps"
+            training_args_dict["eval_steps"] = eval_steps_value
+            training_args_dict["load_best_model_at_end"] = True
+            training_args_dict["metric_for_best_model"] = "eval_loss"
+        
+        training_args = SFTConfig(**training_args_dict)
 
         console.print("[yellow]⚠️  Vision-language training uses UnslothVisionDataCollator[/yellow]")
         
@@ -551,6 +575,7 @@ class VisionLanguageTrainer:
             tokenizer=self.tokenizer,
             args=training_args,
             train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             data_collator=UnslothVisionDataCollator(self.model, self.processor),
             callbacks=callbacks if callbacks else [],
         )
@@ -559,16 +584,76 @@ class VisionLanguageTrainer:
         trainer.train()
         console.print("[bold green]✨ Training completed![/bold green]")
 
+    def _clean_merged_config(self, output_dir: str) -> None:
+        """Remove quantization_config from merged model config for vLLM compatibility.
+        
+        Args:
+            output_dir: Directory containing the model config
+        """
+        import json
+        config_path = Path(output_dir) / "config.json"
+        
+        if not config_path.exists():
+            console.print("[yellow]⚠️  config.json not found, skipping cleanup[/yellow]")
+            return
+        
+        try:
+            console.print("[cyan]Cleaning config.json for vLLM compatibility...[/cyan]")
+            
+            # Read config
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Backup original
+            backup_path = Path(output_dir) / "config.json.backup"
+            with open(backup_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            console.print(f"[green]✓ Backed up original config to {backup_path.name}[/green]")
+            
+            # Remove quantization_config at all levels
+            modified = False
+            if "quantization_config" in config:
+                del config["quantization_config"]
+                modified = True
+                console.print("[green]✓ Removed root-level quantization_config[/green]")
+            
+            if "text_config" in config and isinstance(config["text_config"], dict):
+                if "quantization_config" in config["text_config"]:
+                    del config["text_config"]["quantization_config"]
+                    modified = True
+                    console.print("[green]✓ Removed text_config quantization_config[/green]")
+            
+            # Also change torch_dtype to dtype if present
+            if "torch_dtype" in config:
+                config["dtype"] = config.pop("torch_dtype")
+                modified = True
+                console.print("[green]✓ Changed torch_dtype to dtype[/green]")
+            
+            if modified:
+                # Write cleaned config
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=2)
+                console.print("[green]✓ Config cleaned for vLLM compatibility[/green]")
+            else:
+                console.print("[yellow]⚠️  No modifications needed[/yellow]")
+                
+        except Exception as e:
+            console.print(f"[red]❌ Failed to clean config: {e}[/red]")
+            console.print("[yellow]   Model may not load properly in vLLM[/yellow]")
+
     def save_model(
         self,
         output_dir: str,
-        save_method: str = "merged_16bit",
+        save_method: str = "merged_16bit",  # Default to merged with auto-cleaned config for vLLM
     ) -> None:
         """Save the fine-tuned vision-language model.
 
         Args:
             output_dir: Directory to save the model
             save_method: How to save ('lora', 'merged_16bit', 'merged_4bit')
+                        - 'lora': LoRA adapters + base model (works with vLLM)
+                        - 'merged_16bit': Merged FP16 model (recommended, auto-cleaned for vLLM)
+                        - 'merged_4bit': Merged 4-bit model (auto-cleaned for vLLM)
         """
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
 
@@ -576,71 +661,82 @@ class VisionLanguageTrainer:
         output_path.mkdir(parents=True, exist_ok=True)
 
         if save_method == "lora":
-            # Save only LoRA adapters
-            console.print("[cyan]Saving LoRA adapters only...[/cyan]")
+            # Save LoRA adapters + base model files for vLLM compatibility
+            console.print("[cyan]Saving LoRA adapters + base model files...[/cyan]")
             self.model.save_pretrained(output_dir)
             if self.tokenizer:
                 self.tokenizer.save_pretrained(output_dir)
             if self.processor:
                 self.processor.save_pretrained(output_dir)
+            
+            # Copy base model files for vLLM compatibility
+            console.print("[cyan]Copying base model files for vLLM...[/cyan]")
+            try:
+                import shutil
+                from huggingface_hub import snapshot_download
+                
+                # Get base model path from adapter config
+                adapter_config_path = Path(output_dir) / "adapter_config.json"
+                if adapter_config_path.exists():
+                    import json
+                    with open(adapter_config_path) as f:
+                        adapter_config = json.load(f)
+                    base_model = adapter_config.get("base_model_name_or_path", "")
+                    
+                    if base_model:
+                        console.print(f"[cyan]Downloading base model: {base_model}[/cyan]")
+                        # Download base model to cache
+                        base_model_path = snapshot_download(
+                            base_model,
+                            allow_patterns=["*.safetensors", "*.json", "config.json", "*.index.json"]
+                        )
+                        
+                        # Copy model files to output directory
+                        for pattern in ["model*.safetensors", "config.json", "*.index.json"]:
+                            for file_path in Path(base_model_path).glob(pattern):
+                                dest_path = Path(output_dir) / file_path.name
+                                if not dest_path.exists():  # Don't overwrite existing files
+                                    shutil.copy2(file_path, dest_path)
+                                    console.print(f"[green]✓ Copied: {file_path.name}[/green]")
+                        
+                        console.print("[green]✓ Base model files copied successfully[/green]")
+                    else:
+                        console.print("[yellow]⚠️  No base model path found in adapter config[/yellow]")
+                else:
+                    console.print("[yellow]⚠️  adapter_config.json not found[/yellow]")
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to copy base model files: {e}[/yellow]")
+                console.print("[yellow]   Model will work with PEFT but may not load in vLLM directly[/yellow]")
+            
+            console.print("[green]✓ LoRA adapters + base model saved[/green]")
         elif save_method == "merged_16bit":
-            # Merge LoRA weights and save in 16-bit
+            # Merge LoRA weights and save in 16-bit using PEFT (like model v)
             console.print("[cyan]Merging LoRA weights and saving in 16-bit...[/cyan]")
             try:
-                from unsloth import FastLanguageModel
-                # Merge and save
-                self.model = FastLanguageModel.for_inference(self.model)
-                self.model.save_pretrained_merged(
-                    output_dir,
-                    self.tokenizer,
-                    save_method="merged_16bit"
-                )
+                from peft import PeftModel
+                # Merge adapters using PEFT
+                console.print("[cyan]Merging adapters with base model...[/cyan]")
+                merged_model = self.model.merge_and_unload()
+                merged_model.save_pretrained(output_dir)
+                if self.tokenizer:
+                    self.tokenizer.save_pretrained(output_dir)
                 if self.processor:
                     self.processor.save_pretrained(output_dir)
-                console.print("[green]✓ Merged model saved in 16-bit precision[/green]")
+                console.print("[green]✓ Model merged and saved successfully[/green]")
             except Exception as e:
-                console.print(f"[yellow]⚠️  Unsloth merge failed: {e}[/yellow]")
-                console.print("[cyan]Trying manual merge...[/cyan]")
-                # Manual merge using PEFT
-                try:
-                    from peft import PeftModel
-                    # Merge adapters
-                    merged_model = self.model.merge_and_unload()
-                    merged_model.save_pretrained(output_dir)
-                    if self.tokenizer:
-                        self.tokenizer.save_pretrained(output_dir)
-                    if self.processor:
-                        self.processor.save_pretrained(output_dir)
-                    console.print("[green]✓ Model merged and saved successfully[/green]")
-                except Exception as merge_error:
-                    console.print(f"[red]❌ Merge failed: {merge_error}[/red]")
-                    console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
-                    self.model.save_pretrained(output_dir)
-                    if self.tokenizer:
-                        self.tokenizer.save_pretrained(output_dir)
-                    if self.processor:
-                        self.processor.save_pretrained(output_dir)
+                console.print(f"[red]❌ Merge failed: {e}[/red]")
+                console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
+                self.model.save_pretrained(output_dir)
+                if self.tokenizer:
+                    self.tokenizer.save_pretrained(output_dir)
+                if self.processor:
+                    self.processor.save_pretrained(output_dir)
         elif save_method == "merged_4bit":
-            # Merge LoRA weights and save in 4-bit
-            console.print("[cyan]Merging LoRA weights and saving in 4-bit...[/cyan]")
-            try:
-                from unsloth import FastLanguageModel
-                # Merge and save
-                self.model = FastLanguageModel.for_inference(self.model)
-                self.model.save_pretrained_merged(
-                    output_dir,
-                    self.tokenizer,
-                    save_method="merged_4bit"
-                )
-                if self.processor:
-                    self.processor.save_pretrained(output_dir)
-                console.print("[green]✓ Merged model saved in 4-bit precision[/green]")
-            except Exception as e:
-                console.print(f"[red]❌ 4-bit merge not supported: {e}[/red]")
-                console.print("[yellow]Falling back to 16-bit merge[/yellow]")
-                # Fall back to 16-bit
-                self.save_model(output_dir, save_method="merged_16bit")
-                return
+            # 4-bit merge not supported, fall back to 16-bit
+            console.print("[yellow]⚠️  4-bit merge not supported for vision models[/yellow]")
+            console.print("[cyan]Falling back to 16-bit merge...[/cyan]")
+            self.save_model(output_dir, save_method="merged_16bit")
+            return
 
         console.print("[bold green]✓ Model saved successfully![/bold green]")
 

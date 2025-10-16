@@ -236,6 +236,8 @@ class ModelTrainer:
         save_steps: int = 100,
         optim: str = "adamw_8bit",
         callbacks: Optional[List] = None,
+        eval_dataset: Optional[Dataset] = None,
+        eval_steps: Optional[int] = None,
     ) -> None:
         """Train the model.
 
@@ -252,12 +254,19 @@ class ModelTrainer:
             save_steps: Save checkpoint every N steps
             optim: Optimizer to use
             callbacks: Optional list of TrainerCallback instances
+            eval_dataset: Optional validation dataset for evaluation
+            eval_steps: Optional number of steps between evaluations (defaults to save_steps)
         """
         console.print("[cyan]Starting training...[/cyan]")
+        
+        # Set evaluation strategy if validation dataset provided
+        evaluation_strategy = "steps" if eval_dataset is not None else "no"
+        eval_steps_value = eval_steps if eval_steps is not None else save_steps
 
         training_args = TrainingArguments(
             output_dir=output_dir,
             per_device_train_batch_size=per_device_train_batch_size,
+            per_device_eval_batch_size=per_device_train_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
             warmup_steps=warmup_steps,
             max_steps=max_steps,
@@ -273,11 +282,16 @@ class ModelTrainer:
             save_steps=save_steps,
             save_total_limit=3,
             report_to="none",  # Disable wandb/tensorboard for now
+            evaluation_strategy=evaluation_strategy,
+            eval_steps=eval_steps_value if eval_dataset else None,
+            load_best_model_at_end=True if eval_dataset else False,
+            metric_for_best_model="eval_loss" if eval_dataset else None,
         )
 
         trainer = SFTTrainer(
             model=self.model,
             train_dataset=dataset,
+            eval_dataset=eval_dataset,
             args=training_args,
             callbacks=callbacks if callbacks else [],
         )

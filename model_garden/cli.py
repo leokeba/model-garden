@@ -662,8 +662,8 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
 @click.option("--host", default="0.0.0.0", help="Host to bind the server to")
 @click.option("--tensor-parallel-size", default=1, help="Number of GPUs to use for tensor parallelism")
 @click.option("--gpu-memory-utilization", default=0.9, type=float, help="GPU memory utilization (0.0-1.0)")
-@click.option("--quantization", type=click.Choice(["awq", "gptq", "squeezellm", "fp8"]), help="Quantization method")
-@click.option("--max-model-len", type=int, help="Maximum model context length")
+@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default="auto", help="Quantization method (auto = detect from model)")
+@click.option("--max-model-len", type=int, help="Maximum sequence length")
 def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len):
     """
     Start an inference server with vLLM for high-throughput model serving.
@@ -741,8 +741,8 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
 @click.option("--temperature", default=0.7, type=float, help="Sampling temperature")
 @click.option("--top-p", default=0.9, type=float, help="Top-p (nucleus) sampling parameter")
 @click.option("--stream/--no-stream", default=False, help="Enable streaming output")
-@click.option("--tensor-parallel-size", default=1, help="Number of GPUs for tensor parallelism")
-@click.option("--quantization", type=click.Choice(["awq", "gptq", "squeezellm", "fp8"]), help="Quantization method")
+@click.option("--tensor-parallel-size", default=1, type=int, help="Number of GPUs for tensor parallelism")
+@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default="auto", help="Quantization method (auto = detect from model)")
 def inference_generate(model_path, prompt, max_tokens, temperature, top_p, stream, tensor_parallel_size, quantization):
     """
     Generate text using vLLM inference engine (one-off generation).
@@ -833,8 +833,8 @@ def inference_generate(model_path, prompt, max_tokens, temperature, top_p, strea
 @click.option("--system-prompt", help="System prompt for the chat")
 @click.option("--max-tokens", default=512, help="Maximum tokens per response")
 @click.option("--temperature", default=0.7, type=float, help="Sampling temperature")
-@click.option("--tensor-parallel-size", default=1, help="Number of GPUs for tensor parallelism")
-@click.option("--quantization", type=click.Choice(["awq", "gptq", "squeezellm", "fp8"]), help="Quantization method")
+@click.option("--tensor-parallel-size", default=1, type=int, help="Number of GPUs for tensor parallelism")
+@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default="auto", help="Quantization method (auto = detect from model)")
 def inference_chat(model_path, system_prompt, max_tokens, temperature, tensor_parallel_size, quantization):
     """
     Interactive chat interface using vLLM inference engine.

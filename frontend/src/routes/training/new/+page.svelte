@@ -9,6 +9,7 @@
     model_type: 'text', // 'text' or 'vision'
     base_model: 'unsloth/tinyllama-bnb-4bit',
     dataset_path: './data/sample.jsonl',
+    validation_dataset_path: '',
     output_dir: '',
     hyperparameters: {
       learning_rate: 0.0002,
@@ -16,12 +17,14 @@
       batch_size: 2,
       max_steps: -1,
       gradient_accumulation_steps: 4,
+      eval_steps: null as number | null,
     },
     lora_config: {
       r: 16,
       lora_alpha: 16,
     },
     from_hub: false,
+    validation_from_hub: false,
     save_method: 'merged_16bit'
   });
 
@@ -265,6 +268,34 @@
               </p>
             </div>
 
+            <!-- Validation Dataset (Optional) -->
+            <div>
+              <label for="validation_dataset_path" class="block text-sm font-medium text-gray-700 mb-1">
+                Validation Dataset Path (Optional)
+              </label>
+              <input
+                type="text"
+                id="validation_dataset_path"
+                bind:value={formData.validation_dataset_path}
+                placeholder={formData.validation_from_hub ? 'username/val-dataset-name' : (formData.model_type === 'vision' ? './data/vision_val_dataset.jsonl' : './data/my-val-dataset.jsonl')}
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <div class="mt-2 flex items-center">
+                <input
+                  type="checkbox"
+                  id="validation_from_hub"
+                  bind:checked={formData.validation_from_hub}
+                  class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                />
+                <label for="validation_from_hub" class="ml-2 block text-sm text-gray-700">
+                  Load validation dataset from HuggingFace Hub
+                </label>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">
+                📊 Optional: Provide a validation dataset to track validation loss during training
+              </p>
+            </div>
+
             {#if formData.model_type === 'vision'}
               <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <h4 class="text-sm font-semibold text-blue-900 mb-2">📋 Vision Dataset Format</h4>
@@ -382,6 +413,22 @@
                 -1 for full epochs
               </p>
             </div>
+
+            <div>
+              <label for="eval_steps" class="block text-sm font-medium text-gray-700 mb-1">
+                Evaluation Steps
+              </label>
+              <input
+                type="number"
+                id="eval_steps"
+                bind:value={formData.hyperparameters.eval_steps}
+                placeholder="Auto (same as save_steps)"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                Evaluate every N steps (only used if validation dataset provided)
+              </p>
+            </div>
           </div>
         </div>
 
@@ -433,16 +480,16 @@
             >
               <option value="merged_16bit">Save Merged Model (16-bit) - Recommended</option>
               <option value="merged_4bit">Save Merged Model (4-bit) - Smaller Size</option>
-              <option value="lora">Save LoRA Adapters Only - Advanced</option>
+              <option value="lora">Save LoRA Adapters + Base Model - Advanced</option>
             </select>
             <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p class="text-sm text-blue-800">
                 {#if formData.save_method === 'merged_16bit'}
-                  <strong>💎 Merged 16-bit (Recommended):</strong> Full model with LoRA weights merged in FP16 format. Best for inference quality and compatibility.
+                  <strong>✅ Merged 16-bit (Recommended):</strong> Full model with LoRA weights merged in FP16 format. Config auto-cleaned for vLLM compatibility. Best for inference quality.
                 {:else if formData.save_method === 'merged_4bit'}
-                  <strong>📦 Merged 4-bit:</strong> Full model with LoRA weights merged in 4-bit quantized format. Smaller file size but may lose some precision.
+                  <strong>📦 Merged 4-bit:</strong> Full model with LoRA weights merged in 4-bit quantized format. Config auto-cleaned for vLLM. Smaller file size but may lose some precision.
                 {:else}
-                  <strong>🔧 LoRA Adapters Only (Advanced):</strong> Saves only the adapter weights. Requires the base model to load. Note: vLLM LoRA support for vision models is experimental.
+                  <strong>🔧 LoRA + Base Model (Advanced):</strong> Saves LoRA adapters with base model files for vLLM compatibility. Creates hybrid structure with adapter files + base model.
                 {/if}
               </p>
             </div>

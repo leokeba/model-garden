@@ -42,10 +42,12 @@ class TrainingJobRequest(BaseModel):
     name: str
     base_model: str
     dataset_path: str
+    validation_dataset_path: Optional[str] = None  # Optional validation dataset
     output_dir: str
     hyperparameters: Optional[Dict] = None
     lora_config: Optional[Dict] = None
     from_hub: bool = False
+    validation_from_hub: bool = False  # Separate flag for validation dataset
     is_vision: bool = False  # Flag for vision-language models
     model_type: Optional[str] = None  # 'text' or 'vision'
     save_method: str = "merged_16bit"  # How to save: 'lora', 'merged_16bit', 'merged_4bit'
@@ -58,6 +60,7 @@ class TrainingJobInfo(BaseModel):
     status: str
     base_model: str
     dataset_path: str
+    validation_dataset_path: Optional[str] = None
     output_dir: str
     created_at: str
     started_at: Optional[str] = None
@@ -67,12 +70,14 @@ class TrainingJobInfo(BaseModel):
     hyperparameters: Optional[Dict] = None
     lora_config: Optional[Dict] = None
     from_hub: Optional[bool] = False
+    validation_from_hub: Optional[bool] = False
     is_vision: Optional[bool] = False
     model_type: Optional[str] = None
     current_step: Optional[int] = None
     total_steps: Optional[int] = None
     current_epoch: Optional[int] = None
     save_method: Optional[str] = "merged_16bit"
+    metrics: Optional[Dict] = None  # Training and validation metrics history
 
 
 class APIResponse(BaseModel):
@@ -170,6 +175,8 @@ class ProgressCallback(TrainerCallback):
     def __init__(self, job_id: str, manager: ConnectionManager):
         self.job_id = job_id
         self.manager = manager
+        self.training_metrics = []  # Store metrics history
+        self.validation_metrics = []
     
     def on_step_end(self, args, state, control, **kwargs):
         """Called at the end of each training step."""
@@ -209,6 +216,78 @@ class ProgressCallback(TrainerCallback):
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Called when logging occurs."""
         if logs:
+            # Extract metrics from logs
+            current_step = state.global_step
+            timestamp = datetime.utcnow().isoformat() + "Z"
+            
+            # Separate training and evaluation logs
+            is_eval = any(k.startswith('eval_') for k in logs.keys())
+            
+            if is_eval:
+                # Validation metrics
+                eval_loss = logs.get('eval_loss')
+                metric_point = {
+                    "step": current_step,
+                    "loss": eval_loss,
+                    "timestamp": timestamp,
+                }
+                
+                # Add any additional eval metrics
+                for key, value in logs.items():
+                    if key.startswith('eval_') and key != 'eval_loss':
+                        metric_name = key.replace('eval_', '')
+                        metric_point[metric_name] = value
+                
+                self.validation_metrics.append(metric_point)
+                
+                # Update job metrics
+                if self.job_id in training_jobs:
+                    if "metrics" not in training_jobs[self.job_id]:
+                        training_jobs[self.job_id]["metrics"] = {}
+                    training_jobs[self.job_id]["metrics"]["validation"] = self.validation_metrics
+                
+                # Send metrics via WebSocket
+                asyncio.run(self.manager.send_update(self.job_id, {
+                    "type": "validation_metrics",
+                    "job_id": self.job_id,
+                    "metrics": metric_point,
+                    "timestamp": timestamp
+                }))
+            else:
+                # Training metrics
+                train_loss = logs.get('loss')
+                learning_rate = logs.get('learning_rate')
+                
+                if train_loss is not None:
+                    metric_point = {
+                        "step": current_step,
+                        "loss": train_loss,
+                        "learning_rate": learning_rate,
+                        "timestamp": timestamp,
+                    }
+                    
+                    # Add any additional metrics
+                    for key, value in logs.items():
+                        if key not in ['loss', 'learning_rate', 'epoch']:
+                            metric_point[key] = value
+                    
+                    self.training_metrics.append(metric_point)
+                    
+                    # Update job metrics
+                    if self.job_id in training_jobs:
+                        if "metrics" not in training_jobs[self.job_id]:
+                            training_jobs[self.job_id]["metrics"] = {}
+                        training_jobs[self.job_id]["metrics"]["training"] = self.training_metrics
+                    
+                    # Send metrics via WebSocket
+                    asyncio.run(self.manager.send_update(self.job_id, {
+                        "type": "training_metrics",
+                        "job_id": self.job_id,
+                        "metrics": metric_point,
+                        "timestamp": timestamp
+                    }))
+            
+            # Send formatted log message
             log_message = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" 
                                        for k, v in logs.items() if k != "epoch"])
             
@@ -217,7 +296,7 @@ class ProgressCallback(TrainerCallback):
                 "type": "log",
                 "job_id": self.job_id,
                 "message": log_message,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": timestamp
             }))
 
 
@@ -244,6 +323,8 @@ def run_training_job(job_id: str):
         # Check if this is a vision-language model
         is_vision = job.get("is_vision", False)
         from_hub = job.get("from_hub", False)
+        validation_from_hub = job.get("validation_from_hub", False)
+        validation_dataset_path = job.get("validation_dataset_path")
         
         if is_vision:
             # Use VisionLanguageTrainer for vision models
@@ -267,18 +348,31 @@ def run_training_job(job_id: str):
                 lora_alpha=lora_config.get("lora_alpha", 16),
             )
             
-            # Load and format dataset (handles both file and Hub, base64 and file paths)
+            # Load and format training dataset
             train_dataset = trainer.load_dataset(
                 dataset_path=job["dataset_path"],
                 from_hub=from_hub,
             )
-            formatted_dataset = trainer.format_dataset(train_dataset)
+            formatted_train_dataset = trainer.format_dataset(train_dataset)
+            
+            # Load and format validation dataset if provided
+            formatted_val_dataset = None
+            if validation_dataset_path:
+                print(f"📊 Loading validation dataset: {validation_dataset_path}")
+                val_dataset = trainer.load_dataset(
+                    dataset_path=validation_dataset_path,
+                    from_hub=validation_from_hub,
+                )
+                formatted_val_dataset = trainer.format_dataset(val_dataset)
+                print(f"✓ Validation dataset loaded ({len(formatted_val_dataset)} examples)")
             
             # Train with progress callback
             hyperparams = job["hyperparameters"]
             progress_callback = ProgressCallback(job_id, manager)
             trainer.train(
-                dataset=formatted_dataset,
+                dataset=formatted_train_dataset,
+                eval_dataset=formatted_val_dataset,
+                eval_steps=hyperparams.get("eval_steps"),
                 output_dir=job["output_dir"],
                 num_train_epochs=hyperparams.get("num_epochs", 3),
                 per_device_train_batch_size=hyperparams.get("batch_size", 1),
@@ -311,13 +405,13 @@ def run_training_job(job_id: str):
                 lora_alpha=lora_config.get("lora_alpha", 16),
             )
             
-            # Load dataset
+            # Load training dataset
             if from_hub:
                 train_dataset = trainer.load_dataset_from_hub(job["dataset_path"])
             else:
                 train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
             
-            # Format dataset
+            # Format training dataset
             train_dataset = trainer.format_dataset(
                 train_dataset,
                 instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
@@ -325,11 +419,30 @@ def run_training_job(job_id: str):
                 output_field=job["hyperparameters"].get("output_field", "output"),
             )
             
+            # Load and format validation dataset if provided
+            val_dataset = None
+            if validation_dataset_path:
+                print(f"📊 Loading validation dataset: {validation_dataset_path}")
+                if validation_from_hub:
+                    val_dataset = trainer.load_dataset_from_hub(validation_dataset_path)
+                else:
+                    val_dataset = trainer.load_dataset_from_file(validation_dataset_path)
+                
+                val_dataset = trainer.format_dataset(
+                    val_dataset,
+                    instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
+                    input_field=job["hyperparameters"].get("input_field", "input"),
+                    output_field=job["hyperparameters"].get("output_field", "output"),
+                )
+                print(f"✓ Validation dataset loaded ({len(val_dataset)} examples)")
+            
             # Train with progress callback
             hyperparams = job["hyperparameters"]
             progress_callback = ProgressCallback(job_id, manager)
             trainer.train(
                 dataset=train_dataset,
+                eval_dataset=val_dataset,
+                eval_steps=hyperparams.get("eval_steps"),
                 output_dir=job["output_dir"],
                 num_train_epochs=hyperparams.get("num_epochs", 3),
                 per_device_train_batch_size=hyperparams.get("batch_size", 2),
@@ -429,7 +542,7 @@ async def lifespan(app: FastAPI):
             # Get optional config from environment
             tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
             gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.9"))
-            quantization = os.getenv("MODEL_GARDEN_QUANTIZATION")
+            quantization = os.getenv("MODEL_GARDEN_QUANTIZATION", "auto")  # Default to auto-detection
             max_model_len = int(os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")) if os.getenv("MODEL_GARDEN_MAX_MODEL_LEN") else None
             
             inference_service = InferenceService(
@@ -667,6 +780,15 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     dataset_path = job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
     output_dir = resolve_path(job_request.output_dir)
     
+    # Handle validation dataset path
+    validation_dataset_path = None
+    if job_request.validation_dataset_path:
+        validation_dataset_path = (
+            job_request.validation_dataset_path 
+            if job_request.validation_from_hub 
+            else resolve_path(job_request.validation_dataset_path)
+        )
+    
     # Create job record
     job_info = {
         "id": job_id,
@@ -674,6 +796,7 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "status": "queued",
         "base_model": job_request.base_model,
         "dataset_path": dataset_path,
+        "validation_dataset_path": validation_dataset_path,
         "output_dir": output_dir,
         "created_at": datetime.utcnow().isoformat() + "Z",
         "started_at": None,
@@ -683,9 +806,11 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "hyperparameters": job_request.hyperparameters or {},
         "lora_config": job_request.lora_config or {},
         "from_hub": job_request.from_hub,
+        "validation_from_hub": job_request.validation_from_hub,
         "is_vision": job_request.is_vision or False,
         "model_type": job_request.model_type or ("vision" if job_request.is_vision else "text"),
         "save_method": job_request.save_method,
+        "metrics": {"training": [], "validation": []},  # Initialize metrics storage
     }
     
     training_jobs[job_id] = job_info
