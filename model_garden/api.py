@@ -426,7 +426,19 @@ async def lifespan(app: FastAPI):
         try:
             from model_garden.inference import InferenceService, set_inference_service
             
-            inference_service = InferenceService(model_path=autoload_model)
+            # Get optional config from environment
+            tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
+            gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.9"))
+            quantization = os.getenv("MODEL_GARDEN_QUANTIZATION")
+            max_model_len = int(os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")) if os.getenv("MODEL_GARDEN_MAX_MODEL_LEN") else None
+            
+            inference_service = InferenceService(
+                model_path=autoload_model,
+                tensor_parallel_size=tensor_parallel_size,
+                gpu_memory_utilization=gpu_memory_utilization,
+                quantization=quantization,
+                max_model_len=max_model_len
+            )
             await inference_service.load_model()
             set_inference_service(inference_service)  # Register globally
             print(f"✅ Inference model loaded: {autoload_model}")

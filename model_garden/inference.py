@@ -279,20 +279,11 @@ class InferenceService:
         request_id: str,
     ) -> Dict:
         """Generate complete response (non-streaming)."""
-        try:
-            results_generator = self.engine.generate(inputs, sampling_params, request_id)
-            
-            final_output = None
-            async for request_output in results_generator:
-                final_output = request_output
-        except Exception as e:
-            import traceback
-            console.print(f"[red]❌ vLLM EngineCore error details:[/red]")
-            console.print(f"[red]Error type: {type(e).__name__}[/red]")
-            console.print(f"[red]Error message: {str(e)}[/red]")
-            console.print(f"[yellow]Full traceback:[/yellow]")
-            traceback.print_exc()
-            raise
+        results_generator = self.engine.generate(inputs, sampling_params, request_id)
+        
+        final_output = None
+        async for request_output in results_generator:
+            final_output = request_output
         
         if final_output is None:
             return {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}

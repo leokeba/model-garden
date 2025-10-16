@@ -692,30 +692,25 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
             --quantization awq
     """
     try:
-        from model_garden.inference import InferenceService, set_inference_service
+        import os
         import uvicorn
-        import asyncio
         
         console.print("\n[bold cyan]🚀 Model Garden - Inference Server[/bold cyan]\n")
         console.print(f"[cyan]Loading model:[/cyan] {model_path}")
         
-        # Create inference service
-        service = InferenceService(
-            model_path=model_path,
-            tensor_parallel_size=tensor_parallel_size,
-            gpu_memory_utilization=gpu_memory_utilization,
-            quantization=quantization,
-            max_model_len=max_model_len
-        )
+        # Set environment variables for the API to pick up during lifespan startup
+        # This ensures the model is loaded in the same process as the API
+        os.environ["MODEL_GARDEN_AUTOLOAD_MODEL"] = model_path
         
-        # Load model
-        async def load_model():
-            await service.load_model()
+        if tensor_parallel_size > 1:
+            os.environ["MODEL_GARDEN_TENSOR_PARALLEL_SIZE"] = str(tensor_parallel_size)
+        if gpu_memory_utilization != 0.9:
+            os.environ["MODEL_GARDEN_GPU_MEMORY_UTILIZATION"] = str(gpu_memory_utilization)
+        if quantization:
+            os.environ["MODEL_GARDEN_QUANTIZATION"] = quantization
+        if max_model_len:
+            os.environ["MODEL_GARDEN_MAX_MODEL_LEN"] = str(max_model_len)
         
-        asyncio.run(load_model())
-        set_inference_service(service)
-        
-        console.print(f"[green]✅ Model loaded successfully![/green]")
         console.print(f"\n[cyan]Starting server on[/cyan] http://{host}:{port}")
         console.print(f"[cyan]API docs available at[/cyan] http://{host}:{port}/docs\n")
         console.print("[yellow]Press Ctrl+C to stop the server[/yellow]\n")
@@ -734,6 +729,8 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
         
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        import traceback
+        traceback.print_exc()
         raise click.Abort()
 
 
