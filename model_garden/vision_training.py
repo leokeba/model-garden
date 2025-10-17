@@ -10,6 +10,15 @@ import os
 from pathlib import Path
 from typing import Optional, Union, List, Dict, Any
 
+# Configure HuggingFace cache from environment before importing HF libraries
+from dotenv import load_dotenv
+load_dotenv()
+
+HF_HOME = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
+os.environ['HF_HOME'] = HF_HOME
+os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
+os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
+
 from datasets import Dataset, load_dataset
 from PIL import Image
 from rich.console import Console

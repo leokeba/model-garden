@@ -1,6 +1,7 @@
 """FastAPI backend for Model Garden."""
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -99,6 +100,23 @@ class PaginatedResponse(BaseModel):
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
+# Configure storage directories from environment variables
+HF_HOME = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
+MODELS_DIR = os.getenv('MODELS_DIR', str(PROJECT_ROOT / 'models'))
+
+# Set HuggingFace cache environment variables
+# These must be set before importing any HF libraries
+os.environ['HF_HOME'] = HF_HOME
+os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
+os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
+
+# Ensure directories exist
+Path(HF_HOME).mkdir(parents=True, exist_ok=True)
+Path(MODELS_DIR).mkdir(parents=True, exist_ok=True)
+
+print(f"📁 HuggingFace cache: {HF_HOME}")
+print(f"📁 Models directory: {MODELS_DIR}")
+
 # Storage manager for persistent data
 class StorageManager:
     """Manages persistent storage of training jobs and models."""
@@ -114,10 +132,16 @@ class StorageManager:
         if self.jobs_file.exists():
             try:
                 with open(self.jobs_file, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    print(f"✓ Loaded {len(data)} training jobs from {self.jobs_file}")
+                    return data
             except Exception as e:
                 print(f"⚠️  Error loading training jobs: {e}")
+                import traceback
+                traceback.print_exc()
                 return {}
+        else:
+            print(f"ℹ️  No training jobs file found at {self.jobs_file}")
         return {}
     
     def save_training_jobs(self, jobs: Dict[str, Dict]) -> None:
@@ -133,10 +157,16 @@ class StorageManager:
         if self.models_file.exists():
             try:
                 with open(self.models_file, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    print(f"✓ Loaded {len(data)} models from {self.models_file}")
+                    return data
             except Exception as e:
                 print(f"⚠️  Error loading models: {e}")
+                import traceback
+                traceback.print_exc()
                 return {}
+        else:
+            print(f"ℹ️  No models file found at {self.models_file}")
         return {}
     
     def save_models(self, models: Dict[str, Dict]) -> None:
@@ -154,12 +184,16 @@ storage_manager = StorageManager(PROJECT_ROOT / "storage")
 training_jobs: Dict[str, Dict] = storage_manager.load_training_jobs()
 models_storage: Dict[str, Dict] = storage_manager.load_models()
 
+print(f"📊 Loaded {len(training_jobs)} training jobs from storage")
+print(f"📊 Loaded {len(models_storage)} models from storage")
 
-def resolve_path(path_str: str) -> str:
+
+def resolve_path(path_str: str, is_model_dir: bool = False) -> str:
     """Resolve a path relative to the project root if it's not absolute.
     
     Args:
         path_str: Path string (can be relative or absolute)
+        is_model_dir: If True, resolve relative to MODELS_DIR instead of PROJECT_ROOT
         
     Returns:
         Absolute path string
@@ -168,8 +202,9 @@ def resolve_path(path_str: str) -> str:
     if path.is_absolute():
         return str(path)
     else:
-        # Resolve relative to project root
-        resolved = (PROJECT_ROOT / path).resolve()
+        # Resolve relative to MODELS_DIR for model outputs, otherwise PROJECT_ROOT
+        base_dir = Path(MODELS_DIR) if is_model_dir else PROJECT_ROOT
+        resolved = (base_dir / path).resolve()
         return str(resolved)
 
 
@@ -651,7 +686,7 @@ async def lifespan(app: FastAPI):
 
 def scan_existing_models():
     """Scan for existing models in the models directory."""
-    models_dir = Path("./models")
+    models_dir = Path(MODELS_DIR)
     if not models_dir.exists():
         return
     
@@ -849,7 +884,7 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     
     # Only resolve paths for local files, not HuggingFace Hub datasets
     dataset_path = job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
-    output_dir = resolve_path(job_request.output_dir)
+    output_dir = resolve_path(job_request.output_dir, is_model_dir=True)
     
     # Handle validation dataset path
     validation_dataset_path = None

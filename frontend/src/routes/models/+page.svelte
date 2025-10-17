@@ -59,6 +59,9 @@
           <h1 class="text-3xl font-bold text-gray-900 ml-4">Models</h1>
         </div>
         <div class="flex gap-3">
+          <Button href="/models/load" variant="secondary">
+            🔌 Load Model
+          </Button>
           <Button href="/training/new" variant="primary">
             + Train New Model
           </Button>
@@ -125,11 +128,11 @@
               
               <!-- Actions -->
               <div class="flex gap-2 pt-2 border-t">
-                <Button variant="primary" size="sm" fullWidth>
-                  Generate
+                <Button href={`/models/load?model=${encodeURIComponent(model.path)}`} variant="primary" size="sm" fullWidth>
+                  🔌 Load
                 </Button>
-                <Button variant="secondary" size="sm">
-                  Details
+                <Button variant="secondary" size="sm" href={`/inference?model=${model.id}`}>
+                  Generate
                 </Button>
                 <Button 
                   variant="danger" 

@@ -11,6 +11,15 @@ import warnings
 from pathlib import Path
 from typing import Optional, List
 
+# Configure HuggingFace cache from environment before importing HF libraries
+from dotenv import load_dotenv
+load_dotenv()
+
+HF_HOME = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
+os.environ['HF_HOME'] = HF_HOME
+os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
+os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
+
 # Suppress non-critical warnings
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 

@@ -215,6 +215,49 @@ class APIClient {
     return response.json();
   }
   
+  // Inference
+  async getInferenceStatus(): Promise<{
+    loaded: boolean;
+    model_info: {
+      model_path: string;
+      is_loaded: boolean;
+      tensor_parallel_size: number;
+      gpu_memory_utilization: number;
+      max_model_len: number | null;
+      dtype: string;
+      quantization: string | null;
+    } | null;
+  }> {
+    return this.request('/inference/status');
+  }
+  
+  async loadModel(params: {
+    model_path: string;
+    tensor_parallel_size?: number;
+    gpu_memory_utilization?: number;
+    max_model_len?: number | null;
+    dtype?: string;
+    quantization?: string | null;
+  }): Promise<{ success: boolean; message: string; data?: any }> {
+    return this.request('/inference/load', {
+      method: 'POST',
+      body: JSON.stringify({
+        model_path: params.model_path,
+        tensor_parallel_size: params.tensor_parallel_size || 1,
+        gpu_memory_utilization: params.gpu_memory_utilization || 0.9,
+        max_model_len: params.max_model_len,
+        dtype: params.dtype || 'auto',
+        quantization: params.quantization,
+      }),
+    });
+  }
+  
+  async unloadModel(): Promise<{ success: boolean; message: string }> {
+    return this.request('/inference/unload', {
+      method: 'POST',
+    });
+  }
+  
   // Generic methods for other endpoints
   async get<T = any>(endpoint: string): Promise<T> {
     return this.request(endpoint);

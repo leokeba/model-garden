@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import Button from '$lib/components/Button.svelte';
   import Card from '$lib/components/Card.svelte';
-  import { api, type Model } from '$lib/api/client';
+  import Badge from '$lib/components/Badge.svelte';
+  import { api } from '$lib/api/client';
 
-  // Models
-  let models: Model[] = $state([]);
-  let selectedModel = $state('');
-  let loadingModels = $state(true);
+  // Inference status
+  let inferenceStatus = $state<any>(null);
+  let loadingStatus = $state(true);
+  let statusError = $state('');
 
   // Chat mode
   type Message = {
@@ -35,25 +36,21 @@
   let systemPrompt = $state('You are a helpful AI assistant.');
   let showSettings = $state(false);
 
-  async function loadModels() {
+  async function loadInferenceStatus() {
     try {
-      loadingModels = true;
-      const response = await api.getModels();
-      models = response.models || response.items || [];
-      
-      // Auto-select first model
-      if (models.length > 0 && !selectedModel) {
-        selectedModel = models[0].name;
-      }
+      loadingStatus = true;
+      statusError = '';
+      inferenceStatus = await api.getInferenceStatus();
     } catch (error) {
-      console.error('Failed to load models:', error);
+      console.error('Failed to load inference status:', error);
+      statusError = error instanceof Error ? error.message : 'Failed to load status';
     } finally {
-      loadingModels = false;
+      loadingStatus = false;
     }
   }
 
   async function sendMessage() {
-    if (!currentInput.trim() || !selectedModel || isGenerating) return;
+    if (!currentInput.trim() || !inferenceStatus?.loaded || isGenerating) return;
 
     const userMessage: Message = {
       role: 'user',
@@ -104,11 +101,10 @@
         { role: 'user', content: userInput },
       ];
 
-      const response = await fetch(`/api/v1/inference/chat/completions`, {
+      const response = await fetch(`/api/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: selectedModel,
           messages: chatMessages,
           temperature: settings.temperature,
           max_tokens: settings.max_tokens,
@@ -173,15 +169,15 @@
     messages = [...messages, assistantMessage];
 
     try {
-      const response = await fetch(`/api/v1/inference/completions`, {
+      const response = await fetch(`/api/v1/inference/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: selectedModel,
           prompt: prompt,
           temperature: settings.temperature,
           max_tokens: settings.max_tokens,
           top_p: settings.top_p,
+          top_k: settings.top_k,
           stream: settings.stream,
         }),
       });
@@ -210,7 +206,7 @@
 
               try {
                 const parsed = JSON.parse(data);
-                const content = parsed.choices[0]?.text || '';
+                const content = parsed.text || '';
                 if (content) {
                   streamingContent += content;
                   messages[messages.length - 1].content = streamingContent;
@@ -223,7 +219,7 @@
         }
       } else {
         const data = await response.json();
-        messages[messages.length - 1].content = data.choices[0].text;
+        messages[messages.length - 1].content = data.text || data.content || '';
       }
     } catch (error) {
       messages[messages.length - 1].content = 'Error generating response';
@@ -255,7 +251,10 @@
   }
 
   onMount(() => {
-    loadModels();
+    loadInferenceStatus();
+    // Refresh status every 10 seconds
+    const interval = setInterval(loadInferenceStatus, 10000);
+    return () => clearInterval(interval);
   });
 </script>
 
@@ -268,7 +267,15 @@
   <div class="bg-white shadow">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center py-6">
-        <h1 class="text-3xl font-bold text-gray-900">Inference</h1>
+        <div class="flex items-center gap-4">
+          <Button href="/" variant="ghost" size="sm">← Dashboard</Button>
+          <h1 class="text-3xl font-bold text-gray-900">Inference</h1>
+          {#if inferenceStatus?.loaded}
+            <Badge variant="success">Model Loaded</Badge>
+          {:else if !loadingStatus}
+            <Badge variant="warning">No Model</Badge>
+          {/if}
+        </div>
         <div class="flex gap-3">
           <Button onclick={() => showSettings = !showSettings} variant="secondary">
             ⚙️ Settings
@@ -299,7 +306,7 @@
                 </p>
               </div>
             {:else}
-              {#each messages as message}
+              {#each messages as message, index}
                 <div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
                   <div
                     class="max-w-[80%] rounded-lg px-4 py-3 {message.role === 'user'
@@ -312,24 +319,13 @@
                           {message.role === 'user' ? 'You' : 'Assistant'} · {formatTime(message.timestamp)}
                         </div>
                         <div class="whitespace-pre-wrap break-words">
-                          {message.content}
+                          {message.content}{#if isGenerating && index === messages.length - 1 && message.role === 'assistant'}<span class="inline-block w-1 h-4 bg-gray-600 animate-pulse ml-1"></span>{/if}
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
               {/each}
-
-              {#if isGenerating && streamingContent}
-                <div class="flex justify-start">
-                  <div class="max-w-[80%] rounded-lg px-4 py-3 bg-gray-100 text-gray-900">
-                    <div class="text-xs opacity-70 mb-1">Assistant · Typing...</div>
-                    <div class="whitespace-pre-wrap break-words">
-                      {streamingContent}<span class="inline-block w-1 h-4 bg-gray-600 animate-pulse ml-1"></span>
-                    </div>
-                  </div>
-                </div>
-              {/if}
             {/if}
           </div>
 
@@ -339,15 +335,15 @@
               <textarea
                 bind:value={currentInput}
                 onkeydown={handleKeyDown}
-                placeholder={isGenerating ? 'Generating...' : 'Type your message... (Enter to send, Shift+Enter for new line)'}
+                placeholder={isGenerating ? 'Generating...' : inferenceStatus?.loaded ? 'Type your message... (Enter to send, Shift+Enter for new line)' : 'Load a model first...'}
                 rows="2"
-                disabled={isGenerating || !selectedModel || loadingModels}
+                disabled={isGenerating || !inferenceStatus?.loaded || loadingStatus}
                 class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none disabled:bg-gray-100 disabled:cursor-not-allowed"
               ></textarea>
               <Button
                 onclick={sendMessage}
                 variant="primary"
-                disabled={!currentInput.trim() || isGenerating || !selectedModel || loadingModels}
+                disabled={!currentInput.trim() || isGenerating || !inferenceStatus?.loaded || loadingStatus}
                 loading={isGenerating}
                 class="self-end"
               >
@@ -360,28 +356,76 @@
 
       <!-- Sidebar -->
       <div class="space-y-6">
-        <!-- Model Selection -->
+        <!-- Model Status -->
         <Card>
           <div class="p-4">
-            <h3 class="text-lg font-semibold text-gray-900 mb-3">Model</h3>
-            {#if loadingModels}
+            <h3 class="text-lg font-semibold text-gray-900 mb-3">Model Status</h3>
+            {#if loadingStatus}
               <div class="flex items-center justify-center py-4">
                 <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
               </div>
-            {:else if models.length === 0}
-              <p class="text-sm text-gray-500 mb-3">No models available</p>
-              <Button href="/models" variant="primary" size="sm" fullWidth>
-                Browse Models
+            {:else if statusError}
+              <div class="text-sm text-red-600 mb-3">{statusError}</div>
+              <Button onclick={loadInferenceStatus} variant="secondary" size="sm" fullWidth>
+                Retry
               </Button>
+            {:else if !inferenceStatus?.loaded}
+              <div class="space-y-3">
+                <p class="text-sm text-gray-500">No model currently loaded for inference.</p>
+                <Button href="/models/load" variant="primary" size="sm" fullWidth>
+                  🔌 Load Model
+                </Button>
+              </div>
             {:else}
-              <select
-                bind:value={selectedModel}
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-              >
-                {#each models as model}
-                  <option value={model.name}>{model.name}</option>
-                {/each}
-              </select>
+              <div class="space-y-3">
+                <div class="flex items-center gap-2 mb-2">
+                  <Badge variant="success">Loaded</Badge>
+                </div>
+                <div class="space-y-2 text-sm">
+                  <div>
+                    <div class="text-xs text-gray-500">Model Path</div>
+                    <div class="font-medium text-gray-900 break-all">
+                      {inferenceStatus.model_info.model_path.split('/').pop()}
+                    </div>
+                    <div class="text-xs text-gray-400 mt-0.5">
+                      {inferenceStatus.model_info.model_path}
+                    </div>
+                  </div>
+                  {#if inferenceStatus.model_info.max_model_len}
+                    <div>
+                      <div class="text-xs text-gray-500">Max Length</div>
+                      <div class="font-medium text-gray-900">
+                        {inferenceStatus.model_info.max_model_len} tokens
+                      </div>
+                    </div>
+                  {/if}
+                  <div>
+                    <div class="text-xs text-gray-500">GPU Memory</div>
+                    <div class="font-medium text-gray-900">
+                      {(inferenceStatus.model_info.gpu_memory_utilization * 100).toFixed(0)}%
+                    </div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-gray-500">Data Type</div>
+                    <div class="font-medium text-gray-900">
+                      {inferenceStatus.model_info.dtype}
+                    </div>
+                  </div>
+                  {#if inferenceStatus.model_info.quantization}
+                    <div>
+                      <div class="text-xs text-gray-500">Quantization</div>
+                      <div class="font-medium text-gray-900">
+                        {inferenceStatus.model_info.quantization}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+                <div class="pt-2 mt-2 border-t border-gray-200">
+                  <Button href="/models/load" variant="secondary" size="sm" fullWidth>
+                    Switch Model
+                  </Button>
+                </div>
+              </div>
             {/if}
           </div>
         </Card>
