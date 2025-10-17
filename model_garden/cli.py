@@ -837,7 +837,7 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
 @click.option("--port", default=8000, help="Port to run the inference server on")
 @click.option("--host", default="0.0.0.0", help="Host to bind the server to")
 @click.option("--tensor-parallel-size", default=1, help="Number of GPUs to use for tensor parallelism")
-@click.option("--gpu-memory-utilization", default=0.9, type=float, help="GPU memory utilization (0.0-1.0)")
+@click.option("--gpu-memory-utilization", default=0.0, type=float, help="GPU memory utilization (0.0-1.0, 0 = auto)")
 @click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default="auto", help="Quantization method (auto = detect from model)")
 @click.option("--max-model-len", type=int, help="Maximum sequence length")
 def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len):
@@ -883,8 +883,8 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
         
         if tensor_parallel_size > 1:
             os.environ["MODEL_GARDEN_TENSOR_PARALLEL_SIZE"] = str(tensor_parallel_size)
-        if gpu_memory_utilization != 0.9:
-            os.environ["MODEL_GARDEN_GPU_MEMORY_UTILIZATION"] = str(gpu_memory_utilization)
+        # Always set GPU memory utilization (0 = auto mode)
+        os.environ["MODEL_GARDEN_GPU_MEMORY_UTILIZATION"] = str(gpu_memory_utilization)
         if quantization:
             os.environ["MODEL_GARDEN_QUANTIZATION"] = quantization
         if max_model_len:

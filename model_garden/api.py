@@ -687,7 +687,7 @@ async def lifespan(app: FastAPI):
             
             # Get optional config from environment
             tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
-            gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.9"))
+            gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.0"))  # Default to auto
             quantization = os.getenv("MODEL_GARDEN_QUANTIZATION", "auto")  # Default to auto-detection
             max_model_len_str = os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")
             max_model_len = int(max_model_len_str) if max_model_len_str else None
@@ -1197,7 +1197,7 @@ class LoadModelRequest(BaseModel):
     """Request to load a model for inference."""
     model_path: str
     tensor_parallel_size: int = 1
-    gpu_memory_utilization: float = 0.9
+    gpu_memory_utilization: float = 0.0  # 0 = auto mode
     max_model_len: Optional[int] = None
     dtype: str = "auto"
     quantization: Optional[str] = None

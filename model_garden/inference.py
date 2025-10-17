@@ -10,6 +10,165 @@ from rich.console import Console
 console = Console()
 
 
+def get_gpu_memory_gb() -> float:
+    """Get total GPU memory in GB for the first available GPU.
+    
+    Returns:
+        Total GPU memory in GB, or 0.0 if no GPU is available
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            # Get memory for the first GPU (device 0)
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            return total_memory / (1024 ** 3)  # Convert bytes to GB
+    except Exception as e:
+        console.print(f"[yellow]⚠️  Could not detect GPU memory: {e}[/yellow]")
+    return 0.0
+
+
+def estimate_model_size_gb(model_path: str) -> float:
+    """Estimate model size in GB by checking weight files or config.
+    
+    Args:
+        model_path: Path to the model directory or HuggingFace model ID
+        
+    Returns:
+        Estimated model size in GB
+    """
+    model_dir = Path(model_path)
+    
+    # If it's a HuggingFace model ID (contains slash and not a local path)
+    if "/" in model_path and not model_dir.exists():
+        # Try to extract size from model name (e.g., "7B", "13B", "3B", "1.1B")
+        import re
+        # Match patterns like "7B", "3B", "1.1B" but not "2.5" (version), "4bit", or "8bit"
+        # We look for: hyphen/underscore/start of string, then number >= 1, then 'B'
+        # This avoids matching decimal versions like "2.5" or "3.2"
+        size_match = re.search(r'[-_](\d+(?:\.\d+)?)[Bb](?!it)', model_path)
+        if size_match:
+            param_size = float(size_match.group(1))
+            # Rough estimate: FP16 = 2 bytes per parameter
+            return param_size * 2
+        # Default estimate for unknown HF models
+        return 7.0  # Assume 7B model as default
+    
+    # For local models, check actual file sizes
+    if not model_dir.exists() or not model_dir.is_dir():
+        return 7.0  # Default estimate
+    
+    total_size = 0.0
+    
+    # Sum up all weight files (.safetensors and .bin)
+    for pattern in ["*.safetensors", "*.bin"]:
+        for weight_file in model_dir.glob(pattern):
+            total_size += weight_file.stat().st_size
+    
+    if total_size > 0:
+        return total_size / (1024 ** 3)  # Convert bytes to GB
+    
+    # If no weight files found, try to estimate from config
+    config_file = model_dir / "config.json"
+    if config_file.exists():
+        try:
+            with open(config_file) as f:
+                config = json.load(f)
+            
+            # Try to estimate from model architecture params
+            hidden_size = config.get("hidden_size", 4096)
+            num_layers = config.get("num_hidden_layers", 32)
+            vocab_size = config.get("vocab_size", 32000)
+            
+            # Rough estimate based on transformer architecture
+            # Each layer has attention (4 * hidden_size^2) + FFN (varies)
+            # Plus embeddings (vocab_size * hidden_size)
+            params_estimate = (
+                vocab_size * hidden_size  # Embeddings
+                + num_layers * (4 * hidden_size * hidden_size * 2)  # Attention + FFN (rough)
+            )
+            
+            # Assume FP16 (2 bytes per parameter)
+            return (params_estimate * 2) / (1024 ** 3)
+        except Exception:
+            pass
+    
+    # Default fallback
+    return 7.0
+
+
+def calculate_gpu_memory_utilization(
+    model_path: str,
+    max_model_len: Optional[int] = None,
+    tensor_parallel_size: int = 1,
+) -> float:
+    """Calculate optimal GPU memory utilization based on model size and available VRAM.
+    
+    This function estimates the memory requirements for:
+    - Model weights
+    - KV cache (based on max_model_len)
+    - Temporary buffers and overhead
+    
+    Args:
+        model_path: Path to the model or HuggingFace model ID
+        max_model_len: Maximum sequence length (affects KV cache size)
+        tensor_parallel_size: Number of GPUs for tensor parallelism
+        
+    Returns:
+        Recommended GPU memory utilization (0.0-1.0)
+    """
+    gpu_memory_gb = get_gpu_memory_gb()
+    
+    if gpu_memory_gb == 0:
+        console.print("[yellow]⚠️  No GPU detected, using default utilization of 0.9[/yellow]")
+        return 0.9
+    
+    console.print(f"[cyan]💾 Detected GPU memory: {gpu_memory_gb:.1f} GB[/cyan]")
+    
+    # Estimate model size
+    model_size_gb = estimate_model_size_gb(model_path)
+    console.print(f"[cyan]📊 Estimated model size: {model_size_gb:.1f} GB[/cyan]")
+    
+    # Divide by tensor parallel size (model is sharded across GPUs)
+    model_size_per_gpu = model_size_gb / tensor_parallel_size
+    
+    # Estimate KV cache size (more conservative)
+    # vLLM uses paged attention which is more memory efficient
+    # Rule of thumb: ~0.3-0.5GB per 1K tokens for 7B models with reasonable batch sizes
+    if max_model_len is None:
+        max_model_len = 4096  # Default assumption
+    
+    # More conservative KV cache estimate: (model_size_gb / 7.0) * (max_model_len / 1000) * 0.4 GB
+    kv_cache_estimate = (model_size_gb / 7.0) * (max_model_len / 1000) * 0.4
+    console.print(f"[cyan]🗄️  Estimated KV cache: {kv_cache_estimate:.1f} GB (for max_model_len={max_model_len})[/cyan]")
+    
+    # Total memory needed per GPU
+    total_needed = model_size_per_gpu + kv_cache_estimate
+    
+    # Add safety margin for temporary buffers and CUDA graphs (20%)
+    total_with_margin = total_needed * 1.20
+    
+    # Calculate utilization
+    if total_with_margin >= gpu_memory_gb:
+        # Model won't fit comfortably, use aggressive utilization
+        utilization = 0.95
+        console.print(f"[yellow]⚠️  Model memory requirements ({total_with_margin:.1f} GB) are close to GPU capacity[/yellow]")
+        console.print(f"[yellow]   Using aggressive utilization: {utilization}[/yellow]")
+    elif total_with_margin >= gpu_memory_gb * 0.7:
+        # Model is a significant portion of memory
+        utilization = 0.88
+        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/gpu_memory_gb)*100:.0f}% of GPU memory[/cyan]")
+        console.print(f"[cyan]  Using standard utilization: {utilization}[/cyan]")
+    else:
+        # Model fits comfortably, use conservative utilization
+        # This leaves plenty of room for batching and multiple concurrent requests
+        # Use at least 0.5 to ensure good throughput, cap at 0.75 to leave room for batching
+        utilization = max(0.50, min(0.75, (total_with_margin / gpu_memory_gb) + 0.20))
+        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/gpu_memory_gb)*100:.0f}% of GPU memory[/cyan]")
+        console.print(f"[cyan]  Using conservative utilization: {utilization} (leaves room for batching)[/cyan]")
+    
+    return round(utilization, 2)
+
+
 def detect_quantization_method(model_path: str) -> Optional[str]:
     """Auto-detect the appropriate quantization method for a model.
     
@@ -102,7 +261,7 @@ class InferenceService:
         self,
         model_path: str,
         tensor_parallel_size: int = 1,
-        gpu_memory_utilization: float = 0.9,
+        gpu_memory_utilization: float = 0.0,
         max_model_len: Optional[int] = None,
         dtype: str = "auto",
         quantization: Optional[str] = "auto",
@@ -113,7 +272,7 @@ class InferenceService:
         Args:
             model_path: Path to the model or HuggingFace model ID
             tensor_parallel_size: Number of GPUs to use for tensor parallelism
-            gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0)
+            gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0, 0 = auto)
             max_model_len: Maximum sequence length
             dtype: Data type (auto, float16, bfloat16, float32)
             quantization: Quantization method (auto, awq, gptq, squeezellm, fp8, bitsandbytes, or None)
@@ -140,6 +299,19 @@ class InferenceService:
         
         try:
             from vllm import AsyncEngineArgs, AsyncLLMEngine
+            
+            # Auto-calculate GPU memory utilization if set to 0
+            gpu_memory_utilization = self.gpu_memory_utilization
+            if gpu_memory_utilization == 0.0:
+                console.print("[cyan]🔧 Auto mode enabled for GPU memory utilization[/cyan]")
+                gpu_memory_utilization = calculate_gpu_memory_utilization(
+                    model_path=self.model_path,
+                    max_model_len=self.max_model_len,
+                    tensor_parallel_size=self.tensor_parallel_size,
+                )
+                console.print(f"[green]✓[/green] Calculated GPU memory utilization: {gpu_memory_utilization}")
+            else:
+                console.print(f"[cyan]💾 Using manual GPU memory utilization: {gpu_memory_utilization}[/cyan]")
             
             # Auto-detect quantization if not specified
             quantization = self.quantization
@@ -185,7 +357,7 @@ class InferenceService:
             engine_args = AsyncEngineArgs(
                 model=self.model_path,
                 tensor_parallel_size=self.tensor_parallel_size,
-                gpu_memory_utilization=self.gpu_memory_utilization,
+                gpu_memory_utilization=gpu_memory_utilization,
                 max_model_len=self.max_model_len,
                 dtype=dtype_param,  # type: ignore
                 quantization=quantization_param,  # type: ignore
