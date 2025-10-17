@@ -205,19 +205,30 @@ class VisionLanguageTrainer:
 
         Args:
             dataset_name: HuggingFace dataset identifier (e.g., "user/dataset-name")
-            split: Dataset split to load (default: "train")
+                         Can include specific file with '::' separator (e.g., 'user/repo::train.jsonl')
+            split: Dataset split to load (default: "train", ignored if specific file is provided)
             **kwargs: Additional arguments passed to load_dataset
 
         Returns:
             Loaded dataset
         """
-        console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset_name}[/cyan]")
-        
         # Get HuggingFace token from environment for private datasets
         hf_token = os.getenv('HF_TOKEN')
         
         try:
-            dataset = load_dataset(dataset_name, split=split, token=hf_token, **kwargs)
+            # Check if dataset_name includes a specific file
+            if "::" in dataset_name:
+                repo_name, file_name = dataset_name.split("::", 1)
+                console.print(f"[cyan]Loading dataset from HuggingFace Hub: {repo_name} (file: {file_name})[/cyan]")
+                
+                # Load specific file from the repo
+                dataset = load_dataset(repo_name, data_files=file_name, split="train", token=hf_token, **kwargs)
+            else:
+                console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset_name} (split: {split})[/cyan]")
+                
+                # Load standard split
+                dataset = load_dataset(dataset_name, split=split, token=hf_token, **kwargs)
+            
             console.print(f"[green]✓[/green] Loaded {len(dataset)} examples from Hub")
             return dataset
         except Exception as e:

@@ -352,6 +352,7 @@ def run_training_job(job_id: str):
             train_dataset = trainer.load_dataset(
                 dataset_path=job["dataset_path"],
                 from_hub=from_hub,
+                split="train",
             )
             formatted_train_dataset = trainer.format_dataset(train_dataset)
             
@@ -362,6 +363,7 @@ def run_training_job(job_id: str):
                 val_dataset = trainer.load_dataset(
                     dataset_path=validation_dataset_path,
                     from_hub=validation_from_hub,
+                    split="validation",
                 )
                 formatted_val_dataset = trainer.format_dataset(val_dataset)
                 print(f"✓ Validation dataset loaded ({len(formatted_val_dataset)} examples)")
@@ -407,7 +409,7 @@ def run_training_job(job_id: str):
             
             # Load training dataset
             if from_hub:
-                train_dataset = trainer.load_dataset_from_hub(job["dataset_path"])
+                train_dataset = trainer.load_dataset_from_hub(job["dataset_path"], split="train")
             else:
                 train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
             
@@ -424,7 +426,7 @@ def run_training_job(job_id: str):
             if validation_dataset_path:
                 print(f"📊 Loading validation dataset: {validation_dataset_path}")
                 if validation_from_hub:
-                    val_dataset = trainer.load_dataset_from_hub(validation_dataset_path)
+                    val_dataset = trainer.load_dataset_from_hub(validation_dataset_path, split="validation")
                 else:
                     val_dataset = trainer.load_dataset_from_file(validation_dataset_path)
                 

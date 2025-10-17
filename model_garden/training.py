@@ -157,17 +157,28 @@ class ModelTrainer:
 
         Args:
             dataset_name: Dataset identifier on HuggingFace Hub
-            split: Dataset split to load
+                         Can include specific file with '::' separator (e.g., 'user/repo::train.jsonl')
+            split: Dataset split to load (ignored if specific file is provided)
 
         Returns:
             Loaded dataset
         """
-        console.print(f"[cyan]Loading dataset from Hub: {dataset_name}[/cyan]")
-        
         # Get HuggingFace token from environment for private datasets
         hf_token = os.getenv('HF_TOKEN')
         
-        dataset = load_dataset(dataset_name, split=split, token=hf_token)
+        # Check if dataset_name includes a specific file
+        if "::" in dataset_name:
+            repo_name, file_name = dataset_name.split("::", 1)
+            console.print(f"[cyan]Loading dataset from Hub: {repo_name} (file: {file_name})[/cyan]")
+            
+            # Load specific file from the repo
+            dataset = load_dataset(repo_name, data_files=file_name, split="train", token=hf_token)
+        else:
+            console.print(f"[cyan]Loading dataset from Hub: {dataset_name} (split: {split})[/cyan]")
+            
+            # Load standard split
+            dataset = load_dataset(dataset_name, split=split, token=hf_token)
+        
         console.print(f"[green]✓[/green] Loaded {len(dataset)} examples")
         return dataset
 
@@ -260,7 +271,7 @@ class ModelTrainer:
         console.print("[cyan]Starting training...[/cyan]")
         
         # Set evaluation strategy if validation dataset provided
-        evaluation_strategy = "steps" if eval_dataset is not None else "no"
+        eval_strategy = "steps" if eval_dataset is not None else "no"
         eval_steps_value = eval_steps if eval_steps is not None else save_steps
 
         training_args = TrainingArguments(
@@ -282,7 +293,8 @@ class ModelTrainer:
             save_steps=save_steps,
             save_total_limit=3,
             report_to="none",  # Disable wandb/tensorboard for now
-            evaluation_strategy=evaluation_strategy,
+            do_eval=eval_dataset is not None,  # Explicitly enable evaluation
+            eval_strategy=eval_strategy,
             eval_steps=eval_steps_value if eval_dataset else None,
             load_best_model_at_end=True if eval_dataset else False,
             metric_for_best_model="eval_loss" if eval_dataset else None,

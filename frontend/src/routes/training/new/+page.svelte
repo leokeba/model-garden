@@ -259,7 +259,8 @@
               </div>
               <p class="text-xs text-gray-500 mt-1">
                 {#if formData.from_hub}
-                  Enter a HuggingFace dataset identifier (e.g., "username/dataset-name")
+                  Enter a HuggingFace dataset identifier (e.g., "username/dataset-name")<br/>
+                  For specific files, use: "username/repo::train.jsonl"
                 {:else if formData.model_type === 'vision'}
                   Path to your JSONL dataset with image paths/base64 or local file
                 {:else}
@@ -292,7 +293,10 @@
                 </label>
               </div>
               <p class="text-xs text-gray-500 mt-1">
-                📊 Optional: Provide a validation dataset to track validation loss during training
+                📊 Optional: Provide a validation dataset to track validation loss during training<br/>
+                {#if formData.validation_from_hub}
+                  Use HuggingFace format: "username/repo" or "username/repo::validation.jsonl"
+                {/if}
               </p>
             </div>
 
