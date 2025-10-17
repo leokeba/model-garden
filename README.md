@@ -9,6 +9,18 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 
 ---
 
+## 🎉 What's New
+
+### Recent Achievements (October 2025)
+- ✅ **Full vLLM Integration** - High-throughput inference with OpenAI-compatible API
+- ✅ **Structured Outputs** - Generate JSON following strict schemas (docs/10-structured-outputs.md)
+- ✅ **Vision Model Inference** - Serve multimodal models with image understanding
+- ✅ **Complete CLI Suite** - Commands for serving, generation, and interactive chat
+- ✅ **Web Dashboard** - Manage models and training jobs via intuitive UI
+- ✅ **HuggingFace Hub Integration** - Direct dataset and model loading
+
+---
+
 ## ✨ Features
 
 ### 🚀 High-Performance Training
@@ -364,14 +376,20 @@ pre-commit run --all-files
 
 **Current Status**: Phase 1 complete! Ready for production testing.
 
-### Phase 2: Core Features 🚧 (In Progress)
+### Phase 2: Core Features 🚧 (85% Complete!)
 - [x] **vLLM inference integration with streaming**
 - [x] **OpenAI-compatible inference API endpoints**
 - [x] **CLI commands for inference (serve, generate, chat)**
-- [ ] Inference UI in web dashboard
+- [x] **Structured outputs** (JSON mode, schema validation) 🆕
+- [x] **Multi-modal inference** (vision + text) 🆕
+- [x] **HuggingFace Hub integration** 🆕
+- [x] **Real carbon tracking with CodeCarbon** ✨ NEW!
+- [x] **Carbon tracking for training & inference** ✨ NEW!
+- [x] **Persistent emissions database** ✨ NEW!
+- [x] **Inference UI in web dashboard** (chat + completion modes)
+- [x] **Carbon emissions in training job details** ✨ NEW!
+- [ ] **BoAmps full implementation** (API scaffold done, need real data integration) - next priority
 - [ ] Dataset management UI and API endpoints
-- [ ] **BoAmps integration for standardized emissions reporting**
-- [ ] Carbon tracking with CodeCarbon
 - [ ] Job queue and background processing
 - [ ] Real-time training monitoring via WebSocket
 - [ ] Advanced carbon analytics dashboard

@@ -24,6 +24,9 @@ from PIL import Image
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+# Import carbon tracking
+from model_garden.carbon import CarbonTracker
+
 console = Console()
 
 
@@ -529,6 +532,8 @@ class VisionLanguageTrainer:
         self,
         dataset: Union[Dataset, List[Dict]],
         output_dir: str,
+        job_id: Optional[str] = None,
+        enable_carbon_tracking: bool = True,
         num_train_epochs: int = 3,
         per_device_train_batch_size: int = 1,  # Smaller for vision models
         gradient_accumulation_steps: int = 8,  # Larger for vision models
@@ -585,6 +590,27 @@ class VisionLanguageTrainer:
             eval_steps: Optional number of steps between evaluations (defaults to save_steps)
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
+        
+        # Initialize carbon tracker
+        carbon_tracker = None
+        emissions_data = None
+        if enable_carbon_tracking:
+            # Generate job_id if not provided
+            if job_id is None:
+                import time
+                job_id = f"vision-training-{int(time.time())}"
+            
+            try:
+                carbon_tracker = CarbonTracker(
+                    job_id=job_id,
+                    job_type="training",
+                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
+                )
+                carbon_tracker.start()
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
+                console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
+                carbon_tracker = None
 
         from trl.trainer.sft_trainer import SFTTrainer
         from trl.trainer.sft_config import SFTConfig
@@ -680,6 +706,17 @@ class VisionLanguageTrainer:
         console.print("[cyan]Training in progress...[/cyan]")
         trainer.train()
         console.print("[bold green]✨ Training completed![/bold green]")
+        
+        # Stop carbon tracking
+        if carbon_tracker is not None:
+            try:
+                emissions_data = carbon_tracker.stop()
+                if emissions_data:
+                    console.print(
+                        f"[green]🌍 Carbon emissions: {emissions_data['emissions_kg_co2']:.6f} kg CO2[/green]"
+                    )
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
 
     def _clean_merged_config(self, output_dir: str) -> None:
         """Remove quantization_config from merged model config for vLLM compatibility.

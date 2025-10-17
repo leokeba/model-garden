@@ -34,6 +34,9 @@ from trl.trainer.sft_trainer import SFTTrainer
 from transformers import TrainingArguments
 from typing import cast
 
+# Import carbon tracking
+from model_garden.carbon import CarbonTracker
+
 console = Console()
 
 
@@ -267,6 +270,8 @@ class ModelTrainer:
         self,
         dataset: Dataset,
         output_dir: str,
+        job_id: Optional[str] = None,
+        enable_carbon_tracking: bool = True,
         num_train_epochs: int = 3,
         per_device_train_batch_size: int = 2,
         gradient_accumulation_steps: int = 4,
@@ -324,6 +329,27 @@ class ModelTrainer:
         """
         console.print("[cyan]Starting training...[/cyan]")
         
+        # Initialize carbon tracker
+        carbon_tracker = None
+        emissions_data = None
+        if enable_carbon_tracking:
+            # Generate job_id if not provided
+            if job_id is None:
+                import time
+                job_id = f"training-{int(time.time())}"
+            
+            try:
+                carbon_tracker = CarbonTracker(
+                    job_id=job_id,
+                    job_type="training",
+                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
+                )
+                carbon_tracker.start()
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
+                console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
+                carbon_tracker = None
+        
         # Set evaluation strategy if validation dataset provided
         final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
         eval_steps_value = eval_steps if eval_steps is not None else save_steps
@@ -380,6 +406,17 @@ class ModelTrainer:
         # Train
         trainer.train()
         console.print("[green]✓[/green] Training completed")
+        
+        # Stop carbon tracking
+        if carbon_tracker is not None:
+            try:
+                emissions_data = carbon_tracker.stop()
+                if emissions_data:
+                    console.print(
+                        f"[green]🌍 Carbon emissions: {emissions_data['emissions_kg_co2']:.6f} kg CO2[/green]"
+                    )
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
 
         # Save final model
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")

@@ -1250,6 +1250,7 @@ async def load_inference_model(request: LoadModelRequest):
 async def unload_inference_model():
     """Unload the currently loaded model."""
     from model_garden.inference import get_inference_service, set_inference_service
+    from model_garden.carbon import stop_inference_tracker
     
     service = get_inference_service()
     if not service or not service.is_loaded:
@@ -1259,6 +1260,16 @@ async def unload_inference_model():
         )
     
     try:
+        # Stop carbon tracking and save emissions
+        try:
+            emissions_data = stop_inference_tracker()
+            if emissions_data:
+                print(f"✅ Inference emissions saved: {emissions_data['emissions_kg_co2']:.6f} kg CO2")
+                print(f"   Requests: {emissions_data.get('request_count', 0)}")
+                print(f"   Tokens: {emissions_data.get('total_tokens', 0)}")
+        except Exception as e:
+            print(f"⚠️  Failed to stop inference carbon tracking: {e}")
+        
         await service.unload_model()
         set_inference_service(None)
         
@@ -1485,10 +1496,24 @@ async def chat_completions(request: ChatCompletionRequest):
         if request.stream:
             # Streaming response
             async def generate_stream():
+                total_tokens = 0
                 stream = await service.chat_completion(**gen_params)
                 
                 async for chunk in stream:  # type: ignore
+                    # Count tokens if available
+                    if isinstance(chunk, dict) and 'usage' in chunk:
+                        total_tokens = chunk['usage'].get('completion_tokens', 0)
+                    
                     yield f"data: {json.dumps(chunk)}\n\n"
+                
+                # Record request in carbon tracker
+                try:
+                    from model_garden.carbon import get_inference_tracker
+                    tracker = get_inference_tracker()
+                    if tracker:
+                        tracker.record_request(tokens_generated=total_tokens)
+                except Exception:
+                    pass  # Silently ignore tracking errors
                 
                 yield "data: [DONE]\n\n"
             
@@ -1496,6 +1521,37 @@ async def chat_completions(request: ChatCompletionRequest):
         else:
             # Complete response
             response = await service.chat_completion(**gen_params)
+            
+            # Record request in carbon tracker and get emissions estimate
+            carbon_data = None
+            try:
+                from model_garden.carbon import get_inference_tracker
+                tracker = get_inference_tracker()
+                if tracker:
+                    tokens = 0
+                    if isinstance(response, dict) and 'usage' in response:
+                        tokens = response['usage'].get('completion_tokens', 0)
+                    tracker.record_request(tokens_generated=tokens)
+                    
+                    # Get current stats with REAL measured emissions from CodeCarbon
+                    stats = tracker.get_current_stats()
+                    if stats and stats.get('tracking', False):
+                        carbon_data = {
+                            "emissions_g_co2": stats.get('emissions_g_co2', 0.0),
+                            "emissions_per_request_g": stats.get('emissions_per_request_g', 0.0),
+                            "session_total_kg_co2": stats.get('emissions_kg_co2', 0.0),
+                            "session_requests": stats.get('request_count', 0),
+                            "session_tokens": stats.get('total_tokens', 0),
+                            "tracking_active": True,
+                            "measured": True  # Flag to indicate this is real data, not estimated
+                        }
+            except Exception as e:
+                print(f"Warning: Could not add carbon tracking data: {e}")
+                pass  # Silently ignore tracking errors
+            
+            # Add carbon data to response if available
+            if carbon_data and isinstance(response, dict):
+                response['x_carbon_trace'] = carbon_data
             
             return response
             
@@ -1744,127 +1800,218 @@ async def delete_dataset(dataset_name: str):
         )
 
 
+@app.post("/api/v1/datasets/from-hub")
+async def load_dataset_from_hub(request: dict):
+    """Load a dataset from HuggingFace Hub."""
+    try:
+        from datasets import load_dataset
+        import json
+        
+        dataset_id = request.get("dataset_id")
+        split = request.get("split", "train")
+        
+        if not dataset_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="dataset_id is required"
+            )
+        
+        print(f"📥 Loading dataset {dataset_id} from HuggingFace Hub...")
+        
+        # Load dataset from Hub
+        dataset = load_dataset(dataset_id, split=split)
+        
+        # Save to storage
+        datasets_dir = Path("./storage/datasets")
+        datasets_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a safe filename from dataset_id
+        safe_name = dataset_id.replace("/", "_") + ".jsonl"
+        output_path = datasets_dir / safe_name
+        
+        # Convert to JSONL format and count examples
+        example_count = 0
+        with open(output_path, 'w') as f:
+            for item in dataset:
+                f.write(json.dumps(item) + '\n')
+                example_count += 1
+        
+        print(f"✓ Dataset saved to {output_path}")
+        print(f"✓ Total examples: {example_count}")
+        
+        return {
+            "success": True,
+            "message": f"Dataset {dataset_id} loaded successfully",
+            "dataset_name": safe_name,
+            "examples": example_count,
+            "path": str(output_path)
+        }
+        
+    except Exception as e:
+        print(f"✗ Failed to load dataset: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load dataset from Hub: {str(e)}"
+        )
+
+
 # ============================================================================
 # Carbon/Emissions endpoints
 # ============================================================================
 
-# Mock emissions data storage (in production, this would be in a database)
-emissions_data = []
+from model_garden.carbon import get_emissions_db
 
 @app.get("/api/v1/carbon/emissions")
-async def list_emissions():
-    """List all carbon emissions records."""
-    # If no data, generate some mock data for testing
-    if not emissions_data:
-        # Generate mock emissions for the training jobs we have
-        for job_id, job in training_jobs.items():
-            if job["status"] in ["completed", "running"]:
-                # Calculate mock emissions based on job duration and GPU usage
-                duration_hours = 0.5  # Mock duration
-                
-                emissions_data.append({
-                    "id": f"emission-{job_id}",
-                    "job_id": job_id,
-                    "job_name": job["name"],
-                    "job_type": "training",
-                    "stage": "training",
-                    "timestamp": job.get("completed_at") or job.get("started_at") or job["created_at"],
-                    "duration": duration_hours * 3600,  # seconds
-                    "emissions": round(duration_hours * 0.12, 4),  # kg CO2e
-                    "emissions_rate": 0.12,  # kg CO2e/hour
-                    "energy_consumed": round(duration_hours * 0.5, 4),  # kWh
-                    "cpu_energy": round(duration_hours * 0.1, 4),
-                    "gpu_energy": round(duration_hours * 0.35, 4),
-                    "ram_energy": round(duration_hours * 0.05, 4),
-                    "cpu_power": 100,  # watts
-                    "gpu_power": 350,
-                    "ram_power": 50,
-                    "carbon_intensity": 240,  # g CO2e/kWh
-                    "location": "US-CA",
-                    "has_boamps_report": True,
-                })
+async def list_emissions(
+    job_type: Optional[str] = None,
+    limit: Optional[int] = None
+):
+    """
+    List all carbon emissions records.
     
-    return {"emissions": emissions_data}
+    Args:
+        job_type: Filter by job type ('training', 'inference', or None for all)
+        limit: Maximum number of records to return
+    """
+    try:
+        # Get emissions from persistent database
+        db = get_emissions_db()
+        emissions_records = db.get_all_emissions(job_type=job_type, limit=limit)
+        
+        # Convert to API format (matching frontend expectations)
+        formatted_emissions = []
+        for record in emissions_records:
+            # Get job name from training jobs or use job_id
+            job_name = record.get("job_id", "Unknown")
+            if record["job_id"] in training_jobs:
+                job_name = training_jobs[record["job_id"]].get("name", job_name)
+            
+            # Get model name
+            model_name = record.get("model_name", "Unknown")
+            if not model_name or model_name == "Unknown":
+                if record["job_id"] in training_jobs:
+                    model_name = training_jobs[record["job_id"]].get("base_model", "Unknown")
+            
+            formatted_emissions.append({
+                "id": f"emission-{record['job_id']}",
+                "job_id": record["job_id"],
+                "job_name": job_name,
+                "stage": record.get("job_type", "training"),  # 'training' or 'inference'
+                "model_name": model_name,
+                "timestamp": record.get("timestamp", ""),
+                "duration": record.get("duration_seconds", 0.0),
+                "energy_consumed": record.get("energy_consumed_kwh", 0.0),
+                "emissions_kg": record.get("emissions_kg_co2", 0.0),
+                "emissions_rate": record.get("emissions_rate_kg_per_sec", 0.0),
+                "cpu_energy": record.get("cpu_energy_kwh", 0.0),
+                "gpu_energy": record.get("gpu_energy_kwh", 0.0),
+                "ram_energy": record.get("ram_energy_kwh", 0.0),
+                "carbon_intensity": record.get("carbon_intensity_g_per_kwh", 0.0),
+                "country": record.get("country_name", "Unknown"),
+                "region": record.get("region", "Unknown"),
+                "equivalents": record.get("equivalents", {}),
+                "boamps_report": True  # Indicate BoAmps report is available
+            })
+        
+        return {"emissions": formatted_emissions, "count": len(formatted_emissions)}
+        
+    except Exception as e:
+        # Fallback to empty list if there's an error
+        import logging
+        logging.warning(f"Could not load emissions data: {e}")
+        return {"emissions": [], "count": 0}
+
+
+@app.get("/api/v1/carbon/summary")
+async def get_emissions_summary_endpoint():
+    """Get aggregate emissions statistics."""
+    try:
+        db = get_emissions_db()
+        summary = db.get_total_emissions()
+        return summary
+    except Exception as e:
+        import logging
+        logging.warning(f"Could not load emissions summary: {e}")
+        return {
+            "total_emissions_kg_co2": 0.0,
+            "total_energy_kwh": 0.0,
+            "total_duration_seconds": 0.0,
+            "total_count": 0,
+            "by_type": {},
+            "equivalents": {}
+        }
+
+
+@app.get("/api/v1/carbon/inference/stats")
+async def get_inference_stats():
+    """Get current inference carbon tracking statistics."""
+    try:
+        from model_garden.carbon import get_inference_tracker
+        tracker = get_inference_tracker()
+        
+        if tracker:
+            stats = tracker.get_current_stats()
+            return {
+                "tracking": True,
+                **stats
+            }
+        else:
+            return {
+                "tracking": False,
+                "message": "No inference tracking active. Load a model to start tracking."
+            }
+    except Exception as e:
+        return {
+            "tracking": False,
+            "error": str(e)
+        }
 
 
 @app.get("/api/v1/carbon/boamps/{job_id}")
 async def get_boamps_report(job_id: str):
     """Get BoAmps report for a specific job."""
-    # Check if job exists
-    if job_id not in training_jobs:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Training job {job_id} not found"
+    try:
+        from model_garden.carbon import get_emissions_db, get_boamps_generator
+        
+        # Get emissions data from database
+        db = get_emissions_db()
+        emission_data = db.get_emission(job_id)
+        
+        if not emission_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No emissions data found for job {job_id}"
+            )
+        
+        # Get job config if available
+        job_config = {}
+        if job_id in training_jobs:
+            job = training_jobs[job_id]
+            job_config = {
+                "base_model": job.get("base_model"),
+                "dataset_path": job.get("dataset_path"),
+                "hyperparameters": job.get("hyperparameters"),
+                "lora_config": job.get("lora_config")
+            }
+        
+        # Generate BoAmps report
+        generator = get_boamps_generator()
+        report = generator.generate_report(
+            emissions_data=emission_data,
+            job_config=job_config,
+            report_status="final"
         )
-    
-    job = training_jobs[job_id]
-    
-    # Generate mock BoAmps report
-    report = {
-        "job_id": job_id,
-        "job_name": job["name"],
-        "model": job["base_model"],
-        "timestamp": job.get("completed_at") or datetime.utcnow().isoformat() + "Z",
         
-        # Summary
-        "summary": {
-            "total_emissions": 0.12,  # kg CO2e
-            "total_energy": 0.5,  # kWh
-            "duration": 1800,  # seconds (30 minutes)
-            "carbon_intensity": 240,  # g CO2e/kWh
-        },
+        return report
         
-        # Detailed breakdown
-        "breakdown": {
-            "cpu": {
-                "energy_kwh": 0.1,
-                "emissions_kg": 0.024,
-                "power_w": 100,
-                "utilization": 0.75,
-            },
-            "gpu": {
-                "energy_kwh": 0.35,
-                "emissions_kg": 0.084,
-                "power_w": 350,
-                "utilization": 0.95,
-            },
-            "ram": {
-                "energy_kwh": 0.05,
-                "emissions_kg": 0.012,
-                "power_w": 50,
-                "utilization": 0.60,
-            },
-        },
-        
-        # Location and grid info
-        "location": {
-            "region": "US-CA",
-            "country": "United States",
-            "grid_carbon_intensity": 240,
-        },
-        
-        # Training specifics
-        "training": {
-            "base_model": job["base_model"],
-            "dataset": job["dataset_path"],
-            "num_epochs": job["hyperparameters"].get("num_epochs", 3),
-            "batch_size": job["hyperparameters"].get("batch_size", 2),
-            "learning_rate": job["hyperparameters"].get("learning_rate", 2e-4),
-        },
-        
-        # Comparisons
-        "comparisons": {
-            "equivalent_miles_driven": round(0.12 / 0.000411, 2),  # miles
-            "equivalent_hours_of_tv": round(0.5 / 0.097, 1),  # hours
-            "trees_to_offset": round(0.12 / 21, 4),  # trees for one year
-        },
-        
-        # Report metadata
-        "report_version": "1.0",
-        "generated_at": datetime.utcnow().isoformat() + "Z",
-    }
-    
-    return report
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error generating BoAmps report: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate BoAmps report: {str(e)}"
+        )
 
 
 # ============================================================================
