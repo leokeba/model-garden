@@ -256,6 +256,57 @@
         </div>
       {/if}
 
+      <!-- Quick Actions -->
+      <div class="mb-8">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- HuggingFace Models -->
+          <Card hoverable>
+            <a href="/models/browse" class="block p-6 hover:bg-gray-50 transition-colors">
+              <div class="flex items-center mb-3">
+                <div class="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
+                  <span class="text-orange-600 text-xl">🤗</span>
+                </div>
+                <h3 class="ml-3 text-lg font-semibold text-gray-900">Browse HuggingFace</h3>
+              </div>
+              <p class="text-gray-600 text-sm">
+                Discover and load popular models from HuggingFace Hub instantly
+              </p>
+            </a>
+          </Card>
+
+          <!-- Load Model -->
+          <Card hoverable>
+            <a href="/models/load" class="block p-6 hover:bg-gray-50 transition-colors">
+              <div class="flex items-center mb-3">
+                <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <span class="text-blue-600 text-xl">🔌</span>
+                </div>
+                <h3 class="ml-3 text-lg font-semibold text-gray-900">Load Model</h3>
+              </div>
+              <p class="text-gray-600 text-sm">
+                Load local or HuggingFace models for inference and chat
+              </p>
+            </a>
+          </Card>
+
+          <!-- Train Model -->
+          <Card hoverable>
+            <a href="/training/new" class="block p-6 hover:bg-gray-50 transition-colors">
+              <div class="flex items-center mb-3">
+                <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                  <span class="text-green-600 text-xl">⚡</span>
+                </div>
+                <h3 class="ml-3 text-lg font-semibold text-gray-900">Train Model</h3>
+              </div>
+              <p class="text-gray-600 text-sm">
+                Fine-tune language models on your custom datasets
+              </p>
+            </a>
+          </Card>
+        </div>
+      </div>
+
       <!-- Recent Models and Jobs -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <!-- Recent Models -->

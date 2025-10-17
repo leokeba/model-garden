@@ -59,6 +59,9 @@
           <h1 class="text-3xl font-bold text-gray-900 ml-4">Models</h1>
         </div>
         <div class="flex gap-3">
+          <Button href="/models/browse" variant="secondary">
+            🤗 Browse HuggingFace
+          </Button>
           <Button href="/models/load" variant="secondary">
             🔌 Load Model
           </Button>

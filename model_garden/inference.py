@@ -145,16 +145,33 @@ class InferenceService:
             quantization = self.quantization
             load_format = "auto"  # Default to auto-detection
             
+            # Check if this is a HuggingFace model ID (contains slash and doesn't exist as local path)
+            is_hf_model = "/" in self.model_path and not Path(self.model_path).exists()
+            
             if quantization == "auto" or quantization is None:
-                detected = detect_quantization_method(self.model_path)
-                if detected:
-                    quantization = detected
-                    console.print(f"[green]✓[/green] Auto-detected quantization: {quantization}")
+                if is_hf_model:
+                    # For HuggingFace models, use auto-detection from vLLM
+                    quantization = None  # Let vLLM auto-detect
+                    load_format = "auto"
+                    console.print(f"[cyan]🤗 Loading HuggingFace model: {self.model_path}[/cyan]")
+                    console.print("[cyan]   Using auto-detection for quantization[/cyan]")
                 else:
-                    quantization = None
-                    load_format = "safetensors"  # Force standard format, ignore config.json quantization
-                    console.print("[green]✓[/green] No quantization needed (merged or native format)")
-                    console.print("[cyan]   Using load_format=safetensors to ignore quantization_config in model[/cyan]")
+                    # For local models, use our custom detection
+                    detected = detect_quantization_method(self.model_path)
+                    if detected:
+                        quantization = detected
+                        console.print(f"[green]✓[/green] Auto-detected quantization: {quantization}")
+                    else:
+                        quantization = None
+                        load_format = "safetensors"  # Force standard format, ignore config.json quantization
+                        console.print("[green]✓[/green] No quantization needed (merged or native format)")
+                        console.print("[cyan]   Using load_format=safetensors to ignore quantization_config in model[/cyan]")
+            
+            # For HuggingFace models, enable trust_remote_code by default if not explicitly set
+            trust_remote_code = self.trust_remote_code
+            if is_hf_model and not trust_remote_code:
+                trust_remote_code = True
+                console.print("[cyan]   Enabling trust_remote_code for HuggingFace model[/cyan]")
             
             # Configure engine arguments
             engine_args = AsyncEngineArgs(
@@ -165,7 +182,7 @@ class InferenceService:
                 dtype=self.dtype,
                 quantization=quantization,
                 load_format=load_format,
-                trust_remote_code=self.trust_remote_code,
+                trust_remote_code=trust_remote_code,
                 enforce_eager=False,  # Use CUDA graphs for better performance
                 disable_log_stats=False,
             )
@@ -390,7 +407,7 @@ class InferenceService:
             )
         except ImportError:
             # Fall back to text-only if multimodal not available
-            logger.warning("Multimodal imports not available, falling back to text-only mode")
+            console.print("[yellow]⚠️  Multimodal imports not available, falling back to text-only mode[/yellow]")
             return prompt
 
     async def _generate_complete(

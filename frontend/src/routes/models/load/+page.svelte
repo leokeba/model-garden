@@ -15,6 +15,8 @@
   
   // Form state
   let selectedModelPath = $state('');
+  let useHuggingFaceHub = $state(false);
+  let huggingFaceModelId = $state('');
   let tensorParallelSize = $state(1);
   let gpuMemoryUtilization = $state(0.9);
   let maxModelLen = $state<number | null>(null);
@@ -26,7 +28,15 @@
     
     // Pre-select model from URL parameter
     const modelParam = $page.url.searchParams.get('model');
-    if (modelParam && !currentStatus?.loaded) {
+    const hfModelParam = $page.url.searchParams.get('hf_model');
+    
+    if (hfModelParam) {
+      // HuggingFace model from browse page
+      useHuggingFaceHub = true;
+      huggingFaceModelId = decodeURIComponent(hfModelParam);
+    } else if (modelParam && !currentStatus?.loaded) {
+      // Local model parameter
+      useHuggingFaceHub = false;
       selectedModelPath = decodeURIComponent(modelParam);
     }
   });
@@ -58,9 +68,20 @@
   }
 
   async function handleLoadModel() {
-    if (!selectedModelPath) {
-      error = 'Please select a model';
-      return;
+    // Determine model path based on source
+    let modelPath = '';
+    if (useHuggingFaceHub) {
+      if (!huggingFaceModelId.trim()) {
+        error = 'Please enter a HuggingFace model ID (e.g., microsoft/DialoGPT-large)';
+        return;
+      }
+      modelPath = huggingFaceModelId.trim();
+    } else {
+      if (!selectedModelPath) {
+        error = 'Please select a model';
+        return;
+      }
+      modelPath = selectedModelPath;
     }
 
     try {
@@ -74,7 +95,7 @@
       
       // Load the new model
       const result = await api.loadModel({
-        model_path: selectedModelPath,
+        model_path: modelPath,
         tensor_parallel_size: tensorParallelSize,
         gpu_memory_utilization: gpuMemoryUtilization,
         max_model_len: maxModelLen,
@@ -203,16 +224,71 @@
         </h2>
 
         <form onsubmit={(e) => { e.preventDefault(); handleLoadModel(); }} class="space-y-6">
-          <!-- Model Selection -->
+          <!-- Model Source Selection -->
           <div>
-            <div class="block text-sm font-medium text-gray-700 mb-2">
-              Select Model
+            <div class="block text-sm font-medium text-gray-700 mb-3">Model Source</div>
+            <div class="flex items-center space-x-6">
+              <label class="flex items-center">
+                <input
+                  type="radio"
+                  bind:group={useHuggingFaceHub}
+                  value={false}
+                  class="w-4 h-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <span class="ml-2 text-sm text-gray-700">Local Models</span>
+              </label>
+              <label class="flex items-center">
+                <input
+                  type="radio"
+                  bind:group={useHuggingFaceHub}
+                  value={true}
+                  class="w-4 h-4 text-primary-600 focus:ring-primary-500 border-gray-300"
+                />
+                <span class="ml-2 text-sm text-gray-700">🤗 HuggingFace Hub</span>
+              </label>
             </div>
-            {#if models.length === 0}
-              <p class="text-sm text-gray-500">No models available. <a href="/training/new" class="text-primary-600 hover:text-primary-700">Train a model first</a>.</p>
-            {:else}
-              <div class="grid grid-cols-1 gap-3">
-                {#each models as model}
+          </div>
+
+          {#if useHuggingFaceHub}
+            <!-- HuggingFace Model ID Input -->
+            <div>
+              <label for="huggingface_model" class="block text-sm font-medium text-gray-700 mb-2">
+                HuggingFace Model ID *
+              </label>
+              <input
+                type="text"
+                id="huggingface_model"
+                bind:value={huggingFaceModelId}
+                placeholder="microsoft/DialoGPT-large"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                required
+              />
+              <p class="mt-1 text-xs text-gray-500">
+                Enter a model ID from HuggingFace Hub (e.g., microsoft/DialoGPT-large, meta-llama/Llama-2-7b-chat-hf)
+              </p>
+              <div class="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-xs text-blue-800">
+                  💡 <strong>Popular models to try:</strong>
+                </p>
+                <div class="mt-1 text-xs text-blue-700 space-y-1">
+                  <div>• <code class="bg-blue-100 px-1 rounded">microsoft/DialoGPT-large</code> - Conversational AI</div>
+                  <div>• <code class="bg-blue-100 px-1 rounded">microsoft/DialoGPT-medium</code> - Smaller conversational model</div>
+                  <div>• <code class="bg-blue-100 px-1 rounded">gpt2</code> - Classic GPT-2 base model</div>
+                  <div>• <code class="bg-blue-100 px-1 rounded">gpt2-medium</code> - Medium-sized GPT-2</div>
+                </div>
+              </div>
+            </div>
+          {:else}
+            <!-- Local Model Selection -->
+            <div>
+              <div class="block text-sm font-medium text-gray-700 mb-2">
+                Select Local Model
+              </div>
+              {#if models.length === 0}
+                <p class="text-sm text-gray-500">No local models available. <a href="/training/new" class="text-primary-600 hover:text-primary-700">Train a model first</a>.</p>
+              {:else}
+                <div class="grid grid-cols-1 gap-3">
+                  {#each models as model}
                   <label class="relative flex items-center p-4 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors {selectedModelPath === model.path ? 'border-primary-600 bg-primary-50' : 'border-gray-300'}">
                     <input
                       type="radio"
@@ -239,10 +315,11 @@
                       </div>
                     </div>
                   </label>
-                {/each}
-              </div>
-            {/if}
-          </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
 
           <!-- Advanced Settings -->
           <details class="border border-gray-200 rounded-lg p-4">
@@ -349,7 +426,7 @@
               type="submit"
               variant="primary"
               fullWidth
-              disabled={loadingModel || !selectedModelPath}
+              disabled={loadingModel || (useHuggingFaceHub ? !huggingFaceModelId.trim() : !selectedModelPath)}
             >
               {#if loadingModel}
                 <div class="flex items-center gap-2">
@@ -375,6 +452,8 @@
         <ul class="text-sm text-blue-800 space-y-1">
           <li>• Only one model can be loaded at a time for inference</li>
           <li>• Loading a new model will automatically unload the current one</li>
+          <li>• 🤗 <strong>HuggingFace Hub:</strong> Load models directly from the hub using model IDs (e.g., gpt2, microsoft/DialoGPT-large)</li>
+          <li>• <strong>Local Models:</strong> Use models you've trained or downloaded locally</li>
           <li>• Larger models require more GPU memory - adjust GPU Memory Utilization if needed</li>
           <li>• Auto-detection works well for most models - advanced settings are optional</li>
           <li>• After loading, visit the <a href="/inference" class="underline font-medium">Inference page</a> to generate text</li>
