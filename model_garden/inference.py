@@ -211,6 +211,10 @@ class InferenceService:
         self.is_loaded = False
         console.print("[green]✓[/green] Model unloaded successfully")
 
+    async def close(self) -> None:
+        """Close the inference service and clean up resources."""
+        await self.unload_model()
+
     async def generate(
         self,
         prompt: str,

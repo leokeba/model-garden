@@ -96,12 +96,63 @@ class PaginatedResponse(BaseModel):
     pages: int
 
 
-# Global variables for managing state
-training_jobs: Dict[str, Dict] = {}
-models_storage: Dict[str, Dict] = {}
-
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+# Storage manager for persistent data
+class StorageManager:
+    """Manages persistent storage of training jobs and models."""
+    
+    def __init__(self, storage_dir: Path):
+        self.storage_dir = storage_dir
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.jobs_file = storage_dir / "training_jobs.json"
+        self.models_file = storage_dir / "models.json"
+    
+    def load_training_jobs(self) -> Dict[str, Dict]:
+        """Load training jobs from disk."""
+        if self.jobs_file.exists():
+            try:
+                with open(self.jobs_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"⚠️  Error loading training jobs: {e}")
+                return {}
+        return {}
+    
+    def save_training_jobs(self, jobs: Dict[str, Dict]) -> None:
+        """Save training jobs to disk."""
+        try:
+            with open(self.jobs_file, 'w') as f:
+                json.dump(jobs, f, indent=2)
+        except Exception as e:
+            print(f"⚠️  Error saving training jobs: {e}")
+    
+    def load_models(self) -> Dict[str, Dict]:
+        """Load models from disk."""
+        if self.models_file.exists():
+            try:
+                with open(self.models_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"⚠️  Error loading models: {e}")
+                return {}
+        return {}
+    
+    def save_models(self, models: Dict[str, Dict]) -> None:
+        """Save models to disk."""
+        try:
+            with open(self.models_file, 'w') as f:
+                json.dump(models, f, indent=2)
+        except Exception as e:
+            print(f"⚠️  Error saving models: {e}")
+
+# Initialize storage manager
+storage_manager = StorageManager(PROJECT_ROOT / "storage")
+
+# Global variables for managing state (loaded from disk)
+training_jobs: Dict[str, Dict] = storage_manager.load_training_jobs()
+models_storage: Dict[str, Dict] = storage_manager.load_models()
 
 
 def resolve_path(path_str: str) -> str:
@@ -309,6 +360,9 @@ def run_training_job(job_id: str):
         job["status"] = "running"
         job["started_at"] = datetime.utcnow().isoformat() + "Z"
         
+        # Persist status change
+        storage_manager.save_training_jobs(training_jobs)
+        
         # Notify WebSocket clients
         asyncio.run(manager.send_update(job_id, {
             "type": "status_update",
@@ -472,6 +526,9 @@ def run_training_job(job_id: str):
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
         job["progress"] = {"current_step": 100, "total_steps": 100, "epoch": hyperparams.get("num_epochs", 3)}
         
+        # Persist status change
+        storage_manager.save_training_jobs(training_jobs)
+        
         # Notify WebSocket clients
         asyncio.run(manager.send_update(job_id, {
             "type": "status_update",
@@ -496,6 +553,9 @@ def run_training_job(job_id: str):
             "size_bytes": calculate_dir_size(Path(job["output_dir"])),
         }
         
+        # Persist model storage
+        storage_manager.save_models(models_storage)
+        
         print(f"✅ Training job {job_id} completed successfully!")
         
     except Exception as e:
@@ -504,6 +564,9 @@ def run_training_job(job_id: str):
         job["status"] = "failed"
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
         job["error_message"] = str(e)
+        
+        # Persist status change
+        storage_manager.save_training_jobs(training_jobs)
         
         # Print full traceback for debugging
         print(f"❌ Training job {job_id} failed: {e}")
@@ -823,6 +886,9 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     
     training_jobs[job_id] = job_info
     
+    # Persist to disk
+    storage_manager.save_training_jobs(training_jobs)
+    
     # Start training job in background
     background_tasks.add_task(run_training_job, job_id)
     
@@ -865,6 +931,7 @@ async def cancel_training_job(job_id: str):
     
     # Update job status
     job["status"] = "cancelled"
+    storage_manager.save_training_jobs(training_jobs)
     
     # Notify WebSocket clients
     await manager.send_update(job_id, {

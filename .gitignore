@@ -59,6 +59,9 @@ dmypy.json
 *.parquet
 !data/example_dataset.jsonl
 
+# Storage files
+/storage/
+
 # Logs
 logs/
 *.log
