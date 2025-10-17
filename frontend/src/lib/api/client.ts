@@ -244,8 +244,8 @@ class APIClient {
       method: 'POST',
       body: JSON.stringify({
         model_path: params.model_path,
-        tensor_parallel_size: params.tensor_parallel_size || 1,
-        gpu_memory_utilization: params.gpu_memory_utilization || 0.9,
+        tensor_parallel_size: params.tensor_parallel_size ?? 1,
+        gpu_memory_utilization: params.gpu_memory_utilization ?? 0.0,  // Use ?? to allow 0
         max_model_len: params.max_model_len,
         dtype: params.dtype || 'auto',
         quantization: params.quantization,
