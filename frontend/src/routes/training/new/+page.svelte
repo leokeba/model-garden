@@ -54,6 +54,10 @@
     from_hub: false,
     validation_from_hub: false,
     save_method: "merged_16bit",
+    selective_loss: false,
+    selective_loss_level: "conservative",
+    selective_loss_schema_keys: "",
+    selective_loss_verbose: false,
   });
 
   let submitting = $state(false);
@@ -117,10 +121,27 @@
     error = "";
 
     try {
+      // Parse schema keys if provided
+      let schema_keys_array = null;
+      if (
+        formData.selective_loss_schema_keys &&
+        formData.selective_loss_schema_keys.trim()
+      ) {
+        schema_keys_array = formData.selective_loss_schema_keys
+          .split(",")
+          .map((k) => k.trim())
+          .filter((k) => k.length > 0);
+      }
+
       const response = await api.createTrainingJob({
         ...formData,
         // Add vision flag to the request
         is_vision: formData.model_type === "vision",
+        // Add selective loss fields
+        selective_loss: formData.selective_loss,
+        selective_loss_level: formData.selective_loss_level,
+        selective_loss_schema_keys: schema_keys_array,
+        selective_loss_verbose: formData.selective_loss_verbose,
       });
       if (response.success) {
         goto(`/training/${response.data.job_id}`);
@@ -1280,6 +1301,182 @@
             </div>
           </div>
         </div>
+
+        <!-- Selective Loss for Structured Outputs (Vision Models Only) -->
+        {#if formData.model_type === "vision"}
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">
+              🎯 Selective Loss (Structured Outputs)
+            </h3>
+
+            <div
+              class="p-4 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg mb-4"
+            >
+              <p class="text-sm text-gray-800 mb-2">
+                <strong>🔬 Experimental Feature:</strong> Optimize training for structured
+                outputs (JSON, forms, etc.)
+              </p>
+              <p class="text-xs text-gray-700">
+                Masks structural tokens (braces, colons, whitespace) so the
+                model focuses on semantic content. Useful for form extraction,
+                structured data generation, and similar tasks.
+              </p>
+            </div>
+
+            <div class="space-y-4">
+              <div>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="selective_loss"
+                    bind:checked={formData.selective_loss}
+                    class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  />
+                  <label
+                    for="selective_loss"
+                    class="ml-2 block text-sm font-medium text-gray-700"
+                  >
+                    Enable Selective Loss Masking
+                  </label>
+                </div>
+                <p class="text-xs text-gray-500 mt-1 ml-6">
+                  Automatically mask JSON structural tokens during training
+                </p>
+              </div>
+
+              {#if formData.selective_loss}
+                <div
+                  class="ml-6 space-y-4 p-4 bg-white border border-gray-200 rounded-lg"
+                >
+                  <div>
+                    <label
+                      for="selective_loss_level"
+                      class="block text-sm font-medium text-gray-700 mb-2"
+                    >
+                      Masking Level
+                    </label>
+                    <select
+                      id="selective_loss_level"
+                      bind:value={formData.selective_loss_level}
+                      class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    >
+                      <option value="conservative"
+                        >Conservative (Structure Only)</option
+                      >
+                      <option value="moderate"
+                        >Moderate (Structure + null)</option
+                      >
+                      <option value="aggressive"
+                        >Aggressive (Structure + null + Schema Keys)</option
+                      >
+                    </select>
+                    <div class="mt-2 p-3 bg-gray-50 rounded-lg">
+                      <p class="text-xs text-gray-700">
+                        {#if formData.selective_loss_level === "conservative"}
+                          <strong>Conservative:</strong> Masks JSON structural
+                          characters: <code>{`{, }, [, ], :, ,, "`}</code> and
+                          whitespace. Masks ~31% of tokens.
+                          <em>Recommended for most cases.</em>
+                        {:else if formData.selective_loss_level === "moderate"}
+                          <strong>Moderate:</strong> Conservative + masks
+                          <code>null</code> keyword. Good when null values are predictable.
+                        {:else}
+                          <strong>Aggressive:</strong> Moderate + masks schema field
+                          names. Maximum focus on semantic content. Requires specifying
+                          schema keys below.
+                        {/if}
+                      </p>
+                    </div>
+                  </div>
+
+                  {#if formData.selective_loss_level === "aggressive"}
+                    <div>
+                      <label
+                        for="selective_loss_schema_keys"
+                        class="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Schema Keys to Mask
+                      </label>
+                      <input
+                        type="text"
+                        id="selective_loss_schema_keys"
+                        bind:value={formData.selective_loss_schema_keys}
+                        placeholder="Marque,Modele,contents,confidence_score"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      />
+                      <p class="text-xs text-gray-500 mt-1">
+                        Comma-separated list of JSON field names to mask (e.g.,
+                        "name,address,phone")
+                      </p>
+                      <div
+                        class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded"
+                      >
+                        <p class="text-xs text-yellow-800">
+                          ⚠️ Only mask keys that are predictable and don't carry
+                          semantic meaning. The model should still learn what
+                          values go with each key.
+                        </p>
+                      </div>
+                    </div>
+                  {/if}
+
+                  <div>
+                    <div class="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="selective_loss_verbose"
+                        bind:checked={formData.selective_loss_verbose}
+                        class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                      />
+                      <label
+                        for="selective_loss_verbose"
+                        class="ml-2 block text-sm text-gray-700"
+                      >
+                        Verbose mode (print masking statistics)
+                      </label>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">
+                      Display detailed token masking stats during training
+                    </p>
+                  </div>
+
+                  <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h4 class="text-sm font-semibold text-blue-900 mb-2">
+                      📊 What Gets Masked?
+                    </h4>
+                    <ul class="text-xs text-blue-800 space-y-1">
+                      <li>
+                        ✓ Structural: <code>{`{ } [ ] : ,`}</code> and whitespace
+                        (spaces, newlines, tabs)
+                      </li>
+                      <li>
+                        ✓ Quotes: <code>"</code> (string delimiters - purely structural)
+                      </li>
+                      <li>
+                        ✓ Null keyword: <code>null</code> (moderate/aggressive only)
+                      </li>
+                      <li>
+                        ✗ NOT masked: <code>true</code>, <code>false</code> (can
+                        be semantic)
+                      </li>
+                      <li>
+                        ✓ Schema keys: Field names like <code>name</code> (aggressive
+                        only)
+                      </li>
+                    </ul>
+                    <p class="text-xs text-blue-700 mt-2">
+                      <strong>Example:</strong> In
+                      <code>{`{"name": "John", "age": 30}`}</code>, conservative
+                      mode masks
+                      <code>{`{ } : , "`}</code> and spaces (~31% of tokens),
+                      trains on <code>name John age 30</code>
+                    </p>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
 
         <!-- Submit Buttons -->
         <div class="flex gap-4 pt-4">

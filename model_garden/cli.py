@@ -1,6 +1,7 @@
 """Command-line interface for Model Garden."""
 
 import click
+from typing import Optional
 from rich.console import Console
 
 console = Console()
@@ -658,6 +659,27 @@ def serve(host: str, port: int, reload: bool) -> None:
     type=int,
     help="Maximum number of checkpoints to keep",
 )
+@click.option(
+    "--selective-loss/--no-selective-loss",
+    default=False,
+    help="Enable selective loss masking for structured outputs (masks JSON structure)",
+)
+@click.option(
+    "--selective-loss-level",
+    type=click.Choice(["conservative", "moderate", "aggressive"]),
+    default="conservative",
+    help="Selective loss masking level (conservative=structure only, moderate=+null, aggressive=+schema keys)",
+)
+@click.option(
+    "--selective-loss-schema-keys",
+    default=None,
+    help="Comma-separated schema keys to mask (for aggressive mode, e.g., 'Marque,Modele,contents')",
+)
+@click.option(
+    "--selective-loss-verbose/--no-selective-loss-verbose",
+    default=False,
+    help="Print selective loss masking statistics during training",
+)
 def train_vision(
     base_model: str,
     dataset: str,
@@ -687,6 +709,10 @@ def train_vision(
     dataloader_num_workers: int,
     eval_strategy: str,
     save_total_limit: int,
+    selective_loss: bool,
+    selective_loss_level: str,
+    selective_loss_schema_keys: Optional[str],
+    selective_loss_verbose: bool,
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
 
@@ -761,6 +787,12 @@ def train_vision(
             image_field=image_field,
         )
 
+        # Parse schema keys if provided
+        schema_keys_list = None
+        if selective_loss_schema_keys:
+            schema_keys_list = [k.strip() for k in selective_loss_schema_keys.split(',')]
+            console.print(f"[cyan]Schema keys to mask: {schema_keys_list}[/cyan]")
+        
         # Train
         trainer.train(
             dataset=train_dataset,
@@ -781,6 +813,10 @@ def train_vision(
             dataloader_num_workers=dataloader_num_workers,
             eval_strategy=eval_strategy,
             save_total_limit=save_total_limit,
+            selective_loss=selective_loss,
+            selective_loss_level=selective_loss_level,
+            selective_loss_schema_keys=schema_keys_list,
+            selective_loss_verbose=selective_loss_verbose,
         )
 
         # Save final model with specified method

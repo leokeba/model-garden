@@ -26,6 +26,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 # Import carbon tracking
 from model_garden.carbon import CarbonTracker
+from model_garden.selective_loss import create_selective_loss_collator
 
 console = Console()
 
@@ -558,6 +559,10 @@ class VisionLanguageTrainer:
         callbacks: Optional[List] = None,
         eval_dataset: Optional[Union[Dataset, List[Dict]]] = None,
         eval_steps: Optional[int] = None,
+        selective_loss: bool = False,
+        selective_loss_level: str = "conservative",
+        selective_loss_schema_keys: Optional[List[str]] = None,
+        selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
 
@@ -588,6 +593,10 @@ class VisionLanguageTrainer:
             callbacks: Optional list of TrainerCallback instances
             eval_dataset: Optional validation dataset for evaluation
             eval_steps: Optional number of steps between evaluations (defaults to save_steps)
+            selective_loss: Enable selective loss masking for structured outputs
+            selective_loss_level: Masking level ('conservative', 'moderate', 'aggressive')
+            selective_loss_schema_keys: Schema keys to mask in aggressive mode
+            selective_loss_verbose: Print masking statistics during training
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
         
@@ -687,6 +696,19 @@ class VisionLanguageTrainer:
 
         console.print("[yellow]⚠️  Vision-language training uses UnslothVisionDataCollator[/yellow]")
         
+        # Choose data collator based on selective_loss flag
+        if selective_loss:
+            console.print(f"[cyan]🎯 Using selective loss masking (level: {selective_loss_level})[/cyan]")
+            data_collator = create_selective_loss_collator(
+                model=self.model,
+                processor=self.processor,
+                mask_level=selective_loss_level,
+                schema_keys=selective_loss_schema_keys,
+                verbose=selective_loss_verbose
+            )
+        else:
+            data_collator = UnslothVisionDataCollator(self.model, self.processor)
+        
         # Ensure model and tokenizer are loaded
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
@@ -699,13 +721,19 @@ class VisionLanguageTrainer:
             args=training_args,
             train_dataset=train_dataset,  # type: ignore
             eval_dataset=eval_dataset,  # type: ignore
-            data_collator=UnslothVisionDataCollator(self.model, self.processor),
+            data_collator=data_collator,
             callbacks=callbacks if callbacks else [],
         )
 
         console.print("[cyan]Training in progress...[/cyan]")
         trainer.train()
         console.print("[bold green]✨ Training completed![/bold green]")
+        
+        # Print selective loss statistics if enabled
+        if selective_loss:
+            from model_garden.selective_loss import SelectiveLossVisionCollator
+            if isinstance(data_collator, SelectiveLossVisionCollator):
+                data_collator.print_stats()
         
         # Stop carbon tracking
         if carbon_tracker is not None:

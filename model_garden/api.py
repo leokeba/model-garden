@@ -52,6 +52,10 @@ class TrainingJobRequest(BaseModel):
     is_vision: bool = False  # Flag for vision-language models
     model_type: Optional[str] = None  # 'text' or 'vision'
     save_method: str = "merged_16bit"  # How to save: 'lora', 'merged_16bit', 'merged_4bit'
+    selective_loss: bool = False  # Enable selective loss for structured outputs
+    selective_loss_level: str = "conservative"  # Level: conservative, moderate, aggressive
+    selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
+    selective_loss_verbose: bool = False  # Print masking statistics
 
 
 class TrainingJobInfo(BaseModel):
@@ -498,6 +502,10 @@ def run_training_job(job_id: str):
                 metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
                 save_total_limit=hyperparams.get("save_total_limit", 3),
                 callbacks=[progress_callback],
+                selective_loss=job.get("selective_loss", False),
+                selective_loss_level=job.get("selective_loss_level", "conservative"),
+                selective_loss_schema_keys=job.get("selective_loss_schema_keys"),
+                selective_loss_verbose=job.get("selective_loss_verbose", False),
             )
             
             # Save model
@@ -958,6 +966,10 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "model_type": job_request.model_type or ("vision" if job_request.is_vision else "text"),
         "save_method": job_request.save_method,
         "metrics": {"training": [], "validation": []},  # Initialize metrics storage
+        "selective_loss": job_request.selective_loss,
+        "selective_loss_level": job_request.selective_loss_level,
+        "selective_loss_schema_keys": job_request.selective_loss_schema_keys,
+        "selective_loss_verbose": job_request.selective_loss_verbose,
     }
     
     training_jobs[job_id] = job_info
