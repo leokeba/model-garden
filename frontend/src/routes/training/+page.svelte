@@ -1,20 +1,37 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import Button from '$lib/components/Button.svelte';
-  import Card from '$lib/components/Card.svelte';
-  import Badge from '$lib/components/Badge.svelte';
-  import { api, type TrainingJob } from '$lib/api/client';
+  import { api, type TrainingJob } from "$lib/api/client";
+  import Badge from "$lib/components/Badge.svelte";
+  import Button from "$lib/components/Button.svelte";
+  import Card from "$lib/components/Card.svelte";
+  import { onMount } from "svelte";
 
   let jobs: TrainingJob[] = $state([]);
   let loading = $state(true);
-  let error = $state('');
+  let error = $state("");
+
+  async function loadJobs() {
+    try {
+      loading = true;
+      const response = await api.getTrainingJobs();
+      // Reverse the order to show newest first
+      jobs = response.items.reverse();
+      error = "";
+    } catch (err) {
+      error =
+        err instanceof Error ? err.message : "Failed to load training jobs";
+    } finally {
+      loading = false;
+    }
+  }
 
   onMount(async () => {
     try {
       const response = await api.getTrainingJobs();
-      jobs = response.items;
+      // Reverse the order to show newest first
+      jobs = response.items.reverse();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to load training jobs';
+      error =
+        err instanceof Error ? err.message : "Failed to load training jobs";
     } finally {
       loading = false;
     }
@@ -24,25 +41,52 @@
     return new Date(dateString).toLocaleString();
   }
 
-  function getStatusVariant(status: string): 'success' | 'warning' | 'error' | 'info' {
+  function getStatusVariant(
+    status: string,
+  ): "success" | "warning" | "error" | "info" {
     switch (status) {
-      case 'completed': return 'success';
-      case 'failed': case 'cancelled': return 'error';
-      case 'running': return 'info';
-      default: return 'warning';
+      case "completed":
+        return "success";
+      case "failed":
+      case "cancelled":
+        return "error";
+      case "running":
+        return "info";
+      default:
+        return "warning";
     }
   }
 
   async function handleCancel(jobId: string) {
-    if (!confirm('Are you sure you want to cancel this training job?')) return;
-    
+    if (!confirm("Are you sure you want to cancel this training job?")) return;
+
     try {
       await api.cancelTrainingJob(jobId);
       // Refresh the job list
       const response = await api.getTrainingJobs();
-      jobs = response.items;
+      jobs = response.items.reverse();
     } catch (err) {
-      alert('Failed to cancel job: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      alert(
+        "Failed to cancel job: " +
+          (err instanceof Error ? err.message : "Unknown error"),
+      );
+    }
+  }
+
+  async function handleDelete(jobId: string, jobName: string) {
+    const confirmMessage = `Are you sure you want to delete the training job "${jobName}"? This will remove the job from the list but won't delete the trained model files.`;
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      await api.cancelTrainingJob(jobId); // DELETE endpoint is the same
+      // Refresh the job list
+      const response = await api.getTrainingJobs();
+      jobs = response.items.reverse();
+    } catch (err) {
+      alert(
+        "Failed to delete job: " +
+          (err instanceof Error ? err.message : "Unknown error"),
+      );
     }
   }
 </script>
@@ -72,21 +116,31 @@
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     {#if loading}
       <div class="text-center py-12">
-        <div class="inline-block w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"></div>
+        <div
+          class="inline-block w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"
+        ></div>
         <p class="mt-2 text-gray-600">Loading training jobs...</p>
       </div>
     {:else if error}
       <div class="text-center py-12">
         <div class="text-red-600 text-lg">{error}</div>
-        <Button onclick={() => window.location.reload()} variant="primary" class="mt-4">
+        <Button
+          onclick={() => window.location.reload()}
+          variant="primary"
+          class="mt-4"
+        >
           Retry
         </Button>
       </div>
     {:else if jobs.length === 0}
       <div class="text-center py-12">
         <div class="text-gray-400 text-6xl mb-4">⚡</div>
-        <h3 class="text-xl font-semibold text-gray-900 mb-2">No training jobs yet</h3>
-        <p class="text-gray-500 mb-6">Start training your first model to see jobs here.</p>
+        <h3 class="text-xl font-semibold text-gray-900 mb-2">
+          No training jobs yet
+        </h3>
+        <p class="text-gray-500 mb-6">
+          Start training your first model to see jobs here.
+        </p>
         <Button href="/training/new" variant="primary">
           Start First Training Job
         </Button>
@@ -98,21 +152,28 @@
             <div class="flex items-center justify-between">
               <div class="flex-1">
                 <div class="flex items-center justify-between">
-                  <h3 class="text-lg font-semibold text-gray-900">{job.name}</h3>
+                  <h3 class="text-lg font-semibold text-gray-900">
+                    {job.name}
+                  </h3>
                   <Badge variant={getStatusVariant(job.status)}>
                     {job.status}
                   </Badge>
                 </div>
-                
-                <div class="mt-1 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+
+                <div
+                  class="mt-1 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600"
+                >
                   <div>
-                    <span class="font-medium">Base Model:</span> {job.base_model}
+                    <span class="font-medium">Base Model:</span>
+                    {job.base_model}
                   </div>
                   <div>
-                    <span class="font-medium">Dataset:</span> {job.dataset_path}
+                    <span class="font-medium">Dataset:</span>
+                    {job.dataset_path}
                   </div>
                   <div>
-                    <span class="font-medium">Created:</span> {formatDate(job.created_at)}
+                    <span class="font-medium">Created:</span>
+                    {formatDate(job.created_at)}
                   </div>
                 </div>
 
@@ -121,21 +182,27 @@
                     <div class="flex items-center justify-between text-sm">
                       <span class="text-gray-600">Progress</span>
                       <span class="text-gray-900">
-                        {job.progress.current_step} / {job.progress.total_steps} steps
+                        {job.progress.current_step} / {job.progress.total_steps}
+                        steps
                       </span>
                     </div>
                     <div class="mt-1 w-full bg-gray-200 rounded-full h-2">
-                      <div 
+                      <div
                         class="bg-primary-600 h-2 rounded-full transition-all"
-                        style="width: {(job.progress.current_step / job.progress.total_steps) * 100}%"
+                        style="width: {(job.progress.current_step /
+                          job.progress.total_steps) *
+                          100}%"
                       ></div>
                     </div>
                   </div>
                 {/if}
 
                 {#if job.error_message}
-                  <div class="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                    <strong>Error:</strong> {job.error_message}
+                  <div
+                    class="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700"
+                  >
+                    <strong>Error:</strong>
+                    {job.error_message}
                   </div>
                 {/if}
               </div>
@@ -144,13 +211,21 @@
                 <Button href="/training/{job.id}" variant="secondary" size="sm">
                   Details
                 </Button>
-                {#if job.status === 'running' || job.status === 'queued'}
-                  <Button 
-                    variant="danger" 
-                    size="sm" 
+                {#if job.status === "running" || job.status === "queued"}
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onclick={() => handleCancel(job.id)}
                   >
                     Cancel
+                  </Button>
+                {:else}
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onclick={() => handleDelete(job.id, job.name)}
+                  >
+                    Delete
                   </Button>
                 {/if}
               </div>

@@ -69,7 +69,19 @@ def main() -> None:
     "--lora-alpha",
     default=16,
     type=int,
-    help="LoRA alpha parameter",
+    help="LoRA alpha parameter (scaling factor, typically equal to lora-r)",
+)
+@click.option(
+    "--lora-dropout",
+    default=0.0,
+    type=float,
+    help="LoRA dropout rate (0.0-0.3, higher = more regularization)",
+)
+@click.option(
+    "--lora-bias",
+    type=click.Choice(["none", "all", "lora_only"]),
+    default="none",
+    help="How to handle bias in LoRA layers",
 )
 @click.option(
     "--gradient-accumulation-steps",
@@ -117,6 +129,60 @@ def main() -> None:
     help="Dataset field name for outputs",
 )
 @click.option(
+    "--weight-decay",
+    default=0.01,
+    type=float,
+    help="Weight decay for regularization (0.0-0.1)",
+)
+@click.option(
+    "--lr-scheduler-type",
+    type=click.Choice(["linear", "cosine", "constant", "constant_with_warmup", "polynomial"]),
+    default="linear",
+    help="Learning rate scheduler type",
+)
+@click.option(
+    "--max-grad-norm",
+    default=1.0,
+    type=float,
+    help="Maximum gradient norm for clipping",
+)
+@click.option(
+    "--adam-beta1",
+    default=0.9,
+    type=float,
+    help="Beta1 parameter for Adam optimizer",
+)
+@click.option(
+    "--adam-beta2",
+    default=0.999,
+    type=float,
+    help="Beta2 parameter for Adam optimizer",
+)
+@click.option(
+    "--adam-epsilon",
+    default=1e-8,
+    type=float,
+    help="Epsilon parameter for Adam optimizer",
+)
+@click.option(
+    "--dataloader-num-workers",
+    default=0,
+    type=int,
+    help="Number of dataloader workers (0 = main process only)",
+)
+@click.option(
+    "--eval-strategy",
+    type=click.Choice(["no", "steps", "epoch"]),
+    default="steps",
+    help="Evaluation strategy",
+)
+@click.option(
+    "--save-total-limit",
+    default=3,
+    type=int,
+    help="Maximum number of checkpoints to keep",
+)
+@click.option(
     "--from-hub",
     is_flag=True,
     help="Load dataset from HuggingFace Hub instead of local file",
@@ -131,6 +197,8 @@ def train(
     max_seq_length: int,
     lora_r: int,
     lora_alpha: int,
+    lora_dropout: float,
+    lora_bias: str,
     gradient_accumulation_steps: int,
     max_steps: int,
     logging_steps: int,
@@ -139,6 +207,15 @@ def train(
     instruction_field: str,
     input_field: str,
     output_field: str,
+    weight_decay: float,
+    lr_scheduler_type: str,
+    max_grad_norm: float,
+    adam_beta1: float,
+    adam_beta2: float,
+    adam_epsilon: float,
+    dataloader_num_workers: int,
+    eval_strategy: str,
+    save_total_limit: int,
     from_hub: bool,
 ) -> None:
     """Fine-tune a language model using Unsloth.
@@ -181,6 +258,8 @@ def train(
         trainer.prepare_for_training(
             r=lora_r,
             lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_bias=lora_bias,
         )
 
         # Load dataset
@@ -208,6 +287,15 @@ def train(
             max_steps=max_steps,
             logging_steps=logging_steps,
             save_steps=save_steps,
+            weight_decay=weight_decay,
+            lr_scheduler_type=lr_scheduler_type,
+            max_grad_norm=max_grad_norm,
+            adam_beta1=adam_beta1,
+            adam_beta2=adam_beta2,
+            adam_epsilon=adam_epsilon,
+            dataloader_num_workers=dataloader_num_workers,
+            eval_strategy=eval_strategy,
+            save_total_limit=save_total_limit,
         )
 
         # Save final model
@@ -462,7 +550,19 @@ def serve(host: str, port: int, reload: bool) -> None:
     "--lora-alpha",
     default=16,
     type=int,
-    help="LoRA alpha parameter",
+    help="LoRA alpha parameter (scaling factor, typically equal to lora-r)",
+)
+@click.option(
+    "--lora-dropout",
+    default=0.0,
+    type=float,
+    help="LoRA dropout rate (0.0-0.3, higher = more regularization)",
+)
+@click.option(
+    "--lora-bias",
+    type=click.Choice(["none", "all", "lora_only"]),
+    default="none",
+    help="How to handle bias in LoRA layers",
 )
 @click.option(
     "--gradient-accumulation-steps",
@@ -504,6 +604,60 @@ def serve(host: str, port: int, reload: bool) -> None:
     default="image",
     help="Dataset field name for image paths",
 )
+@click.option(
+    "--weight-decay",
+    default=0.01,
+    type=float,
+    help="Weight decay for regularization (0.0-0.1)",
+)
+@click.option(
+    "--lr-scheduler-type",
+    type=click.Choice(["linear", "cosine", "constant", "constant_with_warmup", "polynomial"]),
+    default="cosine",
+    help="Learning rate scheduler type (cosine recommended for vision models)",
+)
+@click.option(
+    "--max-grad-norm",
+    default=1.0,
+    type=float,
+    help="Maximum gradient norm for clipping",
+)
+@click.option(
+    "--adam-beta1",
+    default=0.9,
+    type=float,
+    help="Beta1 parameter for Adam optimizer",
+)
+@click.option(
+    "--adam-beta2",
+    default=0.999,
+    type=float,
+    help="Beta2 parameter for Adam optimizer",
+)
+@click.option(
+    "--adam-epsilon",
+    default=1e-8,
+    type=float,
+    help="Epsilon parameter for Adam optimizer",
+)
+@click.option(
+    "--dataloader-num-workers",
+    default=0,
+    type=int,
+    help="Number of dataloader workers (0 = main process only)",
+)
+@click.option(
+    "--eval-strategy",
+    type=click.Choice(["no", "steps", "epoch"]),
+    default="steps",
+    help="Evaluation strategy",
+)
+@click.option(
+    "--save-total-limit",
+    default=3,
+    type=int,
+    help="Maximum number of checkpoints to keep",
+)
 def train_vision(
     base_model: str,
     dataset: str,
@@ -515,6 +669,8 @@ def train_vision(
     max_seq_length: int,
     lora_r: int,
     lora_alpha: int,
+    lora_dropout: float,
+    lora_bias: str,
     gradient_accumulation_steps: int,
     max_steps: int,
     logging_steps: int,
@@ -522,6 +678,15 @@ def train_vision(
     save_method: str,
     text_field: str,
     image_field: str,
+    weight_decay: float,
+    lr_scheduler_type: str,
+    max_grad_norm: float,
+    adam_beta1: float,
+    adam_beta2: float,
+    adam_epsilon: float,
+    dataloader_num_workers: int,
+    eval_strategy: str,
+    save_total_limit: int,
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
 
@@ -579,6 +744,8 @@ def train_vision(
         trainer.prepare_for_training(
             r=lora_r,
             lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_bias=lora_bias,
         )
 
         # Load dataset (handles both local files and HuggingFace Hub)
@@ -605,6 +772,15 @@ def train_vision(
             max_steps=max_steps,
             logging_steps=logging_steps,
             save_steps=save_steps,
+            weight_decay=weight_decay,
+            lr_scheduler_type=lr_scheduler_type,
+            max_grad_norm=max_grad_norm,
+            adam_beta1=adam_beta1,
+            adam_beta2=adam_beta2,
+            adam_epsilon=adam_epsilon,
+            dataloader_num_workers=dataloader_num_workers,
+            eval_strategy=eval_strategy,
+            save_total_limit=save_total_limit,
         )
 
         # Save final model with specified method
@@ -800,14 +976,19 @@ def inference_generate(model_path, prompt, max_tokens, temperature, top_p, strea
             
             # Generate
             if stream:
-                async for chunk in service.generate(
+                stream_result = await service.generate(
                     prompt=prompt,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
                     stream=True
-                ):
-                    console.print(chunk["text"], end="")
+                )
+                # Handle streaming response - use try/except to handle type issues
+                try:
+                    async for chunk in stream_result:  # type: ignore
+                        console.print(chunk, end="")
+                except TypeError:
+                    console.print("[red]Error: Stream response not iterable[/red]")
                 console.print("\n")
             else:
                 result = await service.generate(
@@ -817,8 +998,11 @@ def inference_generate(model_path, prompt, max_tokens, temperature, top_p, strea
                     top_p=top_p,
                     stream=False
                 )
-                console.print(result["text"])
-                console.print(f"\n[dim]Tokens: {result['usage']['total_tokens']}[/dim]\n")
+                # Handle non-streaming response
+                if isinstance(result, dict):
+                    console.print(result.get("text", ""))
+                    if "usage" in result:
+                        console.print(f"\n[dim]Tokens: {result['usage'].get('total_tokens', 0)}[/dim]\n")
             
             # Cleanup
             await service.unload_model()
@@ -906,16 +1090,23 @@ def inference_chat(model_path, system_prompt, max_tokens, temperature, tensor_pa
                     console.print("\n[bold green]Assistant:[/bold green] ", end="")
                     
                     full_response = ""
-                    async for chunk in service.chat_completion(
+                    stream_result = await service.chat_completion(
                         messages=messages,
                         max_tokens=max_tokens,
                         temperature=temperature,
                         stream=True
-                    ):
-                        if chunk["choices"][0]["delta"].get("content"):
-                            content = chunk["choices"][0]["delta"]["content"]
-                            console.print(content, end="")
-                            full_response += content
+                    )
+                    
+                    # Handle streaming response with type ignore
+                    try:
+                        async for chunk in stream_result:  # type: ignore
+                            if isinstance(chunk, dict) and "choices" in chunk:
+                                if chunk["choices"][0]["delta"].get("content"):
+                                    content = chunk["choices"][0]["delta"]["content"]
+                                    console.print(content, end="")
+                                    full_response += content
+                    except TypeError:
+                        console.print("[red]Error: Stream response not iterable[/red]")
                     
                     console.print("\n")
                     

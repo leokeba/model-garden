@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import Button from '$lib/components/Button.svelte';
-  import Card from '$lib/components/Card.svelte';
-  import { api } from '$lib/api/client';
+  import { goto } from "$app/navigation";
+  import { api } from "$lib/api/client";
+  import Button from "$lib/components/Button.svelte";
+  import Card from "$lib/components/Card.svelte";
 
   let formData = $state({
-    name: '',
-    model_type: 'text', // 'text' or 'vision'
-    base_model: 'unsloth/tinyllama-bnb-4bit',
-    dataset_path: './data/sample.jsonl',
-    validation_dataset_path: '',
-    output_dir: '',
+    name: "",
+    model_type: "text", // 'text' or 'vision'
+    base_model: "unsloth/tinyllama-bnb-4bit",
+    dataset_path: "./data/sample.jsonl",
+    validation_dataset_path: "",
+    output_dir: "",
     hyperparameters: {
       learning_rate: 0.0002,
       num_epochs: 3,
@@ -21,85 +21,115 @@
       logging_steps: 10,
       save_steps: 100,
       eval_steps: null as number | null,
-      optim: 'adamw_8bit',
+      optim: "adamw_8bit",
+      // Advanced Optimizer Parameters
+      weight_decay: 0.01,
+      lr_scheduler_type: "linear",
+      max_grad_norm: 1.0,
+      adam_beta1: 0.9,
+      adam_beta2: 0.999,
+      adam_epsilon: 1e-8,
+      // Dataloader Settings
+      dataloader_num_workers: 0,
+      dataloader_pin_memory: true,
+      // Evaluation Parameters
+      eval_strategy: "steps",
+      load_best_model_at_end: true,
+      metric_for_best_model: "eval_loss",
+      save_total_limit: 3,
     },
     lora_config: {
       r: 16,
       lora_alpha: 16,
       lora_dropout: 0.0,
+      // Advanced LoRA Parameters
+      lora_bias: "none",
+      use_rslora: false,
+      use_gradient_checkpointing: "unsloth",
+      random_state: 42,
+      target_modules: null as string[] | null,
+      task_type: "CAUSAL_LM",
+      loftq_config: null as any,
     },
     from_hub: false,
     validation_from_hub: false,
-    save_method: 'merged_16bit'
+    save_method: "merged_16bit",
   });
 
   let submitting = $state(false);
-  let error = $state('');
+  let error = $state("");
 
   const textModels = [
-    'unsloth/tinyllama-bnb-4bit',
-    'unsloth/phi-2-bnb-4bit',
-    'unsloth/mistral-7b-bnb-4bit',
-    'unsloth/llama-2-7b-bnb-4bit',
-    'unsloth/llama-3-8b-bnb-4bit',
+    "unsloth/tinyllama-bnb-4bit",
+    "unsloth/phi-2-bnb-4bit",
+    "unsloth/mistral-7b-bnb-4bit",
+    "unsloth/llama-2-7b-bnb-4bit",
+    "unsloth/llama-3-8b-bnb-4bit",
   ];
 
   const visionModels = [
-    'Qwen/Qwen2.5-VL-3B-Instruct',
-    'Qwen/Qwen2.5-VL-7B-Instruct',
-    'Qwen/Qwen2.5-VL-72B-Instruct',
-    'unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit',
-    'unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit',
+    "Qwen/Qwen2.5-VL-3B-Instruct",
+    "Qwen/Qwen2.5-VL-7B-Instruct",
+    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit",
+    "unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit",
   ];
 
   // Update available models when type changes
   $effect(() => {
-    if (formData.model_type === 'vision') {
+    if (formData.model_type === "vision") {
       formData.base_model = visionModels[0];
-      formData.dataset_path = './data/vision_dataset.jsonl';
+      formData.dataset_path = "./data/vision_dataset.jsonl";
       // Vision models need smaller batch size and larger gradient accumulation
       formData.hyperparameters.batch_size = 1;
       formData.hyperparameters.gradient_accumulation_steps = 8;
       formData.hyperparameters.learning_rate = 0.00002; // Lower LR for vision
+      formData.hyperparameters.lr_scheduler_type = "cosine"; // Better for vision models
     } else {
       formData.base_model = textModels[0];
-      formData.dataset_path = './data/sample.jsonl';
+      formData.dataset_path = "./data/sample.jsonl";
       formData.hyperparameters.batch_size = 2;
       formData.hyperparameters.gradient_accumulation_steps = 4;
       formData.hyperparameters.learning_rate = 0.0002;
+      formData.hyperparameters.lr_scheduler_type = "linear";
     }
   });
 
+  // State for showing advanced settings
+  let showAdvancedHyperparams = $state(false);
+  let showAdvancedLora = $state(false);
+
   function updateOutputDir() {
     if (formData.name && !formData.output_dir) {
-      formData.output_dir = `./models/${formData.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      formData.output_dir = `./models/${formData.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
     }
   }
 
   async function handleSubmit(event: SubmitEvent) {
     event.preventDefault();
-    
+
     if (!formData.name || !formData.base_model || !formData.dataset_path) {
-      error = 'Please fill in all required fields';
+      error = "Please fill in all required fields";
       return;
     }
 
     submitting = true;
-    error = '';
+    error = "";
 
     try {
       const response = await api.createTrainingJob({
         ...formData,
         // Add vision flag to the request
-        is_vision: formData.model_type === 'vision'
+        is_vision: formData.model_type === "vision",
       });
       if (response.success) {
         goto(`/training/${response.data.job_id}`);
       } else {
-        error = 'Failed to create training job';
+        error = "Failed to create training job";
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to create training job';
+      error =
+        err instanceof Error ? err.message : "Failed to create training job";
     } finally {
       submitting = false;
     }
@@ -116,8 +146,12 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center py-6">
         <div class="flex items-center">
-          <Button href="/training" variant="ghost" size="sm">← Training Jobs</Button>
-          <h1 class="text-3xl font-bold text-gray-900 ml-4">New Training Job</h1>
+          <Button href="/training" variant="ghost" size="sm"
+            >← Training Jobs</Button
+          >
+          <h1 class="text-3xl font-bold text-gray-900 ml-4">
+            New Training Job
+          </h1>
         </div>
       </div>
     </div>
@@ -134,8 +168,10 @@
 
         <!-- Basic Configuration -->
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">Basic Configuration</h3>
-          
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">
+            Basic Configuration
+          </h3>
+
           <div class="grid grid-cols-1 gap-4">
             <!-- Model Type Selector -->
             <div>
@@ -145,21 +181,25 @@
               <div class="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onclick={() => formData.model_type = 'text'}
+                  onclick={() => (formData.model_type = "text")}
                   class={`p-4 border-2 rounded-lg text-left transition-all ${
-                    formData.model_type === 'text'
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-300 hover:border-gray-400'
+                    formData.model_type === "text"
+                      ? "border-primary-500 bg-primary-50"
+                      : "border-gray-300 hover:border-gray-400"
                   }`}
                 >
                   <div class="flex items-center gap-2">
-                    <div class={`w-4 h-4 rounded-full border-2 ${
-                      formData.model_type === 'text'
-                        ? 'border-primary-500 bg-primary-500'
-                        : 'border-gray-400'
-                    }`}>
-                      {#if formData.model_type === 'text'}
-                        <div class="w-full h-full rounded-full bg-white scale-50"></div>
+                    <div
+                      class={`w-4 h-4 rounded-full border-2 ${
+                        formData.model_type === "text"
+                          ? "border-primary-500 bg-primary-500"
+                          : "border-gray-400"
+                      }`}
+                    >
+                      {#if formData.model_type === "text"}
+                        <div
+                          class="w-full h-full rounded-full bg-white scale-50"
+                        ></div>
                       {/if}
                     </div>
                     <span class="font-medium">Text-Only (LLM)</span>
@@ -168,24 +208,28 @@
                     Fine-tune language models for text generation tasks
                   </p>
                 </button>
-                
+
                 <button
                   type="button"
-                  onclick={() => formData.model_type = 'vision'}
+                  onclick={() => (formData.model_type = "vision")}
                   class={`p-4 border-2 rounded-lg text-left transition-all ${
-                    formData.model_type === 'vision'
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-300 hover:border-gray-400'
+                    formData.model_type === "vision"
+                      ? "border-primary-500 bg-primary-50"
+                      : "border-gray-300 hover:border-gray-400"
                   }`}
                 >
                   <div class="flex items-center gap-2">
-                    <div class={`w-4 h-4 rounded-full border-2 ${
-                      formData.model_type === 'vision'
-                        ? 'border-primary-500 bg-primary-500'
-                        : 'border-gray-400'
-                    }`}>
-                      {#if formData.model_type === 'vision'}
-                        <div class="w-full h-full rounded-full bg-white scale-50"></div>
+                    <div
+                      class={`w-4 h-4 rounded-full border-2 ${
+                        formData.model_type === "vision"
+                          ? "border-primary-500 bg-primary-500"
+                          : "border-gray-400"
+                      }`}
+                    >
+                      {#if formData.model_type === "vision"}
+                        <div
+                          class="w-full h-full rounded-full bg-white scale-50"
+                        ></div>
                       {/if}
                     </div>
                     <span class="font-medium">Vision-Language (VLM)</span>
@@ -198,7 +242,10 @@
             </div>
 
             <div>
-              <label for="name" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="name"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Model Name *
               </label>
               <input
@@ -213,7 +260,10 @@
             </div>
 
             <div>
-              <label for="base_model" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="base_model"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Base Model *
               </label>
               <select
@@ -222,7 +272,7 @@
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
               >
-                {#if formData.model_type === 'text'}
+                {#if formData.model_type === "text"}
                   {#each textModels as model}
                     <option value={model}>{model}</option>
                   {/each}
@@ -232,7 +282,7 @@
                   {/each}
                 {/if}
               </select>
-              {#if formData.model_type === 'vision'}
+              {#if formData.model_type === "vision"}
                 <p class="text-xs text-gray-500 mt-1">
                   🎨 Vision-language models can analyze images and text together
                 </p>
@@ -240,14 +290,21 @@
             </div>
 
             <div>
-              <label for="dataset_path" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="dataset_path"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Dataset Path *
               </label>
               <input
                 type="text"
                 id="dataset_path"
                 bind:value={formData.dataset_path}
-                placeholder={formData.from_hub ? 'username/dataset-name' : (formData.model_type === 'vision' ? './data/vision_dataset.jsonl' : './data/my-dataset.jsonl')}
+                placeholder={formData.from_hub
+                  ? "username/dataset-name"
+                  : formData.model_type === "vision"
+                    ? "./data/vision_dataset.jsonl"
+                    : "./data/my-dataset.jsonl"}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
               />
@@ -264,10 +321,12 @@
               </div>
               <p class="text-xs text-gray-500 mt-1">
                 {#if formData.from_hub}
-                  Enter a HuggingFace dataset identifier (e.g., "username/dataset-name")<br/>
+                  Enter a HuggingFace dataset identifier (e.g.,
+                  "username/dataset-name")<br />
                   For specific files, use: "username/repo::train.jsonl"
-                {:else if formData.model_type === 'vision'}
-                  Path to your JSONL dataset with image paths/base64 or local file
+                {:else if formData.model_type === "vision"}
+                  Path to your JSONL dataset with image paths/base64 or local
+                  file
                 {:else}
                   Path to your JSONL dataset file
                 {/if}
@@ -276,14 +335,21 @@
 
             <!-- Validation Dataset (Optional) -->
             <div>
-              <label for="validation_dataset_path" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="validation_dataset_path"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Validation Dataset Path (Optional)
               </label>
               <input
                 type="text"
                 id="validation_dataset_path"
                 bind:value={formData.validation_dataset_path}
-                placeholder={formData.validation_from_hub ? 'username/val-dataset-name' : (formData.model_type === 'vision' ? './data/vision_val_dataset.jsonl' : './data/my-val-dataset.jsonl')}
+                placeholder={formData.validation_from_hub
+                  ? "username/val-dataset-name"
+                  : formData.model_type === "vision"
+                    ? "./data/vision_val_dataset.jsonl"
+                    : "./data/my-val-dataset.jsonl"}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
               <div class="mt-2 flex items-center">
@@ -293,39 +359,63 @@
                   bind:checked={formData.validation_from_hub}
                   class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
                 />
-                <label for="validation_from_hub" class="ml-2 block text-sm text-gray-700">
+                <label
+                  for="validation_from_hub"
+                  class="ml-2 block text-sm text-gray-700"
+                >
                   Load validation dataset from HuggingFace Hub
                 </label>
               </div>
               <p class="text-xs text-gray-500 mt-1">
-                📊 Optional: Provide a validation dataset to track validation loss during training<br/>
+                📊 Optional: Provide a validation dataset to track validation
+                loss during training<br />
                 {#if formData.validation_from_hub}
-                  Use HuggingFace format: "username/repo" or "username/repo::validation.jsonl"
+                  Use HuggingFace format: "username/repo" or
+                  "username/repo::validation.jsonl"
                 {/if}
               </p>
             </div>
 
-            {#if formData.model_type === 'vision'}
+            {#if formData.model_type === "vision"}
               <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <h4 class="text-sm font-semibold text-blue-900 mb-2">📋 Vision Dataset Format</h4>
+                <h4 class="text-sm font-semibold text-blue-900 mb-2">
+                  📋 Vision Dataset Format
+                </h4>
                 {#if formData.from_hub}
-                  <p class="text-sm text-blue-800 mb-2">HuggingFace datasets should use OpenAI messages format with base64 images:</p>
-                  <pre class="text-xs bg-blue-100 p-2 rounded overflow-x-auto"><code>{`{"messages": [{"role": "user", "content": [{"type": "image", "image": "data:image/jpeg;base64,..."}, {"type": "text", "text": "What is shown?"}]}]}`}</code></pre>
+                  <p class="text-sm text-blue-800 mb-2">
+                    HuggingFace datasets should use OpenAI messages format with
+                    base64 images:
+                  </p>
+                  <pre
+                    class="text-xs bg-blue-100 p-2 rounded overflow-x-auto"><code
+                      >{`{"messages": [{"role": "user", "content": [{"type": "image", "image": "data:image/jpeg;base64,..."}, {"type": "text", "text": "What is shown?"}]}]}`}</code
+                    ></pre>
                   <p class="text-xs text-blue-700 mt-2">
-                    <strong>Example:</strong> <code>Barth371/train_pop_valet_no_wrong_doc</code>
+                    <strong>Example:</strong>
+                    <code>Barth371/train_pop_valet_no_wrong_doc</code>
                   </p>
                 {:else}
-                  <p class="text-sm text-blue-800 mb-2">Your dataset should be in JSONL format with:</p>
-                  <pre class="text-xs bg-blue-100 p-2 rounded overflow-x-auto"><code>{`{"text": "What is in this image?", "image": "/path/to/image.jpg", "response": "A cat sitting on a table"}`}</code></pre>
+                  <p class="text-sm text-blue-800 mb-2">
+                    Your dataset should be in JSONL format with:
+                  </p>
+                  <pre
+                    class="text-xs bg-blue-100 p-2 rounded overflow-x-auto"><code
+                      >{`{"text": "What is in this image?", "image": "/path/to/image.jpg", "response": "A cat sitting on a table"}`}</code
+                    ></pre>
                   <p class="text-xs text-blue-700 mt-2">
-                    <strong>Tip:</strong> Use <code>model-garden create-vision-dataset</code> CLI to generate sample data
+                    <strong>Tip:</strong> Use
+                    <code>model-garden create-vision-dataset</code> CLI to generate
+                    sample data
                   </p>
                 {/if}
               </div>
             {/if}
 
             <div>
-              <label for="output_dir" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="output_dir"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Output Directory
               </label>
               <input
@@ -341,181 +431,563 @@
 
         <!-- Training Hyperparameters -->
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">Training Hyperparameters</h3>
-          
-          {#if formData.model_type === 'vision'}
-            <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">
+            Training Hyperparameters
+          </h3>
+
+          {#if formData.model_type === "vision"}
+            <div
+              class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg"
+            >
               <p class="text-sm text-yellow-800">
-                ⚠️ <strong>Vision models require:</strong> Lower batch size (1-2), higher gradient accumulation (8+), and lower learning rate (2e-5)
+                ⚠️ <strong>Vision models require:</strong> Lower batch size (1-2),
+                higher gradient accumulation (8+), and lower learning rate (2e-5)
               </p>
             </div>
           {/if}
-          
-          <div class="grid grid-cols-2 gap-4">
-            <div>
-              <label for="learning_rate" class="block text-sm font-medium text-gray-700 mb-1">
-                Learning Rate
-              </label>
-              <input
-                type="number"
-                id="learning_rate"
-                bind:value={formData.hyperparameters.learning_rate}
-                step="0.00001"
-                min="0"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
 
-            <div>
-              <label for="num_epochs" class="block text-sm font-medium text-gray-700 mb-1">
-                Epochs
-              </label>
-              <input
-                type="number"
-                id="num_epochs"
-                bind:value={formData.hyperparameters.num_epochs}
-                min="1"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
+          <!-- Essential Training Parameters -->
+          <div class="mb-6">
+            <h4
+              class="text-md font-medium text-gray-800 mb-3 flex items-center gap-2"
+            >
+              🎯 Essential Parameters
+            </h4>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label
+                  for="learning_rate"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Learning Rate
+                </label>
+                <input
+                  type="number"
+                  id="learning_rate"
+                  bind:value={formData.hyperparameters.learning_rate}
+                  step="0.00001"
+                  min="0"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  {#if formData.model_type === "vision"}2e-5 recommended for
+                    vision models{:else}2e-4 typical for text models{/if}
+                </p>
+              </div>
 
-            <div>
-              <label for="batch_size" class="block text-sm font-medium text-gray-700 mb-1">
-                Batch Size
-              </label>
-              <input
-                type="number"
-                id="batch_size"
-                bind:value={formData.hyperparameters.batch_size}
-                min="1"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-            </div>
+              <div>
+                <label
+                  for="num_epochs"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Number of Epochs
+                </label>
+                <input
+                  type="number"
+                  id="num_epochs"
+                  bind:value={formData.hyperparameters.num_epochs}
+                  min="1"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  Number of complete passes through dataset
+                </p>
+              </div>
 
-            <div>
-              <label for="gradient_accumulation" class="block text-sm font-medium text-gray-700 mb-1">
-                Gradient Accumulation
-              </label>
-              <input
-                type="number"
-                id="gradient_accumulation"
-                bind:value={formData.hyperparameters.gradient_accumulation_steps}
-                min="1"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                Higher for vision models (8+)
-              </p>
-            </div>
+              <div>
+                <label
+                  for="batch_size"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Batch Size per GPU
+                </label>
+                <input
+                  type="number"
+                  id="batch_size"
+                  bind:value={formData.hyperparameters.batch_size}
+                  min="1"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  {#if formData.model_type === "vision"}Use 1 for vision models{:else}2-4
+                    typical for text models{/if}
+                </p>
+              </div>
 
-            <div>
-              <label for="max_steps" class="block text-sm font-medium text-gray-700 mb-1">
-                Max Steps
-              </label>
-              <input
-                type="number"
-                id="max_steps"
-                bind:value={formData.hyperparameters.max_steps}
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                -1 for full epochs
-              </p>
-            </div>
+              <div>
+                <label
+                  for="gradient_accumulation"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Gradient Accumulation Steps
+                </label>
+                <input
+                  type="number"
+                  id="gradient_accumulation"
+                  bind:value={
+                    formData.hyperparameters.gradient_accumulation_steps
+                  }
+                  min="1"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  Effective batch size = batch_size ×
+                  gradient_accumulation_steps
+                </p>
+              </div>
 
-            <div>
-              <label for="warmup_steps" class="block text-sm font-medium text-gray-700 mb-1">
-                Warmup Steps
-              </label>
-              <input
-                type="number"
-                id="warmup_steps"
-                bind:value={formData.hyperparameters.warmup_steps}
-                min="0"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                Linear learning rate warmup
-              </p>
-            </div>
+              <div>
+                <label
+                  for="max_steps"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Max Steps (Optional)
+                </label>
+                <input
+                  type="number"
+                  id="max_steps"
+                  bind:value={formData.hyperparameters.max_steps}
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  Override epochs with exact step count (-1 for full epochs)
+                </p>
+              </div>
 
-            <div>
-              <label for="logging_steps" class="block text-sm font-medium text-gray-700 mb-1">
-                Logging Steps
-              </label>
-              <input
-                type="number"
-                id="logging_steps"
-                bind:value={formData.hyperparameters.logging_steps}
-                min="1"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                Log metrics every N steps
-              </p>
-            </div>
-
-            <div>
-              <label for="save_steps" class="block text-sm font-medium text-gray-700 mb-1">
-                Save Steps
-              </label>
-              <input
-                type="number"
-                id="save_steps"
-                bind:value={formData.hyperparameters.save_steps}
-                min="1"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                Save checkpoint every N steps
-              </p>
-            </div>
-
-            <div>
-              <label for="eval_steps" class="block text-sm font-medium text-gray-700 mb-1">
-                Evaluation Steps
-              </label>
-              <input
-                type="number"
-                id="eval_steps"
-                bind:value={formData.hyperparameters.eval_steps}
-                placeholder="Auto (same as save_steps)"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">
-                Evaluate every N steps (only used if validation dataset provided)
-              </p>
-            </div>
-
-            <div class="col-span-2">
-              <label for="optim" class="block text-sm font-medium text-gray-700 mb-1">
-                Optimizer
-              </label>
-              <select
-                id="optim"
-                bind:value={formData.hyperparameters.optim}
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              >
-                <option value="adamw_8bit">AdamW 8-bit (Recommended - Memory Efficient)</option>
-                <option value="adamw_torch">AdamW (PyTorch)</option>
-                <option value="adamw_torch_fused">AdamW Fused (Faster)</option>
-                <option value="adafactor">Adafactor (Very Memory Efficient)</option>
-                <option value="sgd">SGD</option>
-              </select>
-              <p class="text-xs text-gray-500 mt-1">
-                8-bit AdamW is recommended for GPU memory efficiency
-              </p>
+              <div>
+                <label
+                  for="optim"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Optimizer
+                </label>
+                <select
+                  id="optim"
+                  bind:value={formData.hyperparameters.optim}
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                >
+                  <option value="adamw_8bit"
+                    >AdamW 8-bit (Recommended - Memory Efficient)</option
+                  >
+                  <option value="adamw_torch">AdamW (PyTorch)</option>
+                  <option value="adamw_torch_fused">AdamW Fused (Faster)</option
+                  >
+                  <option value="adafactor"
+                    >Adafactor (Very Memory Efficient)</option
+                  >
+                  <option value="sgd">SGD</option>
+                </select>
+                <p class="text-xs text-gray-500 mt-1">
+                  8-bit AdamW reduces memory usage significantly
+                </p>
+              </div>
             </div>
           </div>
+
+          <!-- Checkpoint & Logging -->
+          <div class="mb-6">
+            <h4
+              class="text-md font-medium text-gray-800 mb-3 flex items-center gap-2"
+            >
+              💾 Checkpoints & Logging
+            </h4>
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label
+                  for="logging_steps"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Logging Steps
+                </label>
+                <input
+                  type="number"
+                  id="logging_steps"
+                  bind:value={formData.hyperparameters.logging_steps}
+                  min="1"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  Log metrics every N steps
+                </p>
+              </div>
+
+              <div>
+                <label
+                  for="save_steps"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Save Steps
+                </label>
+                <input
+                  type="number"
+                  id="save_steps"
+                  bind:value={formData.hyperparameters.save_steps}
+                  min="1"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  Save checkpoint every N steps
+                </p>
+              </div>
+
+              <div>
+                <label
+                  for="save_total_limit"
+                  class="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Max Checkpoints
+                </label>
+                <input
+                  type="number"
+                  id="save_total_limit"
+                  bind:value={formData.hyperparameters.save_total_limit}
+                  min="1"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p class="text-xs text-gray-500 mt-1">
+                  Keep only N most recent checkpoints
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Evaluation Settings -->
+          {#if formData.validation_dataset_path}
+            <div class="mb-6">
+              <h4
+                class="text-md font-medium text-gray-800 mb-3 flex items-center gap-2"
+              >
+                📊 Evaluation Settings
+              </h4>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label
+                    for="eval_strategy"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Evaluation Strategy
+                  </label>
+                  <select
+                    id="eval_strategy"
+                    bind:value={formData.hyperparameters.eval_strategy}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="steps">Every N steps</option>
+                    <option value="epoch">Every epoch</option>
+                    <option value="no">No evaluation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    for="eval_steps"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Evaluation Steps
+                  </label>
+                  <input
+                    type="number"
+                    id="eval_steps"
+                    bind:value={formData.hyperparameters.eval_steps}
+                    placeholder="Auto (same as save_steps)"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Evaluate every N steps (leave empty for auto)
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="metric_for_best_model"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Best Model Metric
+                  </label>
+                  <select
+                    id="metric_for_best_model"
+                    bind:value={formData.hyperparameters.metric_for_best_model}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="eval_loss"
+                      >Validation Loss (lower is better)</option
+                    >
+                    <option value="eval_accuracy"
+                      >Accuracy (higher is better)</option
+                    >
+                    <option value="eval_f1">F1 Score (higher is better)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div class="flex items-center mt-6">
+                    <input
+                      type="checkbox"
+                      id="load_best_model_at_end"
+                      bind:checked={
+                        formData.hyperparameters.load_best_model_at_end
+                      }
+                      class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    />
+                    <label
+                      for="load_best_model_at_end"
+                      class="ml-2 block text-sm text-gray-700"
+                    >
+                      Load best model at end
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Automatically load checkpoint with best validation metric
+                  </p>
+                </div>
+              </div>
+            </div>
+          {/if}
+
+          <!-- Advanced Hyperparameters Toggle -->
+          <div class="mb-4">
+            <button
+              type="button"
+              onclick={() =>
+                (showAdvancedHyperparams = !showAdvancedHyperparams)}
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 transition-colors"
+            >
+              <span>{showAdvancedHyperparams ? "▼" : "▶"}</span>
+              Advanced Hyperparameters
+            </button>
+          </div>
+
+          {#if showAdvancedHyperparams}
+            <div class="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <!-- Optimizer Settings -->
+              <h4
+                class="text-md font-medium text-gray-800 mb-3 flex items-center gap-2"
+              >
+                ⚙️ Optimizer Settings
+              </h4>
+              <div class="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label
+                    for="weight_decay"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Weight Decay
+                  </label>
+                  <input
+                    type="number"
+                    id="weight_decay"
+                    bind:value={formData.hyperparameters.weight_decay}
+                    step="0.001"
+                    min="0"
+                    max="1"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    L2 regularization strength (0.01 typical)
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="lr_scheduler_type"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    LR Scheduler
+                  </label>
+                  <select
+                    id="lr_scheduler_type"
+                    bind:value={formData.hyperparameters.lr_scheduler_type}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="linear">Linear (default)</option>
+                    <option value="cosine">Cosine (good for vision)</option>
+                    <option value="constant">Constant</option>
+                    <option value="constant_with_warmup"
+                      >Constant with Warmup</option
+                    >
+                    <option value="polynomial">Polynomial</option>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Learning rate schedule type
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="warmup_steps"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Warmup Steps
+                  </label>
+                  <input
+                    type="number"
+                    id="warmup_steps"
+                    bind:value={formData.hyperparameters.warmup_steps}
+                    min="0"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Steps to warmup learning rate from 0
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="max_grad_norm"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Max Gradient Norm
+                  </label>
+                  <input
+                    type="number"
+                    id="max_grad_norm"
+                    bind:value={formData.hyperparameters.max_grad_norm}
+                    step="0.1"
+                    min="0"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Gradient clipping threshold (1.0 standard)
+                  </p>
+                </div>
+              </div>
+
+              <!-- Adam Parameters -->
+              <h4
+                class="text-md font-medium text-gray-800 mb-3 flex items-center gap-2"
+              >
+                🎛️ Adam Optimizer Parameters
+              </h4>
+              <div class="grid grid-cols-3 gap-4 mb-6">
+                <div>
+                  <label
+                    for="adam_beta1"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Adam Beta1
+                  </label>
+                  <input
+                    type="number"
+                    id="adam_beta1"
+                    bind:value={formData.hyperparameters.adam_beta1}
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Exponential decay rate for 1st moment (0.9 default)
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="adam_beta2"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Adam Beta2
+                  </label>
+                  <input
+                    type="number"
+                    id="adam_beta2"
+                    bind:value={formData.hyperparameters.adam_beta2}
+                    step="0.001"
+                    min="0"
+                    max="1"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Exponential decay rate for 2nd moment (0.999 default)
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="adam_epsilon"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Adam Epsilon
+                  </label>
+                  <input
+                    type="number"
+                    id="adam_epsilon"
+                    bind:value={formData.hyperparameters.adam_epsilon}
+                    step="1e-9"
+                    min="0"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Small constant for numerical stability (1e-8 default)
+                  </p>
+                </div>
+              </div>
+
+              <!-- Dataloader Settings -->
+              <h4
+                class="text-md font-medium text-gray-800 mb-3 flex items-center gap-2"
+              >
+                🔄 Data Loading Settings
+              </h4>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label
+                    for="dataloader_num_workers"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Dataloader Workers
+                  </label>
+                  <input
+                    type="number"
+                    id="dataloader_num_workers"
+                    bind:value={formData.hyperparameters.dataloader_num_workers}
+                    min="0"
+                    max="16"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Number of worker processes (0 = main process only)
+                  </p>
+                </div>
+
+                <div>
+                  <div class="flex items-center mt-6">
+                    <input
+                      type="checkbox"
+                      id="dataloader_pin_memory"
+                      bind:checked={
+                        formData.hyperparameters.dataloader_pin_memory
+                      }
+                      class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    />
+                    <label
+                      for="dataloader_pin_memory"
+                      class="ml-2 block text-sm text-gray-700"
+                    >
+                      Pin memory to GPU
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Faster data transfer to GPU (recommended)
+                  </p>
+                </div>
+              </div>
+            </div>
+          {/if}
         </div>
 
         <!-- LoRA Configuration -->
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">LoRA Configuration</h3>
-          
-          <div class="grid grid-cols-3 gap-4">
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">
+            LoRA Configuration
+          </h3>
+
+          <!-- Essential LoRA Parameters -->
+          <div class="grid grid-cols-3 gap-4 mb-4">
             <div>
-              <label for="lora_r" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="lora_r"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 LoRA Rank (r)
               </label>
               <input
@@ -523,15 +995,19 @@
                 id="lora_r"
                 bind:value={formData.lora_config.r}
                 min="1"
+                max="256"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
               <p class="text-xs text-gray-500 mt-1">
-                Higher = more parameters
+                Higher = more parameters (16 typical, 64+ for complex tasks)
               </p>
             </div>
 
             <div>
-              <label for="lora_alpha" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="lora_alpha"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 LoRA Alpha
               </label>
               <input
@@ -542,12 +1018,15 @@
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
               <p class="text-xs text-gray-500 mt-1">
-                Scaling factor
+                Scaling factor (typically equal to rank)
               </p>
             </div>
 
             <div>
-              <label for="lora_dropout" class="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                for="lora_dropout"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
                 LoRA Dropout
               </label>
               <input
@@ -555,23 +1034,220 @@
                 id="lora_dropout"
                 bind:value={formData.lora_config.lora_dropout}
                 min="0"
-                max="1"
+                max="0.5"
                 step="0.05"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
               <p class="text-xs text-gray-500 mt-1">
-                0 = no dropout (default)
+                Regularization (0.0-0.3, 0 = no dropout)
               </p>
             </div>
           </div>
+
+          <!-- Advanced LoRA Toggle -->
+          <div class="mb-4">
+            <button
+              type="button"
+              onclick={() => (showAdvancedLora = !showAdvancedLora)}
+              class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 transition-colors"
+            >
+              <span>{showAdvancedLora ? "▼" : "▶"}</span>
+              Advanced LoRA Settings
+            </button>
+          </div>
+
+          {#if showAdvancedLora}
+            <div class="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label
+                    for="lora_bias"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    LoRA Bias
+                  </label>
+                  <select
+                    id="lora_bias"
+                    bind:value={formData.lora_config.lora_bias}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="none">None (default)</option>
+                    <option value="all">All bias terms</option>
+                    <option value="lora_only">LoRA layers only</option>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">
+                    How to handle bias parameters in LoRA layers
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="use_gradient_checkpointing"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Gradient Checkpointing
+                  </label>
+                  <select
+                    id="use_gradient_checkpointing"
+                    bind:value={formData.lora_config.use_gradient_checkpointing}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="unsloth">Unsloth (recommended)</option>
+                    <option value="true">Standard PyTorch</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Reduces memory at cost of compute time
+                  </p>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <div class="flex items-center mt-2">
+                    <input
+                      type="checkbox"
+                      id="use_rslora"
+                      bind:checked={formData.lora_config.use_rslora}
+                      class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                    />
+                    <label
+                      for="use_rslora"
+                      class="ml-2 block text-sm text-gray-700"
+                    >
+                      Use RSLoRA (Rank-Stabilized LoRA)
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Better stability for high ranks (r > 16)
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="random_state"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Random Seed
+                  </label>
+                  <input
+                    type="number"
+                    id="random_state"
+                    bind:value={formData.lora_config.random_state}
+                    min="0"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Seed for reproducible results (42 is popular)
+                  </p>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label
+                    for="task_type"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Task Type
+                  </label>
+                  <select
+                    id="task_type"
+                    bind:value={formData.lora_config.task_type}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="CAUSAL_LM"
+                      >Causal LM (Text Generation)</option
+                    >
+                    <option value="SEQ_2_SEQ_LM">Sequence-to-Sequence</option>
+                    <option value="TOKEN_CLS">Token Classification</option>
+                    <option value="SEQ_CLS">Sequence Classification</option>
+                    <option value="QUESTION_ANS">Question Answering</option>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">
+                    Type of task for PEFT optimization
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    for="target_modules_input"
+                    class="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Target Modules (Advanced)
+                  </label>
+                  <input
+                    type="text"
+                    id="target_modules_input"
+                    value={formData.lora_config.target_modules?.join(", ") ||
+                      ""}
+                    oninput={(e) => {
+                      const value = e.currentTarget.value.trim();
+                      if (value) {
+                        formData.lora_config.target_modules = value
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter((s) => s.length > 0);
+                      } else {
+                        formData.lora_config.target_modules = null;
+                      }
+                    }}
+                    placeholder="q_proj, k_proj, v_proj (leave empty for auto)"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Comma-separated list of layers to apply LoRA (auto-detected
+                    if empty)
+                  </p>
+                </div>
+              </div>
+
+              <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 class="text-sm font-semibold text-blue-900 mb-2">
+                  💡 LoRA Tips
+                </h4>
+                <ul class="text-xs text-blue-800 space-y-1">
+                  <li>
+                    <strong>Rank (r):</strong> Start with 16, increase to 64+ for
+                    complex tasks or large datasets
+                  </li>
+                  <li>
+                    <strong>Alpha:</strong> Usually equal to rank. Higher alpha =
+                    stronger adaptation
+                  </li>
+                  <li>
+                    <strong>Dropout:</strong> Add 0.1-0.3 if overfitting, keep 0
+                    for small datasets
+                  </li>
+                  <li>
+                    <strong>RSLoRA:</strong> Enable for ranks > 16 to improve training
+                    stability
+                  </li>
+                  <li>
+                    <strong>Target Modules:</strong> Leave empty for auto-detection.
+                    Common: "q_proj,k_proj,v_proj,o_proj" for attention layers
+                  </li>
+                  <li>
+                    <strong>Task Type:</strong> Use "CAUSAL_LM" for text generation,
+                    "SEQ_2_SEQ_LM" for translation/summarization
+                  </li>
+                </ul>
+              </div>
+            </div>
+          {/if}
         </div>
 
         <!-- Model Save Options -->
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">Model Save Options</h3>
-          
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">
+            Model Save Options
+          </h3>
+
           <div>
-            <label for="save_method" class="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              for="save_method"
+              class="block text-sm font-medium text-gray-700 mb-2"
+            >
               Save Method
             </label>
             <select
@@ -579,18 +1255,26 @@
               bind:value={formData.save_method}
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             >
-              <option value="merged_16bit">Save Merged Model (16-bit) - Recommended</option>
-              <option value="merged_4bit">Save Merged Model (4-bit) - Smaller Size</option>
+              <option value="merged_16bit"
+                >Save Merged Model (16-bit) - Recommended</option
+              >
+              <option value="merged_4bit"
+                >Save Merged Model (4-bit) - Smaller Size</option
+              >
               <option value="lora">Save LoRA Adapters Only - Advanced</option>
             </select>
             <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <p class="text-sm text-blue-800">
-                {#if formData.save_method === 'merged_16bit'}
-                  <strong>✅ Merged 16-bit (Recommended):</strong> Full model with LoRA weights merged using Unsloth. Creates split files for vLLM compatibility.
-                {:else if formData.save_method === 'merged_4bit'}
-                  <strong>📦 Merged 4-bit:</strong> Full model with LoRA weights merged in 4-bit quantized format. Smaller file size.
+                {#if formData.save_method === "merged_16bit"}
+                  <strong>✅ Merged 16-bit (Recommended):</strong> Full model with
+                  LoRA weights merged using Unsloth. Creates split files for vLLM
+                  compatibility.
+                {:else if formData.save_method === "merged_4bit"}
+                  <strong>📦 Merged 4-bit:</strong> Full model with LoRA weights
+                  merged in 4-bit quantized format. Smaller file size.
                 {:else}
-                  <strong>🔧 LoRA Adapters Only (Advanced):</strong> Saves only the adapter weights. Requires the base model to load.
+                  <strong>🔧 LoRA Adapters Only (Advanced):</strong> Saves only the
+                  adapter weights. Requires the base model to load.
                 {/if}
               </p>
             </div>
@@ -599,17 +1283,15 @@
 
         <!-- Submit Buttons -->
         <div class="flex gap-4 pt-4">
-          <Button 
-            type="submit" 
-            variant="primary" 
+          <Button
+            type="submit"
+            variant="primary"
             loading={submitting}
             disabled={submitting}
           >
-            {submitting ? 'Creating...' : 'Start Training'}
+            {submitting ? "Creating..." : "Start Training"}
           </Button>
-          <Button href="/training" variant="secondary">
-            Cancel
-          </Button>
+          <Button href="/training" variant="secondary">Cancel</Button>
         </div>
       </form>
     </Card>

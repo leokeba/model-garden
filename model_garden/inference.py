@@ -174,13 +174,21 @@ class InferenceService:
                 console.print("[cyan]   Enabling trust_remote_code for HuggingFace model[/cyan]")
             
             # Configure engine arguments
+            # Ensure dtype is properly typed
+            valid_dtypes = ["auto", "half", "float16", "bfloat16", "float", "float32"]
+            dtype_param = self.dtype if self.dtype in valid_dtypes else "auto"
+            
+            # Ensure quantization is properly typed
+            valid_quantization = ["awq", "deepspeedfp", "tpu_int8", "fp8", "ptpc_fp8", "marlin", "ggml", "gptq", "squeezellm", "compressed-tensors", "bitsandbytes", "qqq", "experts_int8", "fbgemm_fp8", "modelopt"]
+            quantization_param = quantization if quantization in valid_quantization else None
+            
             engine_args = AsyncEngineArgs(
                 model=self.model_path,
                 tensor_parallel_size=self.tensor_parallel_size,
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 max_model_len=self.max_model_len,
-                dtype=self.dtype,
-                quantization=quantization,
+                dtype=dtype_param,  # type: ignore
+                quantization=quantization_param,  # type: ignore
                 load_format=load_format,
                 trust_remote_code=trust_remote_code,
                 enforce_eager=False,  # Use CUDA graphs for better performance
@@ -304,9 +312,9 @@ class InferenceService:
         request_id = f"req-{id(prompt)}-{asyncio.get_event_loop().time()}"
         
         if stream:
-            return self._generate_stream(inputs, sampling_params, request_id)
+            return self._generate_streaming(inputs, sampling_params, request_id)
         else:
-            return await self._generate_complete(inputs, sampling_params, request_id)
+            return await self._generate_complete(inputs, sampling_params, request_id)  # type: ignore
 
     def _prepare_inputs(self, prompt: str, images: Optional[List[str]] = None):
         """Prepare inputs for generation, handling multimodal data if images are provided."""
@@ -412,11 +420,13 @@ class InferenceService:
 
     async def _generate_complete(
         self,
-        inputs,  # Can be str or TextPrompt
+        inputs: str,
         sampling_params,
         request_id: str,
     ) -> Dict:
         """Generate complete response (non-streaming)."""
+        if self.engine is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
         results_generator = self.engine.generate(inputs, sampling_params, request_id)
         
         final_output = None
@@ -428,7 +438,7 @@ class InferenceService:
         
         # Return the generated text with usage stats
         generated_text = final_output.outputs[0].text
-        prompt_tokens = len(final_output.prompt_token_ids)
+        prompt_tokens = len(final_output.prompt_token_ids) if final_output.prompt_token_ids else 0
         completion_tokens = len(final_output.outputs[0].token_ids)
         
         return {
@@ -440,13 +450,15 @@ class InferenceService:
             }
         }
 
-    async def _generate_stream(
+    async def _generate_streaming(
         self,
         inputs,  # Can be str or TextPrompt
         sampling_params,
         request_id: str,
     ) -> AsyncIterator[str]:
         """Generate streaming response."""
+        if self.engine is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
         results_generator = self.engine.generate(inputs, sampling_params, request_id)
         
         previous_text = ""
@@ -608,7 +620,7 @@ class InferenceService:
             **kwargs
         )
         
-        async for chunk in stream_generator:
+        async for chunk in stream_generator:  # type: ignore
             # Format as OpenAI-compatible streaming response
             yield {
                 "id": f"chatcmpl-{id(chunk)}",

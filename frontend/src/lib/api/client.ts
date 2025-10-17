@@ -47,6 +47,7 @@ interface TrainingJob {
   hyperparameters?: any;
   lora_config?: any;
   model_type?: string;
+  save_method?: string;
   config?: {
     name: string;
     base_model: string;
@@ -131,11 +132,11 @@ interface SystemStatus {
 
 class APIClient {
   private baseURL: string;
-  
+
   constructor(baseURL: string) {
     this.baseURL = baseURL;
   }
-  
+
   private async request<T>(
     endpoint: string,
     options?: RequestInit
@@ -147,28 +148,28 @@ class APIClient {
         ...options?.headers,
       },
     });
-    
+
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`API Error: ${response.statusText} - ${error}`);
     }
-    
+
     return response.json();
   }
-  
+
   // Models
   async getModels(): Promise<PaginatedResponse<Model>> {
     return this.request('/models');
   }
-  
+
   async getModel(id: string): Promise<Model> {
     return this.request(`/models/${id}`);
   }
-  
+
   async deleteModel(id: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/models/${id}`, { method: 'DELETE' });
   }
-  
+
   async generateText(modelName: string, params: {
     prompt: string;
     max_length?: number;
@@ -181,7 +182,7 @@ class APIClient {
       body: JSON.stringify(params),
     });
   }
-  
+
   // Training
   async createTrainingJob(data: any): Promise<{ success: boolean; data: { job_id: string }; message: string }> {
     return this.request('/training/jobs', {
@@ -189,32 +190,32 @@ class APIClient {
       body: JSON.stringify(data),
     });
   }
-  
+
   async getTrainingJobs(): Promise<PaginatedResponse<TrainingJob>> {
     return this.request('/training/jobs');
   }
-  
+
   async getTrainingJob(id: string): Promise<TrainingJob> {
     return this.request(`/training/jobs/${id}`);
   }
-  
+
   async cancelTrainingJob(id: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/training/jobs/${id}`, {
       method: 'DELETE',
     });
   }
-  
+
   // System
   async getSystemStatus(): Promise<SystemStatus> {
     return this.request('/system/status');
   }
-  
+
   // Health check
   async getHealth(): Promise<{ status: string; message: string }> {
     const response = await fetch(`${this.baseURL.replace('/api/v1', '')}/health`);
     return response.json();
   }
-  
+
   // Inference
   async getInferenceStatus(): Promise<{
     loaded: boolean;
@@ -230,7 +231,7 @@ class APIClient {
   }> {
     return this.request('/inference/status');
   }
-  
+
   async loadModel(params: {
     model_path: string;
     tensor_parallel_size?: number;
@@ -251,32 +252,32 @@ class APIClient {
       }),
     });
   }
-  
+
   async unloadModel(): Promise<{ success: boolean; message: string }> {
     return this.request('/inference/unload', {
       method: 'POST',
     });
   }
-  
+
   // Generic methods for other endpoints
   async get<T = any>(endpoint: string): Promise<T> {
     return this.request(endpoint);
   }
-  
+
   async post<T = any>(endpoint: string, data?: any): Promise<T> {
     return this.request(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
-  
+
   async put<T = any>(endpoint: string, data?: any): Promise<T> {
     return this.request(endpoint, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
-  
+
   async delete<T = any>(endpoint: string): Promise<T> {
     return this.request(endpoint, {
       method: 'DELETE',
@@ -285,4 +286,4 @@ class APIClient {
 }
 
 export const api = new APIClient(API_BASE);
-export type { Model, TrainingJob, SystemStatus };
+export type { Model, SystemStatus, TrainingJob };

@@ -8,7 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Optional, Union, List, Dict, Any
+from typing import Optional, Union, List, Dict, Any, cast, Literal
 
 # Configure HuggingFace cache from environment before importing HF libraries
 from dotenv import load_dotenv
@@ -88,6 +88,8 @@ class VisionLanguageTrainer:
                     # Load processor for vision models
                     from transformers import AutoProcessor
                     self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
+                    # Use processor's tokenizer for vision models
+                    self.tokenizer = self.processor.tokenizer
                     console.print("[green]✓[/green] Model loaded with Unsloth optimizations")
                 except Exception as unsloth_error:
                     # Fall back to transformers for vision models
@@ -116,15 +118,25 @@ class VisionLanguageTrainer:
         lora_dropout: float = 0.0,
         target_modules: Optional[List[str]] = None,
         use_rslora: bool = False,
+        lora_bias: str = "none",
+        task_type: str = "CAUSAL_LM",
+        use_gradient_checkpointing: str = "unsloth",
+        random_state: int = 42,
+        loftq_config: Optional[dict] = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning.
 
         Args:
-            r: LoRA rank
-            lora_alpha: LoRA alpha parameter
-            lora_dropout: LoRA dropout rate
-            target_modules: Modules to apply LoRA to (None for auto)
-            use_rslora: Whether to use rank-stabilized LoRA
+            r: LoRA rank (higher = more parameters, better quality but slower)
+            lora_alpha: LoRA alpha parameter (scaling factor, typically equal to r)
+            lora_dropout: LoRA dropout rate (0.0 to 0.3, higher = more regularization)
+            target_modules: Modules to apply LoRA to (None for auto-detection)
+            use_rslora: Whether to use rank-stabilized LoRA (better for high ranks)
+            lora_bias: How to handle bias ("none", "all", "lora_only")
+            task_type: Type of task ("CAUSAL_LM", "SEQ_2_SEQ_LM", etc.)
+            use_gradient_checkpointing: Gradient checkpointing mode ("unsloth", True, False)
+            random_state: Random seed for reproducibility
+            loftq_config: LoftQ quantization config (None to disable)
         """
         console.print("[cyan]Configuring LoRA adapters for vision-language model...[/cyan]")
 
@@ -150,10 +162,11 @@ class VisionLanguageTrainer:
                 target_modules=target_modules,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
-                bias="none",
-                use_gradient_checkpointing="unsloth",
-                random_state=42,
+                bias=lora_bias,
+                use_gradient_checkpointing=use_gradient_checkpointing,
+                random_state=random_state,
                 use_rslora=use_rslora,
+                loftq_config=loftq_config,
             )
             console.print("[green]✓[/green] LoRA adapters configured (Unsloth)")
             
@@ -170,11 +183,13 @@ class VisionLanguageTrainer:
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
                 target_modules=target_modules,
-                bias="none",
-                task_type="CAUSAL_LM",
+                bias=cast(Literal["none", "all", "lora_only"], lora_bias if lora_bias in ["none", "all", "lora_only"] else "none"),
+                task_type=task_type,
             )
             
-            self.model = get_peft_model(self.model, peft_config)
+            if self.model is None:
+                raise RuntimeError("Model not loaded. Call load_model() first.")
+            self.model = get_peft_model(self.model, peft_config)  # type: ignore
             console.print("[green]✓[/green] LoRA adapters configured (PEFT)")
 
     def load_dataset_from_file(self, dataset_path: str) -> Dataset:
@@ -201,8 +216,13 @@ class VisionLanguageTrainer:
         else:
             raise ValueError(f"Unsupported file format: {suffix}")
 
-        console.print(f"[green]✓[/green] Loaded {len(dataset)} examples")
-        return dataset
+        # Handle dataset types - cast to Dataset for type safety
+        try:
+            dataset_len = len(dataset)  # type: ignore
+            console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
+        except (TypeError, AttributeError):
+            console.print("[green]✓[/green] Loaded dataset (streaming)")
+        return cast(Dataset, dataset)
 
     def load_dataset_from_hub(
         self,
@@ -238,8 +258,13 @@ class VisionLanguageTrainer:
                 # Load standard split
                 dataset = load_dataset(dataset_name, split=split, token=hf_token, **kwargs)
             
-            console.print(f"[green]✓[/green] Loaded {len(dataset)} examples from Hub")
-            return dataset
+            # Handle dataset types - cast to Dataset for type safety
+            try:
+                dataset_len = len(dataset)  # type: ignore
+                console.print(f"[green]✓[/green] Loaded {dataset_len} examples from Hub")
+            except (TypeError, AttributeError):
+                console.print("[green]✓[/green] Loaded dataset from Hub (streaming)")
+            return cast(Dataset, dataset)
         except Exception as e:
             console.print(f"[red]❌ Failed to load dataset from Hub: {e}[/red]")
             raise
@@ -423,11 +448,18 @@ class VisionLanguageTrainer:
         has_messages_field = messages_field in dataset.column_names
         
         for example in dataset:
-            if has_messages_field and messages_field in example:
+            # Ensure example is a dict-like object
+            if isinstance(example, dict):
+                example_dict = example
+            else:
+                # Handle list case (shouldn't happen with proper datasets)
+                continue
+                
+            if has_messages_field and messages_field in example_dict:
                 # OpenAI messages format - convert to simple format first
                 console.print("[yellow]Converting OpenAI messages format to simple format for compatibility...[/yellow]") if len(formatted_data) == 0 else None
                 
-                messages = example[messages_field]
+                messages = example_dict[messages_field]
                 simple = self._convert_messages_to_simple_format(messages)
                 
                 # Now process as simple format
@@ -461,9 +493,9 @@ class VisionLanguageTrainer:
                 formatted_data.append(formatted_messages)
             else:
                 # Simple format - build OpenAI messages structure
-                text = example.get(text_field, "")
-                response = example.get("response", example.get("output", ""))
-                image_data = example.get(image_field, "")
+                text = example_dict.get(text_field, "")
+                response = example_dict.get("response", example_dict.get("output", ""))
+                image_data = example_dict.get(image_field, "")
                 
                 # Load image (handles file paths, base64, etc.)
                 pil_image = self._load_image(image_data)
@@ -506,6 +538,18 @@ class VisionLanguageTrainer:
         logging_steps: int = 10,
         save_steps: int = 100,
         optim: str = "adamw_8bit",
+        weight_decay: float = 0.01,
+        lr_scheduler_type: str = "cosine",  # Cosine better for vision models
+        max_grad_norm: float = 1.0,
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_epsilon: float = 1e-8,
+        dataloader_num_workers: int = 0,
+        dataloader_pin_memory: bool = True,
+        eval_strategy: str = "steps",
+        load_best_model_at_end: bool = True,
+        metric_for_best_model: str = "eval_loss",
+        save_total_limit: int = 3,
         callbacks: Optional[List] = None,
         eval_dataset: Optional[Union[Dataset, List[Dict]]] = None,
         eval_steps: Optional[int] = None,
@@ -517,20 +561,33 @@ class VisionLanguageTrainer:
             output_dir: Directory to save checkpoints
             num_train_epochs: Number of training epochs
             per_device_train_batch_size: Batch size per device (use 1 for vision models)
-            gradient_accumulation_steps: Gradient accumulation steps
-            learning_rate: Learning rate (lower for vision models)
+            gradient_accumulation_steps: Gradient accumulation steps (higher for vision models)
+            learning_rate: Learning rate (lower for vision models, typically 2e-5)
             warmup_steps: Number of warmup steps
             max_steps: Maximum training steps (-1 for full epochs)
             logging_steps: Log every N steps
             save_steps: Save checkpoint every N steps
-            optim: Optimizer to use
+            optim: Optimizer to use (adamw_8bit, adamw_torch, adafactor, etc.)
+            weight_decay: Weight decay for regularization
+            lr_scheduler_type: Learning rate scheduler (cosine recommended for vision models)
+            max_grad_norm: Maximum gradient norm for clipping
+            adam_beta1: Beta1 parameter for Adam optimizer
+            adam_beta2: Beta2 parameter for Adam optimizer
+            adam_epsilon: Epsilon parameter for Adam optimizer
+            dataloader_num_workers: Number of dataloader workers
+            dataloader_pin_memory: Whether to pin memory in dataloader
+            eval_strategy: Evaluation strategy ('no', 'steps', 'epoch')
+            load_best_model_at_end: Load best model at end of training
+            metric_for_best_model: Metric to use for best model selection
+            save_total_limit: Maximum number of checkpoints to keep
             callbacks: Optional list of TrainerCallback instances
             eval_dataset: Optional validation dataset for evaluation
             eval_steps: Optional number of steps between evaluations (defaults to save_steps)
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
 
-        from trl import SFTTrainer, SFTConfig
+        from trl.trainer.sft_trainer import SFTTrainer
+        from trl.trainer.sft_config import SFTConfig
         from unsloth.trainer import UnslothVisionDataCollator
         
         # For vision models, keep data as list - don't convert to Dataset
@@ -552,6 +609,14 @@ class VisionLanguageTrainer:
         # When using max_steps, still need to provide num_train_epochs
         use_max_steps = max_steps > 0
         
+        # Set evaluation strategy if validation dataset provided
+        final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
+        eval_steps_value = eval_steps if eval_steps is not None else save_steps
+        
+        # Determine if we should load best model at end
+        final_load_best = load_best_model_at_end and eval_dataset is not None
+        final_metric = metric_for_best_model if eval_dataset is not None else None
+
         # Build training args - SFTConfig has different parameters than TrainingArguments
         training_args_dict = {
             "output_dir": output_dir,
@@ -565,11 +630,17 @@ class VisionLanguageTrainer:
             "bf16": self.load_in_4bit,
             "logging_steps": logging_steps,
             "optim": optim,
-            "weight_decay": 0.01,
-            "lr_scheduler_type": "cosine",
+            "weight_decay": weight_decay,
+            "lr_scheduler_type": lr_scheduler_type,
+            "max_grad_norm": max_grad_norm,
+            "adam_beta1": adam_beta1,
+            "adam_beta2": adam_beta2,
+            "adam_epsilon": adam_epsilon,
+            "dataloader_num_workers": dataloader_num_workers,
+            "dataloader_pin_memory": dataloader_pin_memory,
             "seed": 42,
             "save_steps": save_steps,
-            "save_total_limit": 3,
+            "save_total_limit": save_total_limit,
             "report_to": "none",
             # CRITICAL for vision models - Unsloth requirements:
             "remove_unused_columns": False,
@@ -578,24 +649,30 @@ class VisionLanguageTrainer:
         }
         
         # Add evaluation settings if validation dataset provided
-        if do_eval:
+        if eval_dataset is not None:
             training_args_dict["per_device_eval_batch_size"] = per_device_train_batch_size
             training_args_dict["do_eval"] = True
-            training_args_dict["eval_strategy"] = "steps"
+            training_args_dict["eval_strategy"] = final_eval_strategy
             training_args_dict["eval_steps"] = eval_steps_value
-            training_args_dict["load_best_model_at_end"] = True
-            training_args_dict["metric_for_best_model"] = "eval_loss"
+            training_args_dict["load_best_model_at_end"] = final_load_best
+            training_args_dict["metric_for_best_model"] = final_metric
         
         training_args = SFTConfig(**training_args_dict)
 
         console.print("[yellow]⚠️  Vision-language training uses UnslothVisionDataCollator[/yellow]")
         
+        # Ensure model and tokenizer are loaded
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        if self.tokenizer is None:
+            raise RuntimeError("Tokenizer not loaded. Call load_model() first.")
+            
         trainer = SFTTrainer(
             model=self.model,
-            tokenizer=self.tokenizer,
+            tokenizer=self.tokenizer,  # type: ignore
             args=training_args,
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
+            train_dataset=train_dataset,  # type: ignore
+            eval_dataset=eval_dataset,  # type: ignore
             data_collator=UnslothVisionDataCollator(self.model, self.processor),
             callbacks=callbacks if callbacks else [],
         )
@@ -679,6 +756,8 @@ class VisionLanguageTrainer:
 
         if save_method == "lora":
             # Save only LoRA adapters
+            if self.model is None:
+                raise RuntimeError("Model not loaded. Call load_model() first.")
             self.model.save_pretrained(output_dir)
             if self.tokenizer:
                 self.tokenizer.save_pretrained(output_dir)
@@ -706,8 +785,10 @@ class VisionLanguageTrainer:
                 try:
                     from peft import PeftModel
                     # Merge adapters
-                    merged_model = self.model.merge_and_unload()
-                    merged_model.save_pretrained(output_dir)
+                    if self.model is None:
+                        raise RuntimeError("Model not loaded.")
+                    merged_model = self.model.merge_and_unload()  # type: ignore
+                    merged_model.save_pretrained(output_dir)  # type: ignore
                     if self.tokenizer:
                         self.tokenizer.save_pretrained(output_dir)
                     if self.processor:
@@ -716,6 +797,8 @@ class VisionLanguageTrainer:
                 except Exception as merge_error:
                     console.print(f"[red]❌ Merge failed: {merge_error}[/red]")
                     console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
+                    if self.model is None:
+                        raise RuntimeError("Model not loaded.")
                     self.model.save_pretrained(output_dir)
                     if self.tokenizer:
                         self.tokenizer.save_pretrained(output_dir)
@@ -746,6 +829,8 @@ class VisionLanguageTrainer:
             # For vision models, merging is more complex
             console.print("[yellow]⚠️  Merged saving for vision models not yet implemented[/yellow]")
             console.print("[yellow]⚠️  Saving LoRA adapters only[/yellow]")
+            if self.model is None:
+                raise RuntimeError("Model not loaded.")
             self.model.save_pretrained(output_dir)
             if self.tokenizer:
                 self.tokenizer.save_pretrained(output_dir)

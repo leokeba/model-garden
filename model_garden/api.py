@@ -272,7 +272,13 @@ class ProgressCallback(TrainerCallback):
                 total_steps = state.max_steps
             else:
                 # Estimate total steps from num_train_epochs
-                total_steps = state.max_steps if state.max_steps > 0 else (len(state.train_dataloader) * args.num_train_epochs)
+                # Use getattr to safely access train_dataloader if available
+                train_dataloader = getattr(state, 'train_dataloader', None)
+                if train_dataloader and hasattr(train_dataloader, '__len__'):
+                    total_steps = len(train_dataloader) * args.num_train_epochs
+                else:
+                    # Fallback: use a reasonable estimate
+                    total_steps = 100 * args.num_train_epochs
             
             current_epoch = state.epoch if hasattr(state, 'epoch') else 0
             
@@ -436,6 +442,11 @@ def run_training_job(job_id: str):
                 r=lora_config.get("r", 16),
                 lora_alpha=lora_config.get("lora_alpha", 16),
                 lora_dropout=lora_config.get("lora_dropout", 0.0),
+                lora_bias=lora_config.get("lora_bias", "none"),
+                use_rslora=lora_config.get("use_rslora", False),
+                use_gradient_checkpointing=lora_config.get("use_gradient_checkpointing", "unsloth"),
+                random_state=lora_config.get("random_state", 42),
+                loftq_config=lora_config.get("loftq_config"),
             )
             
             # Load and format training dataset
@@ -475,6 +486,17 @@ def run_training_job(job_id: str):
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
                 optim=hyperparams.get("optim", "adamw_8bit"),
+                weight_decay=hyperparams.get("weight_decay", 0.01),
+                lr_scheduler_type=hyperparams.get("lr_scheduler_type", "cosine"),  # Cosine better for vision
+                max_grad_norm=hyperparams.get("max_grad_norm", 1.0),
+                adam_beta1=hyperparams.get("adam_beta1", 0.9),
+                adam_beta2=hyperparams.get("adam_beta2", 0.999),
+                adam_epsilon=hyperparams.get("adam_epsilon", 1e-8),
+                dataloader_num_workers=hyperparams.get("dataloader_num_workers", 0),
+                eval_strategy=hyperparams.get("eval_strategy", "steps"),
+                load_best_model_at_end=hyperparams.get("load_best_model_at_end", True),
+                metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
+                save_total_limit=hyperparams.get("save_total_limit", 3),
                 callbacks=[progress_callback],
             )
             
@@ -498,6 +520,11 @@ def run_training_job(job_id: str):
                 r=lora_config.get("r", 16),
                 lora_alpha=lora_config.get("lora_alpha", 16),
                 lora_dropout=lora_config.get("lora_dropout", 0.0),
+                lora_bias=lora_config.get("lora_bias", "none"),
+                use_rslora=lora_config.get("use_rslora", False),
+                use_gradient_checkpointing=lora_config.get("use_gradient_checkpointing", "unsloth"),
+                random_state=lora_config.get("random_state", 42),
+                loftq_config=lora_config.get("loftq_config"),
             )
             
             # Load training dataset
@@ -548,6 +575,17 @@ def run_training_job(job_id: str):
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
                 optim=hyperparams.get("optim", "adamw_8bit"),
+                weight_decay=hyperparams.get("weight_decay", 0.01),
+                lr_scheduler_type=hyperparams.get("lr_scheduler_type", "linear"),
+                max_grad_norm=hyperparams.get("max_grad_norm", 1.0),
+                adam_beta1=hyperparams.get("adam_beta1", 0.9),
+                adam_beta2=hyperparams.get("adam_beta2", 0.999),
+                adam_epsilon=hyperparams.get("adam_epsilon", 1e-8),
+                dataloader_num_workers=hyperparams.get("dataloader_num_workers", 0),
+                eval_strategy=hyperparams.get("eval_strategy", "steps"),
+                load_best_model_at_end=hyperparams.get("load_best_model_at_end", True),
+                metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
+                save_total_limit=hyperparams.get("save_total_limit", 3),
                 callbacks=[progress_callback],
             )
             
@@ -595,29 +633,31 @@ def run_training_job(job_id: str):
         
     except Exception as e:
         import traceback
-        # Update job status to failed
-        job["status"] = "failed"
-        job["completed_at"] = datetime.utcnow().isoformat() + "Z"
-        job["error_message"] = str(e)
+        # Update job status to failed - ensure job exists
+        if job_id in training_jobs:
+            job = training_jobs[job_id]
+            job["status"] = "failed"
+            job["completed_at"] = datetime.utcnow().isoformat() + "Z"
+            job["error_message"] = str(e)
         
-        # Persist status change
-        storage_manager.save_training_jobs(training_jobs)
+            # Persist status change
+            storage_manager.save_training_jobs(training_jobs)
+            
+            # Notify WebSocket clients
+            asyncio.run(manager.send_update(job_id, {
+                "type": "status_update",
+                "job_id": job_id,
+                "status": "failed",
+                "completed_at": job["completed_at"],
+                "error_message": str(e),
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }))
+        else:
+            print(f"❌ Training job {job_id} failed but job not found in storage: {e}")
         
         # Print full traceback for debugging
         print(f"❌ Training job {job_id} failed: {e}")
         traceback.print_exc()
-        
-        # Notify WebSocket clients
-        asyncio.run(manager.send_update(job_id, {
-            "type": "status_update",
-            "job_id": job_id,
-            "status": "failed",
-            "completed_at": job["completed_at"],
-            "error_message": str(e),
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }))
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
@@ -649,7 +689,8 @@ async def lifespan(app: FastAPI):
             tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
             gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.9"))
             quantization = os.getenv("MODEL_GARDEN_QUANTIZATION", "auto")  # Default to auto-detection
-            max_model_len = int(os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")) if os.getenv("MODEL_GARDEN_MAX_MODEL_LEN") else None
+            max_model_len_str = os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")
+            max_model_len = int(max_model_len_str) if max_model_len_str else None
             
             inference_service = InferenceService(
                 model_path=autoload_model,
@@ -948,8 +989,12 @@ async def get_training_job(job_id: str):
 
 
 @app.delete("/api/v1/training/jobs/{job_id}", response_model=APIResponse)
-async def cancel_training_job(job_id: str):
-    """Cancel a training job."""
+async def delete_or_cancel_training_job(job_id: str):
+    """Delete or cancel a training job.
+    
+    - For running/queued jobs: cancels the job
+    - For completed/failed/cancelled jobs: removes the job from the list
+    """
     if job_id not in training_jobs:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -958,13 +1003,24 @@ async def cancel_training_job(job_id: str):
     
     job = training_jobs[job_id]
     
+    # If job is finished (completed/failed/cancelled), delete it from the list
     if job["status"] in ["completed", "failed", "cancelled"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot cancel job in {job['status']} state"
+        del training_jobs[job_id]
+        storage_manager.save_training_jobs(training_jobs)
+        
+        # Notify WebSocket clients about deletion
+        await manager.send_update(job_id, {
+            "type": "job_deleted",
+            "job_id": job_id,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        })
+        
+        return APIResponse(
+            success=True,
+            message=f"Training job {job_id} deleted successfully"
         )
     
-    # Update job status
+    # If job is running/queued, cancel it
     job["status"] = "cancelled"
     storage_manager.save_training_jobs(training_jobs)
     
@@ -1266,7 +1322,7 @@ async def generate_text(request: InferenceRequest):
                     stream=True,
                 )
                 
-                async for chunk in stream:
+                async for chunk in stream:  # type: ignore
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
                 
                 yield "data: [DONE]\n\n"
@@ -1431,7 +1487,7 @@ async def chat_completions(request: ChatCompletionRequest):
             async def generate_stream():
                 stream = await service.chat_completion(**gen_params)
                 
-                async for chunk in stream:
+                async for chunk in stream:  # type: ignore
                     yield f"data: {json.dumps(chunk)}\n\n"
                 
                 yield "data: [DONE]\n\n"
@@ -1523,6 +1579,13 @@ async def upload_dataset(file: UploadFile = File(...)):
     
     # Validate file extension
     allowed_extensions = [".json", ".jsonl", ".csv", ".txt", ".parquet"]
+    
+    if not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must have a name"
+        )
+    
     file_ext = Path(file.filename).suffix.lower()
     
     if file_ext not in allowed_extensions:
@@ -1865,7 +1928,7 @@ async def system_status():
                         "total": mem_info.total,
                         "used": mem_info.used,
                         "free": mem_info.free,
-                        "used_percent": round((mem_info.used / mem_info.total) * 100, 1),
+                        "used_percent": round((float(mem_info.used) / float(mem_info.total)) * 100, 1),
                     },
                     "utilization": {
                         "gpu": gpu_util,
@@ -1948,6 +2011,7 @@ async def cleanup_gpu_memory():
     try:
         # Get initial GPU memory if available
         import torch
+        mem_before = 0.0  # Initialize to avoid unbound variable
         if torch.cuda.is_available():
             torch.cuda.synchronize()
             mem_before = torch.cuda.memory_allocated() / (1024 ** 3)  # GB

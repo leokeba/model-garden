@@ -30,8 +30,9 @@ from unsloth import FastLanguageModel
 from datasets import Dataset, load_dataset
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from trl import SFTTrainer
+from trl.trainer.sft_trainer import SFTTrainer
 from transformers import TrainingArguments
+from typing import cast
 
 console = Console()
 
@@ -92,15 +93,25 @@ class ModelTrainer:
         lora_dropout: float = 0.0,
         target_modules: Optional[list[str]] = None,
         use_rslora: bool = False,
+        lora_bias: str = "none",
+        task_type: str = "CAUSAL_LM",
+        use_gradient_checkpointing: str = "unsloth",
+        random_state: int = 42,
+        loftq_config: Optional[dict] = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning.
 
         Args:
-            r: LoRA rank
-            lora_alpha: LoRA alpha parameter
-            lora_dropout: LoRA dropout rate
-            target_modules: Modules to apply LoRA to (None for auto)
-            use_rslora: Whether to use rank-stabilized LoRA
+            r: LoRA rank (higher = more parameters, better quality but slower)
+            lora_alpha: LoRA alpha parameter (scaling factor, typically equal to r)
+            lora_dropout: LoRA dropout rate (0.0 to 0.3, higher = more regularization)
+            target_modules: Modules to apply LoRA to (None for auto-detection)
+            use_rslora: Whether to use rank-stabilized LoRA (better for high ranks)
+            lora_bias: How to handle bias ("none", "all", "lora_only")
+            task_type: Type of task ("CAUSAL_LM", "SEQ_2_SEQ_LM", etc.)
+            use_gradient_checkpointing: Gradient checkpointing mode ("unsloth", True, False)
+            random_state: Random seed for reproducibility
+            loftq_config: LoftQ quantization config (None to disable)
         """
         console.print("[cyan]Configuring LoRA adapters...[/cyan]")
 
@@ -121,11 +132,11 @@ class ModelTrainer:
             target_modules=target_modules,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
-            bias="none",
-            use_gradient_checkpointing="unsloth",
-            random_state=42,
+            bias=lora_bias,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            random_state=random_state,
             use_rslora=use_rslora,
-            loftq_config=None,
+            loftq_config=loftq_config,
         )
 
         console.print("[green]✓[/green] LoRA adapters configured")
@@ -158,8 +169,13 @@ class ModelTrainer:
         else:
             raise ValueError(f"Unsupported file format: {suffix}")
 
-        console.print(f"[green]✓[/green] Loaded {len(dataset)} examples")
-        return dataset
+        # Handle dataset types - cast to Dataset for type safety
+        try:
+            dataset_len = len(dataset)  # type: ignore
+            console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
+        except (TypeError, AttributeError):
+            console.print("[green]✓[/green] Loaded dataset (streaming)")
+        return cast(Dataset, dataset)
 
     def load_dataset_from_hub(self, dataset_name: str, split: str = "train") -> Dataset:
         """Load dataset from HuggingFace Hub.
@@ -188,8 +204,13 @@ class ModelTrainer:
             # Load standard split
             dataset = load_dataset(dataset_name, split=split, token=hf_token)
         
-        console.print(f"[green]✓[/green] Loaded {len(dataset)} examples")
-        return dataset
+        # Handle dataset types - cast to Dataset for type safety
+        try:
+            dataset_len = len(dataset)  # type: ignore
+            console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
+        except (TypeError, AttributeError):
+            console.print("[green]✓[/green] Loaded dataset (streaming)")
+        return cast(Dataset, dataset)
 
     def format_dataset(
         self,
@@ -255,6 +276,18 @@ class ModelTrainer:
         logging_steps: int = 10,
         save_steps: int = 100,
         optim: str = "adamw_8bit",
+        weight_decay: float = 0.01,
+        lr_scheduler_type: str = "linear",
+        max_grad_norm: float = 1.0,
+        adam_beta1: float = 0.9,
+        adam_beta2: float = 0.999,
+        adam_epsilon: float = 1e-8,
+        dataloader_num_workers: int = 0,
+        dataloader_pin_memory: bool = True,
+        eval_strategy: str = "steps",
+        load_best_model_at_end: bool = True,
+        metric_for_best_model: str = "eval_loss",
+        save_total_limit: int = 3,
         callbacks: Optional[List] = None,
         eval_dataset: Optional[Dataset] = None,
         eval_steps: Optional[int] = None,
@@ -272,7 +305,19 @@ class ModelTrainer:
             max_steps: Maximum training steps (-1 for full epochs)
             logging_steps: Log every N steps
             save_steps: Save checkpoint every N steps
-            optim: Optimizer to use
+            optim: Optimizer to use (adamw_8bit, adamw_torch, adafactor, etc.)
+            weight_decay: Weight decay for regularization
+            lr_scheduler_type: Learning rate scheduler (linear, cosine, constant, etc.)
+            max_grad_norm: Maximum gradient norm for clipping
+            adam_beta1: Beta1 parameter for Adam optimizer
+            adam_beta2: Beta2 parameter for Adam optimizer
+            adam_epsilon: Epsilon parameter for Adam optimizer
+            dataloader_num_workers: Number of dataloader workers
+            dataloader_pin_memory: Whether to pin memory in dataloader
+            eval_strategy: Evaluation strategy ('no', 'steps', 'epoch')
+            load_best_model_at_end: Load best model at end of training
+            metric_for_best_model: Metric to use for best model selection
+            save_total_limit: Maximum number of checkpoints to keep
             callbacks: Optional list of TrainerCallback instances
             eval_dataset: Optional validation dataset for evaluation
             eval_steps: Optional number of steps between evaluations (defaults to save_steps)
@@ -280,8 +325,12 @@ class ModelTrainer:
         console.print("[cyan]Starting training...[/cyan]")
         
         # Set evaluation strategy if validation dataset provided
-        eval_strategy = "steps" if eval_dataset is not None else "no"
+        final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
         eval_steps_value = eval_steps if eval_steps is not None else save_steps
+        
+        # Determine if we should load best model at end
+        final_load_best = load_best_model_at_end and eval_dataset is not None
+        final_metric = metric_for_best_model if eval_dataset is not None else None
 
         training_args = TrainingArguments(
             output_dir=output_dir,
@@ -296,21 +345,32 @@ class ModelTrainer:
             bf16=self.load_in_4bit,
             logging_steps=logging_steps,
             optim=optim,
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
+            weight_decay=weight_decay,
+            lr_scheduler_type=lr_scheduler_type,
+            max_grad_norm=max_grad_norm,
+            adam_beta1=adam_beta1,
+            adam_beta2=adam_beta2,
+            adam_epsilon=adam_epsilon,
+            dataloader_num_workers=dataloader_num_workers,
+            dataloader_pin_memory=dataloader_pin_memory,
             seed=42,
             save_steps=save_steps,
-            save_total_limit=3,
+            save_total_limit=save_total_limit,
             report_to="none",  # Disable wandb/tensorboard for now
-            do_eval=eval_dataset is not None,  # Explicitly enable evaluation
-            eval_strategy=eval_strategy,
+            do_eval=eval_dataset is not None,
+            eval_strategy=final_eval_strategy,
             eval_steps=eval_steps_value if eval_dataset else None,
-            load_best_model_at_end=True if eval_dataset else False,
-            metric_for_best_model="eval_loss" if eval_dataset else None,
+            load_best_model_at_end=final_load_best,
+            metric_for_best_model=final_metric,
         )
 
+        # Ensure model is loaded
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
         trainer = SFTTrainer(
             model=self.model,
+            tokenizer=self.tokenizer,  # type: ignore
             train_dataset=dataset,
             eval_dataset=eval_dataset,
             args=training_args,
@@ -324,6 +384,10 @@ class ModelTrainer:
         # Save final model
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
         trainer.save_model(output_dir)
+        
+        # Ensure tokenizer is available
+        if self.tokenizer is None:
+            raise RuntimeError("Tokenizer not available.")
         self.tokenizer.save_pretrained(output_dir)
         console.print("[green]✓[/green] Model saved successfully")
 
@@ -346,6 +410,12 @@ class ModelTrainer:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
+        # Ensure model and tokenizer are available
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        if self.tokenizer is None:
+            raise RuntimeError("Tokenizer not available.")
+            
         if save_method == "lora":
             # Save only LoRA adapters
             self.model.save_pretrained(str(output_path))
