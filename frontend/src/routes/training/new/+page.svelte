@@ -17,11 +17,16 @@
       batch_size: 2,
       max_steps: -1,
       gradient_accumulation_steps: 4,
+      warmup_steps: 10,
+      logging_steps: 10,
+      save_steps: 100,
       eval_steps: null as number | null,
+      optim: 'adamw_8bit',
     },
     lora_config: {
       r: 16,
       lora_alpha: 16,
+      lora_dropout: 0.0,
     },
     from_hub: false,
     validation_from_hub: false,
@@ -419,6 +424,54 @@
             </div>
 
             <div>
+              <label for="warmup_steps" class="block text-sm font-medium text-gray-700 mb-1">
+                Warmup Steps
+              </label>
+              <input
+                type="number"
+                id="warmup_steps"
+                bind:value={formData.hyperparameters.warmup_steps}
+                min="0"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                Linear learning rate warmup
+              </p>
+            </div>
+
+            <div>
+              <label for="logging_steps" class="block text-sm font-medium text-gray-700 mb-1">
+                Logging Steps
+              </label>
+              <input
+                type="number"
+                id="logging_steps"
+                bind:value={formData.hyperparameters.logging_steps}
+                min="1"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                Log metrics every N steps
+              </p>
+            </div>
+
+            <div>
+              <label for="save_steps" class="block text-sm font-medium text-gray-700 mb-1">
+                Save Steps
+              </label>
+              <input
+                type="number"
+                id="save_steps"
+                bind:value={formData.hyperparameters.save_steps}
+                min="1"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                Save checkpoint every N steps
+              </p>
+            </div>
+
+            <div>
               <label for="eval_steps" class="block text-sm font-medium text-gray-700 mb-1">
                 Evaluation Steps
               </label>
@@ -433,6 +486,26 @@
                 Evaluate every N steps (only used if validation dataset provided)
               </p>
             </div>
+
+            <div class="col-span-2">
+              <label for="optim" class="block text-sm font-medium text-gray-700 mb-1">
+                Optimizer
+              </label>
+              <select
+                id="optim"
+                bind:value={formData.hyperparameters.optim}
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              >
+                <option value="adamw_8bit">AdamW 8-bit (Recommended - Memory Efficient)</option>
+                <option value="adamw_torch">AdamW (PyTorch)</option>
+                <option value="adamw_torch_fused">AdamW Fused (Faster)</option>
+                <option value="adafactor">Adafactor (Very Memory Efficient)</option>
+                <option value="sgd">SGD</option>
+              </select>
+              <p class="text-xs text-gray-500 mt-1">
+                8-bit AdamW is recommended for GPU memory efficiency
+              </p>
+            </div>
           </div>
         </div>
 
@@ -440,7 +513,7 @@
         <div>
           <h3 class="text-lg font-semibold text-gray-900 mb-4">LoRA Configuration</h3>
           
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-3 gap-4">
             <div>
               <label for="lora_r" class="block text-sm font-medium text-gray-700 mb-1">
                 LoRA Rank (r)
@@ -452,6 +525,9 @@
                 min="1"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
+              <p class="text-xs text-gray-500 mt-1">
+                Higher = more parameters
+              </p>
             </div>
 
             <div>
@@ -465,6 +541,27 @@
                 min="1"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
+              <p class="text-xs text-gray-500 mt-1">
+                Scaling factor
+              </p>
+            </div>
+
+            <div>
+              <label for="lora_dropout" class="block text-sm font-medium text-gray-700 mb-1">
+                LoRA Dropout
+              </label>
+              <input
+                type="number"
+                id="lora_dropout"
+                bind:value={formData.lora_config.lora_dropout}
+                min="0"
+                max="1"
+                step="0.05"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              />
+              <p class="text-xs text-gray-500 mt-1">
+                0 = no dropout (default)
+              </p>
             </div>
           </div>
         </div>

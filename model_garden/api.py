@@ -346,6 +346,7 @@ def run_training_job(job_id: str):
             trainer.prepare_for_training(
                 r=lora_config.get("r", 16),
                 lora_alpha=lora_config.get("lora_alpha", 16),
+                lora_dropout=lora_config.get("lora_dropout", 0.0),
             )
             
             # Load and format training dataset
@@ -380,9 +381,11 @@ def run_training_job(job_id: str):
                 per_device_train_batch_size=hyperparams.get("batch_size", 1),
                 gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 8),
                 learning_rate=hyperparams.get("learning_rate", 2e-5),
+                warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
+                optim=hyperparams.get("optim", "adamw_8bit"),
                 callbacks=[progress_callback],
             )
             
@@ -405,6 +408,7 @@ def run_training_job(job_id: str):
             trainer.prepare_for_training(
                 r=lora_config.get("r", 16),
                 lora_alpha=lora_config.get("lora_alpha", 16),
+                lora_dropout=lora_config.get("lora_dropout", 0.0),
             )
             
             # Load training dataset
@@ -450,9 +454,11 @@ def run_training_job(job_id: str):
                 per_device_train_batch_size=hyperparams.get("batch_size", 2),
                 gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
                 learning_rate=hyperparams.get("learning_rate", 2e-4),
+                warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
+                optim=hyperparams.get("optim", "adamw_8bit"),
                 callbacks=[progress_callback],
             )
             
