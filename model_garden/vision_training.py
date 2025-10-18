@@ -704,6 +704,7 @@ class VisionLanguageTrainer:
                 processor=self.processor,
                 mask_level=selective_loss_level,
                 schema_keys=selective_loss_schema_keys,
+                dataset=train_dataset,  # Pass dataset for auto-detection
                 verbose=selective_loss_verbose
             )
         else:

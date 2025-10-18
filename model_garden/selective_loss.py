@@ -56,28 +56,22 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         processor: Vision processor for handling images
         mask_structural_tokens: Whether to mask JSON structure (default: True)
         mask_schema_keys: Whether to mask field names (default: False)
-        schema_keys: Optional list of field names to mask (auto-detected if None)
-        auto_detect_schema_keys: Auto-detect schema keys from data (default: True)
+        schema_keys: List of field names to mask (required if mask_schema_keys=True)
         verbose: Whether to print masking statistics (default: False)
     
+    Note:
+        Schema keys should be pre-detected using detect_schema_keys_from_dataset()
+        or create_selective_loss_collator() which handles detection automatically.
+    
     Example:
-        >>> # Auto-detect schema keys (recommended)
-        >>> collator = SelectiveLossVisionCollator(
-        ...     model=model,
-        ...     processor=processor,
-        ...     mask_structural_tokens=True,
-        ...     mask_schema_keys=True,  # Will auto-detect keys
-        ...     auto_detect_schema_keys=True
-        ... )
-        >>> 
-        >>> # Manually specify schema keys (optional)
+        >>> # Pre-detect schema keys
+        >>> detected_keys = detect_schema_keys_from_dataset(dataset, processor)
         >>> collator = SelectiveLossVisionCollator(
         ...     model=model,
         ...     processor=processor,
         ...     mask_structural_tokens=True,
         ...     mask_schema_keys=True,
-        ...     schema_keys=['Marque', 'Modele', 'contents'],
-        ...     auto_detect_schema_keys=False
+        ...     schema_keys=list(detected_keys)
         ... )
     """
     
@@ -96,7 +90,6 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         mask_schema_keys: bool = False,
         schema_keys: Optional[List[str]] = None,
         mask_json_keywords: bool = False,
-        auto_detect_schema_keys: bool = True,
         verbose: bool = False,
         **kwargs
     ):
@@ -105,7 +98,6 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         self.mask_keys = mask_schema_keys
         self.schema_keys = set(schema_keys) if schema_keys else set()
         self.mask_keywords = mask_json_keywords
-        self.auto_detect = auto_detect_schema_keys and mask_schema_keys and not schema_keys
         self.verbose = verbose
         
         # Statistics for debugging
@@ -113,19 +105,12 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         self.masked_tokens = 0
         self.batch_count = 0
         
-        # Auto-detection state
-        self.auto_detection_complete = False
-        self.detection_batches = 10  # Analyze first 10 batches
-        self.detected_keys_counter = {}  # Count frequency of each key
-        
         if self.verbose:
             console.print("[cyan]Initialized SelectiveLossVisionCollator[/cyan]")
             console.print(f"  Mask structural tokens: {self.mask_structural}")
             console.print(f"  Mask schema keys: {self.mask_keys}")
             if self.schema_keys:
-                console.print(f"  Schema keys to mask: {self.schema_keys}")
-            elif self.auto_detect:
-                console.print(f"  Schema keys: Auto-detecting from first {self.detection_batches} batches")
+                console.print(f"  Schema keys to mask ({len(self.schema_keys)}): {list(self.schema_keys)[:10]}")
     
     def __call__(self, features):
         """Process batch and apply selective loss masking."""
@@ -135,13 +120,6 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         if not self.mask_structural:
             return batch  # No masking, use standard Unsloth behavior
         
-        # Auto-detect schema keys if needed
-        if self.auto_detect and not self.auto_detection_complete:
-            if self.batch_count < self.detection_batches:
-                self._detect_schema_keys_from_batch(batch)
-            else:
-                self._finalize_schema_key_detection()
-        
         # Apply selective loss masking
         if "labels" in batch:
             original_labels = batch["labels"].clone()
@@ -150,13 +128,15 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 batch.get("input_ids", None)
             )
             
+            # Increment batch count
+            self.batch_count += 1
+            
             # Update statistics
             if self.verbose:
                 newly_masked = (batch["labels"] == -100).sum() - (original_labels == -100).sum()
                 total = batch["labels"].numel()
                 self.total_tokens += total
                 self.masked_tokens += newly_masked.item()
-                self.batch_count += 1
                 
                 if self.batch_count % 10 == 0:  # Print every 10 batches
                     mask_pct = (self.masked_tokens / self.total_tokens) * 100
@@ -240,79 +220,6 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 token_indices.append(original_idx)
         
         return list(set(token_indices))
-    
-    def _detect_schema_keys_from_batch(self, batch):
-        """Extract schema keys from JSON in batch labels.
-        
-        Args:
-            batch: Training batch with labels
-        """
-        if "labels" not in batch:
-            return
-        
-        labels = batch["labels"]
-        for i in range(labels.size(0)):
-            label_tokens = labels[i]
-            valid_mask = label_tokens != -100
-            if not valid_mask.any():
-                continue
-            
-            try:
-                valid_tokens = label_tokens[valid_mask]
-                decoded_text = self.processor.tokenizer.decode(valid_tokens, skip_special_tokens=False)
-                
-                # Try to parse as JSON
-                import json
-                json_data = json.loads(decoded_text)
-                
-                # Extract all field names recursively
-                def extract_keys(obj, keys_found):
-                    if isinstance(obj, dict):
-                        for key in obj.keys():
-                            keys_found.add(key)
-                            extract_keys(obj[key], keys_found)
-                    elif isinstance(obj, list):
-                        for item in obj:
-                            extract_keys(item, keys_found)
-                
-                keys_found = set()
-                extract_keys(json_data, keys_found)
-                
-                # Update counter
-                for key in keys_found:
-                    self.detected_keys_counter[key] = self.detected_keys_counter.get(key, 0) + 1
-                    
-            except Exception:
-                # Not valid JSON or decoding failed, skip
-                pass
-    
-    def _finalize_schema_key_detection(self):
-        """Finalize schema key detection by selecting frequent keys."""
-        if self.auto_detection_complete:
-            return
-        
-        # Select keys that appear in at least 30% of detection batches
-        threshold = self.detection_batches * 0.3
-        
-        detected_keys = {
-            key for key, count in self.detected_keys_counter.items()
-            if count >= threshold
-        }
-        
-        self.schema_keys = detected_keys
-        self.auto_detection_complete = True
-        
-        if self.verbose and detected_keys:
-            console.print(f"[cyan]🔍 Auto-detected {len(detected_keys)} schema keys to mask:[/cyan]")
-            # Show top 20 most common keys
-            sorted_keys = sorted(
-                self.detected_keys_counter.items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:20]
-            for key, count in sorted_keys:
-                if key in self.schema_keys:
-                    console.print(f"  ✓ {key} (appears in {count}/{self.detection_batches} batches)")
     
     def _find_structural_char_positions(self, text: str) -> Set[int]:
         """Find character positions of structural JSON tokens.
@@ -412,11 +319,113 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
 
 
 # Helper function for easy usage
+def detect_schema_keys_from_dataset(
+    dataset,
+    processor,
+    num_samples: int = 50,
+    threshold: float = 0.3,
+    verbose: bool = False
+) -> Set[str]:
+    """Pre-analyze dataset to detect schema keys before training starts.
+    
+    Args:
+        dataset: Training dataset with formatted messages
+        processor: Vision processor with tokenizer
+        num_samples: Number of samples to analyze (default: 50)
+        threshold: Minimum frequency (0-1) for a key to be included (default: 0.3)
+        verbose: Whether to print detection progress
+        
+    Returns:
+        Set of detected schema keys
+    """
+    import json
+    from datasets import Dataset
+    
+    if verbose:
+        console.print(f"[cyan]🔍 Pre-analyzing {num_samples} samples to detect schema keys...[/cyan]")
+    
+    detected_keys_counter = {}
+    num_samples = min(num_samples, len(dataset))
+    
+    for idx in range(num_samples):
+        sample = dataset[idx]
+        
+        # Extract assistant response from messages
+        if "messages" in sample:
+            messages = sample["messages"]
+            assistant_msg = next((m for m in messages if m["role"] == "assistant"), None)
+            
+            if assistant_msg:
+                # Get text content from assistant message
+                content = assistant_msg.get("content", [])
+                if isinstance(content, list):
+                    text_content = next((c.get("text") for c in content if c.get("type") == "text"), None)
+                else:
+                    text_content = content
+                
+                if text_content:
+                    # Try to parse as JSON
+                    try:
+                        json_data = json.loads(text_content)
+                        
+                        # Extract all field names recursively
+                        def extract_keys(obj, keys_found):
+                            if isinstance(obj, dict):
+                                for key in obj.keys():
+                                    keys_found.add(key)
+                                    extract_keys(obj[key], keys_found)
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    extract_keys(item, keys_found)
+                        
+                        keys_found = set()
+                        extract_keys(json_data, keys_found)
+                        
+                        # Update counter
+                        for key in keys_found:
+                            detected_keys_counter[key] = detected_keys_counter.get(key, 0) + 1
+                            
+                    except Exception:
+                        # Not valid JSON, skip
+                        pass
+    
+    # Select keys that appear in at least threshold% of samples
+    min_count = int(num_samples * threshold)
+    detected_keys = {
+        key for key, count in detected_keys_counter.items()
+        if count >= min_count
+    }
+    
+    if verbose:
+        if detected_keys:
+            console.print(f"[green]✅ Detected {len(detected_keys)} schema keys from {num_samples} samples:[/green]")
+            # Show top 20 most common keys
+            sorted_keys = sorted(
+                detected_keys_counter.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:20]
+            for key, count in sorted_keys:
+                if key in detected_keys:
+                    pct = (count / num_samples) * 100
+                    console.print(f"  ✓ {key} ({pct:.1f}% of samples)")
+        else:
+            console.print("[yellow]⚠️  No schema keys detected! Check dataset format.[/yellow]")
+            if detected_keys_counter:
+                console.print(f"[dim]   Keys seen (below {threshold*100}% threshold):[/dim]")
+                for key, count in list(detected_keys_counter.items())[:10]:
+                    pct = (count / num_samples) * 100
+                    console.print(f"[dim]   - {key}: {pct:.1f}%[/dim]")
+    
+    return detected_keys
+
+
 def create_selective_loss_collator(
     model,
     processor,
     mask_level: str = "conservative",
     schema_keys: Optional[List[str]] = None,
+    dataset = None,
     verbose: bool = False
 ):
     """Create a SelectiveLossVisionCollator with preset masking levels.
@@ -430,6 +439,7 @@ def create_selective_loss_collator(
             - "moderate": Conservative + 'null' keyword
             - "aggressive": Moderate + schema keys (auto-detected if not specified)
         schema_keys: Optional list of field names to mask (auto-detected if None)
+        dataset: Training dataset (required for auto-detection in aggressive mode)
         verbose: Whether to print statistics
         
     Returns:
@@ -439,7 +449,8 @@ def create_selective_loss_collator(
         >>> # Auto-detect schema keys (recommended)
         >>> collator = create_selective_loss_collator(
         ...     model, processor, 
-        ...     mask_level="aggressive",  # Will auto-detect keys
+        ...     mask_level="aggressive",
+        ...     dataset=train_dataset,  # Required for auto-detection
         ...     verbose=True
         ... )
         >>> 
@@ -462,7 +473,6 @@ def create_selective_loss_collator(
             mask_structural_tokens=True,
             mask_schema_keys=False,
             mask_json_keywords=False,
-            auto_detect_schema_keys=False,
             verbose=verbose
         )
     
@@ -473,11 +483,28 @@ def create_selective_loss_collator(
             mask_structural_tokens=True,
             mask_schema_keys=False,
             mask_json_keywords=True,
-            auto_detect_schema_keys=False,
             verbose=verbose
         )
     
     elif mask_level == "aggressive":
+        # Auto-detect schema keys from dataset if not provided
+        if schema_keys is None:
+            if dataset is None:
+                raise ValueError(
+                    "For aggressive mode with auto-detection, you must provide the 'dataset' parameter. "
+                    "Either pass dataset=train_dataset or specify schema_keys manually."
+                )
+            
+            # Pre-analyze dataset to detect schema keys
+            detected_keys = detect_schema_keys_from_dataset(
+                dataset=dataset,
+                processor=processor,
+                num_samples=min(50, len(dataset)),
+                threshold=0.3,
+                verbose=verbose
+            )
+            schema_keys = list(detected_keys)
+        
         return SelectiveLossVisionCollator(
             model=model,
             processor=processor,
@@ -485,7 +512,6 @@ def create_selective_loss_collator(
             mask_schema_keys=True,
             schema_keys=schema_keys,
             mask_json_keywords=True,
-            auto_detect_schema_keys=(schema_keys is None),  # Auto-detect if not specified
             verbose=verbose
         )
     
