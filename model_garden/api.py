@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Union
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status, WebSocket, WebSocketDisconnect
+import threading
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -55,6 +56,7 @@ class TrainingJobRequest(BaseModel):
     selective_loss: bool = False  # Enable selective loss for structured outputs
     selective_loss_level: str = "conservative"  # Level: conservative, moderate, aggressive
     selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
+    selective_loss_masking_start_step: int = 0  # Delay masking until this step (0=immediate)
     selective_loss_verbose: bool = False  # Print masking statistics
 
 
@@ -267,9 +269,19 @@ class ProgressCallback(TrainerCallback):
         self.manager = manager
         self.training_metrics = []  # Store metrics history
         self.validation_metrics = []
+        # Optional threading.Event that can be set to request cancellation
+        self.cancellation_event = None
     
     def on_step_end(self, args, state, control, **kwargs):
         """Called at the end of each training step."""
+        # If cancellation_event is set, stop training
+        try:
+            if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
+                if self.cancellation_event.is_set():
+                    print(f"✋ Cancellation requested for job {self.job_id} - stopping training")
+                    raise KeyboardInterrupt()
+        except Exception:
+            pass
         if state.global_step > 0:
             # Calculate progress
             if state.max_steps > 0:
@@ -311,6 +323,14 @@ class ProgressCallback(TrainerCallback):
     
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Called when logging occurs."""
+        # Also check cancellation here in case cancellation happens between steps
+        try:
+            if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
+                if self.cancellation_event.is_set():
+                    print(f"✋ Cancellation requested for job {self.job_id} during logging - stopping training")
+                    raise KeyboardInterrupt()
+        except Exception:
+            pass
         if logs:
             # Extract metrics from logs
             current_step = state.global_step
@@ -399,6 +419,10 @@ class ProgressCallback(TrainerCallback):
 def run_training_job(job_id: str):
     """Execute a training job in the background."""
     try:
+        # Ensure there's a cancellation event map and register an event for this job
+        _ce_map = globals().setdefault("cancellation_events", {})
+        _ce_map[job_id] = threading.Event()
+
         job = training_jobs[job_id]
         
         # Update job status to running
@@ -476,6 +500,8 @@ def run_training_job(job_id: str):
             # Train with progress callback
             hyperparams = job["hyperparameters"]
             progress_callback = ProgressCallback(job_id, manager)
+            # Attach cancellation event so callback/trainer can stop gracefully
+            progress_callback.cancellation_event = globals().get("cancellation_events", {}).get(job_id)
             trainer.train(
                 dataset=formatted_train_dataset,
                 eval_dataset=formatted_val_dataset,
@@ -505,12 +531,20 @@ def run_training_job(job_id: str):
                 selective_loss=job.get("selective_loss", False),
                 selective_loss_level=job.get("selective_loss_level", "conservative"),
                 selective_loss_schema_keys=job.get("selective_loss_schema_keys"),
+                selective_loss_masking_start_step=job.get("selective_loss_masking_start_step", 0),
                 selective_loss_verbose=job.get("selective_loss_verbose", False),
             )
             
             # Save model
             save_method = job.get("save_method", "merged_16bit")
             trainer.save_model(job["output_dir"], save_method=save_method)
+            # Clear cancellation event on normal completion
+            try:
+                _ce_map = globals().get("cancellation_events")
+                if _ce_map and job_id in _ce_map:
+                    del _ce_map[job_id]
+            except Exception:
+                pass
         else:
             # Use standard ModelTrainer for text-only models
             trainer = ModelTrainer(
@@ -1125,6 +1159,7 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "selective_loss": job_request.selective_loss,
         "selective_loss_level": job_request.selective_loss_level,
         "selective_loss_schema_keys": job_request.selective_loss_schema_keys,
+        "selective_loss_masking_start_step": job_request.selective_loss_masking_start_step,
         "selective_loss_verbose": job_request.selective_loss_verbose,
     }
     
@@ -1199,6 +1234,13 @@ async def delete_or_cancel_training_job(job_id: str):
         "status": "cancelled",
         "timestamp": datetime.utcnow().isoformat() + "Z"
     })
+    # If a cancellation event exists for this job, set it to signal the training loop
+    try:
+        _ce_map = globals().get("cancellation_events")
+        if _ce_map and job_id in _ce_map:
+            _ce_map[job_id].set()
+    except Exception:
+        pass
     
     return APIResponse(
         success=True,
@@ -1261,12 +1303,12 @@ async def websocket_training_updates(websocket: WebSocket, job_id: str):
 class InferenceRequest(BaseModel):
     """Request for text generation."""
     prompt: str
-    max_tokens: int = 256
+    max_tokens: Optional[int] = None  # None = auto-determine (8192 for structured, 512 otherwise)
     temperature: float = 0.7
     top_p: float = 0.95
     top_k: int = -1
-    frequency_penalty: float = 0.0
-    presence_penalty: float = 0.0
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
     stop: Optional[List[str]] = None
     stream: bool = False
 
@@ -1345,9 +1387,9 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.95
     top_k: Optional[int] = -1
-    frequency_penalty: Optional[float] = 0.0
-    presence_penalty: Optional[float] = 0.0
-    repetition_penalty: Optional[float] = 1.0
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
     stream: Optional[bool] = False
     stop: Optional[Union[str, List[str]]] = None
     n: Optional[int] = 1  # Number of completions to generate
@@ -1644,22 +1686,15 @@ async def chat_completions(request: ChatCompletionRequest):
                 gen_params["structured_outputs"] = structured_outputs
                 print(f"✅ Added structured output parameters: {list(structured_outputs.keys())}")
                 
-                # Auto-increase max_tokens for structured outputs if not specified
-                if request.max_tokens is None:
-                    # Estimate needed tokens based on schema complexity
-                    if request.response_format.type == "json_schema" and request.response_format.json_schema:
-                        # For schemas, use 2048 tokens as a safe default
-                        gen_params["max_tokens"] = 2048
-                        print(f"⚙️  Auto-set max_tokens=2048 for JSON schema output")
-                    else:
-                        # For generic json_object, use 1024 tokens
-                        gen_params["max_tokens"] = 1024
-                        print(f"⚙️  Auto-set max_tokens=1024 for generic JSON output")
+                # Let InferenceService.generate() handle max_tokens defaults
+                # It will auto-set to 8192 for structured outputs if not specified
+                # No need to override here - the inference layer knows best
         
-        # If still no max_tokens set, use reasonable default
-        if gen_params["max_tokens"] is None:
-            gen_params["max_tokens"] = 512  # Higher than old 256 default
-            print(f"⚙️  Using default max_tokens=512")
+        # IMPORTANT: Do NOT set max_tokens here!
+        # The inference layer (inference.py) handles smart defaults:
+        # - 8192 for structured outputs
+        # - 512 for regular generation
+        # If we set it here, the inference layer can't detect "not specified"
         
         if request.stream:
             # Streaming response

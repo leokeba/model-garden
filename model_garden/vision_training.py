@@ -562,6 +562,7 @@ class VisionLanguageTrainer:
         selective_loss: bool = False,
         selective_loss_level: str = "conservative",
         selective_loss_schema_keys: Optional[List[str]] = None,
+        selective_loss_masking_start_step: int = 0,
         selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
@@ -596,6 +597,7 @@ class VisionLanguageTrainer:
             selective_loss: Enable selective loss masking for structured outputs
             selective_loss_level: Masking level ('conservative', 'moderate', 'aggressive')
             selective_loss_schema_keys: Schema keys to mask in aggressive mode
+            selective_loss_masking_start_step: Delay masking until this step (0=immediate, 100=after 100 steps of structure learning)
             selective_loss_verbose: Print masking statistics during training
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
@@ -699,12 +701,15 @@ class VisionLanguageTrainer:
         # Choose data collator based on selective_loss flag
         if selective_loss:
             console.print(f"[cyan]🎯 Using selective loss masking (level: {selective_loss_level})[/cyan]")
+            if selective_loss_masking_start_step > 0:
+                console.print(f"[yellow]⏱️  Masking delayed until step {selective_loss_masking_start_step}[/yellow]")
             data_collator = create_selective_loss_collator(
                 model=self.model,
                 processor=self.processor,
                 mask_level=selective_loss_level,
                 schema_keys=selective_loss_schema_keys,
                 dataset=train_dataset,  # Pass dataset for auto-detection
+                masking_start_step=selective_loss_masking_start_step,
                 verbose=selective_loss_verbose
             )
         else:

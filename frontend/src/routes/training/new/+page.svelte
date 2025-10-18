@@ -59,6 +59,7 @@
     selective_loss: false,
     selective_loss_level: "conservative",
     selective_loss_schema_keys: "",
+    selective_loss_masking_start_step: 0,
     selective_loss_verbose: false,
   });
 
@@ -250,6 +251,8 @@
         selective_loss: formData.selective_loss,
         selective_loss_level: formData.selective_loss_level,
         selective_loss_schema_keys: schema_keys_array,
+        selective_loss_masking_start_step:
+          formData.selective_loss_masking_start_step,
         selective_loss_verbose: formData.selective_loss_verbose,
       });
       if (response.success) {
@@ -1602,6 +1605,51 @@
                       </div>
                     </div>
                   {/if}
+
+                  <div>
+                    <label
+                      for="selective_loss_masking_start_step"
+                      class="block text-sm font-medium text-gray-700 mb-2"
+                    >
+                      Masking Start Step: {formData.selective_loss_masking_start_step}
+                    </label>
+                    <input
+                      type="range"
+                      id="selective_loss_masking_start_step"
+                      bind:value={formData.selective_loss_masking_start_step}
+                      min="0"
+                      max="500"
+                      step="10"
+                      class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-500"
+                    />
+                    <div
+                      class="flex justify-between text-xs text-gray-500 mt-1"
+                    >
+                      <span>0 (Immediate)</span>
+                      <span>100</span>
+                      <span>200</span>
+                      <span>500 steps</span>
+                    </div>
+                    <div class="mt-2 p-3 bg-blue-50 rounded-lg">
+                      <p class="text-xs text-blue-700">
+                        <strong>💡 Tip:</strong> Setting this to 50-200 lets the
+                        model learn JSON structure first before applying
+                        selective masking. This can prevent degeneration issues
+                        with aggressive masking.
+                        {#if formData.selective_loss_masking_start_step === 0}
+                          <br /><em
+                            >Currently: Masking starts immediately (traditional
+                            approach)</em
+                          >
+                        {:else}
+                          <br /><em
+                            >Currently: Model learns structure for {formData.selective_loss_masking_start_step}
+                            steps, then masking begins</em
+                          >
+                        {/if}
+                      </p>
+                    </div>
+                  </div>
 
                   <div>
                     <div class="flex items-center">

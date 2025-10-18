@@ -419,8 +419,9 @@ class InferenceService:
         temperature: float = 0.7,
         top_p: float = 0.95,
         top_k: int = -1,
-        frequency_penalty: float = 0.0,
-        presence_penalty: float = 0.0,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
         stop: Optional[List[str]] = None,
         stream: bool = False,
         images: Optional[List[str]] = None,
@@ -430,16 +431,22 @@ class InferenceService:
 
         Args:
             prompt: Input text prompt
-            max_tokens: Maximum number of tokens to generate (None = auto, default 512)
+            max_tokens: Maximum number of tokens to generate (None = auto: 16384 for structured outputs, 512 otherwise)
             temperature: Sampling temperature (0.0-2.0)
             top_p: Nucleus sampling probability
             top_k: Top-k sampling (-1 to disable)
-            frequency_penalty: Frequency penalty (-2.0 to 2.0)
-            presence_penalty: Presence penalty (-2.0 to 2.0)
+            frequency_penalty: Frequency penalty (-2.0 to 2.0, None = auto: 0.5 for structured outputs, 0.0 otherwise)
+            presence_penalty: Presence penalty (-2.0 to 2.0, None = auto: 0.3 for structured outputs, 0.0 otherwise)
+            repetition_penalty: Repetition penalty (>1.0 = penalty, None = auto: 1.1 for structured outputs, 1.0 otherwise)
             stop: List of stop sequences
             stream: Whether to stream the response
             images: List of image URLs or file paths (for vision models)
             structured_outputs: Optional structured output parameters (json, regex, choice, grammar, structural_tag)
+            
+        Note:
+            When structured_outputs is provided, anti-repetition penalties are automatically applied
+            unless explicitly overridden. This prevents degeneration like "BEUG/BEUG/BEUG/BEUG".
+            Client can override any parameter by passing explicit values.
 
         Returns:
             Dict with text and usage, or async iterator of text chunks if streaming
@@ -452,9 +459,30 @@ class InferenceService:
         # Set default max_tokens if not provided
         if max_tokens is None:
             if structured_outputs:
-                max_tokens = 2048  # Higher default for structured outputs
+                max_tokens = 16384  # High default for complex documents (CMRs can have 10k+ tokens)
+                # Note: Qwen2.5-VL has 32k context, most prompts are 5-15k, so 16k output is safe
             else:
                 max_tokens = 512  # Standard default
+        
+        # Set sensible defaults for penalties if not provided by client
+        # For structured outputs, use STRONG anti-repetition penalties to combat model degeneration
+        if frequency_penalty is None:
+            if structured_outputs:
+                frequency_penalty = 1.0  # Increased from 0.5 - stronger penalty for repeated tokens
+            else:
+                frequency_penalty = 0.0  # Standard default
+        
+        if presence_penalty is None:
+            if structured_outputs:
+                presence_penalty = 0.6  # Increased from 0.3 - encourage more diversity
+            else:
+                presence_penalty = 0.0  # Standard default
+        
+        if repetition_penalty is None:
+            if structured_outputs:
+                repetition_penalty = 1.2  # Increased from 1.1 - stronger n-gram penalty
+            else:
+                repetition_penalty = 1.0  # Standard default (no penalty)
         
         # Create structured outputs params if provided
         structured_outputs_params = None
@@ -473,6 +501,7 @@ class InferenceService:
             top_k=top_k,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             stop=stop,
             structured_outputs=structured_outputs_params,
         )
@@ -590,6 +619,57 @@ class InferenceService:
             console.print("[yellow]⚠️  Multimodal imports not available, falling back to text-only mode[/yellow]")
             return prompt
 
+    def _sanitize_json_output(self, json_text: str) -> str:
+        """Sanitize JSON output to fix common generation issues.
+        
+        Fixes:
+        - Invalid Unicode escape sequences (lone surrogates)
+        - Malformed escape sequences
+        - Invalid control characters
+        
+        Args:
+            json_text: Generated JSON text that may contain errors
+            
+        Returns:
+            Sanitized JSON text that should be valid
+        """
+        import re
+        
+        # Fix 1: Remove or fix invalid Unicode escape sequences
+        # Pattern matches \uXXXX where XXXX is a hex number
+        def fix_unicode_escape(match):
+            hex_code = match.group(1)
+            try:
+                code_point = int(hex_code, 16)
+                # Check if it's a lone surrogate (0xD800-0xDFFF)
+                if 0xD800 <= code_point <= 0xDFFF:
+                    # Replace with a safe placeholder or remove
+                    return ''  # Remove invalid surrogates
+                return match.group(0)  # Keep valid escapes
+            except (ValueError, OverflowError):
+                return ''  # Remove invalid hex codes
+        
+        json_text = re.sub(r'\\u([0-9a-fA-F]{4})', fix_unicode_escape, json_text)
+        
+        # Fix 2: Remove invalid escape sequences (backslash followed by invalid char)
+        # Valid escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+        # Remove any \x where x is not one of these
+        def fix_invalid_escape(match):
+            char = match.group(1)
+            valid_escapes = {'"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u'}
+            if char in valid_escapes:
+                return match.group(0)  # Keep valid escape
+            # Invalid escape - either remove backslash or escape it
+            return char  # Just keep the character without backslash
+        
+        json_text = re.sub(r'\\(.)', fix_invalid_escape, json_text)
+        
+        # Fix 3: Remove invalid control characters (except valid whitespace)
+        # JSON only allows tab (\t), newline (\n), carriage return (\r)
+        json_text = ''.join(char for char in json_text if ord(char) >= 32 or char in '\t\n\r')
+        
+        return json_text
+
     async def _generate_complete(
         self,
         inputs: str,
@@ -610,8 +690,32 @@ class InferenceService:
         
         # Return the generated text with usage stats
         generated_text = final_output.outputs[0].text
+        finish_reason = final_output.outputs[0].finish_reason
+        
+        # Get token counts
         prompt_tokens = len(final_output.prompt_token_ids) if final_output.prompt_token_ids else 0
         completion_tokens = len(final_output.outputs[0].token_ids)
+        total_tokens = prompt_tokens + completion_tokens
+        
+        # Warn if we hit max_tokens (generation was truncated)
+        if finish_reason == "length":
+            console.print(f"[red]⚠️  Output truncated: Hit max_tokens limit ({sampling_params.max_tokens})[/red]")
+            console.print(f"[red]   Prompt: {prompt_tokens} tokens, Output: {completion_tokens} tokens[/red]")
+        
+        # Warn if prompt is very long and might cause truncation issues
+        if prompt_tokens > 20000:
+            console.print(f"[yellow]⚠️  Very long prompt: {prompt_tokens} tokens. "
+                         f"Total with output: {total_tokens} tokens[/yellow]")
+        
+        # Only log abnormal stops (not "stop" which is natural completion, not "length" which we already warned about)
+        abnormal_reasons = {"abort", "error"}  # Add other abnormal reasons as needed
+        if finish_reason in abnormal_reasons:
+            console.print(f"[red]⚠️  Abnormal stop: finish_reason={finish_reason}, "
+                         f"completion_tokens={completion_tokens}/{sampling_params.max_tokens}[/red]")
+        
+        # Post-process structured outputs to fix common JSON issues
+        if hasattr(sampling_params, 'structured_outputs') and sampling_params.structured_outputs:
+            generated_text = self._sanitize_json_output(generated_text)
         
         return {
             "text": generated_text,
@@ -619,7 +723,8 @@ class InferenceService:
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens
-            }
+            },
+            "finish_reason": finish_reason  # Include finish_reason in response
         }
 
     async def _generate_streaming(
@@ -657,7 +762,7 @@ class InferenceService:
 
         Args:
             messages: List of message dicts with 'role' and 'content'
-            max_tokens: Maximum tokens to generate (None = auto-determine, default 512)
+            max_tokens: Maximum tokens to generate (None = auto: 16384 for structured outputs, 512 otherwise)
             temperature: Sampling temperature
             top_p: Nucleus sampling probability
             stream: Whether to stream the response
@@ -671,10 +776,10 @@ class InferenceService:
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        # Set default max_tokens if not provided
+                # Set default max_tokens if not provided
         if max_tokens is None:
             if structured_outputs:
-                max_tokens = 2048  # Higher default for structured outputs
+                max_tokens = 6144  # Reduced from 8192 - most CMR docs are 2k-4k tokens
             else:
                 max_tokens = 512  # Standard default
 

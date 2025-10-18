@@ -90,6 +90,7 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         mask_schema_keys: bool = False,
         schema_keys: Optional[List[str]] = None,
         mask_json_keywords: bool = False,
+        masking_start_step: int = 0,
         verbose: bool = False,
         **kwargs
     ):
@@ -98,12 +99,14 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         self.mask_keys = mask_schema_keys
         self.schema_keys = set(schema_keys) if schema_keys else set()
         self.mask_keywords = mask_json_keywords
+        self.masking_start_step = masking_start_step
         self.verbose = verbose
         
         # Statistics for debugging
         self.total_tokens = 0
         self.masked_tokens = 0
         self.batch_count = 0
+        self.current_step = 0
         
         if self.verbose:
             console.print("[cyan]Initialized SelectiveLossVisionCollator[/cyan]")
@@ -111,14 +114,40 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
             console.print(f"  Mask schema keys: {self.mask_keys}")
             if self.schema_keys:
                 console.print(f"  Schema keys to mask ({len(self.schema_keys)}): {list(self.schema_keys)[:10]}")
+            if self.masking_start_step > 0:
+                console.print(f"  [yellow]Masking delayed until step {self.masking_start_step}[/yellow]")
+                console.print(f"  [yellow]Model will learn JSON structure first, then apply selective loss[/yellow]")
     
     def __call__(self, features):
         """Process batch and apply selective loss masking."""
         # First, use Unsloth's collator to handle vision data properly
         batch = super().__call__(features)
         
+        # Increment step counter
+        self.current_step += 1
+        
+        # DEBUG: Log configuration on first call
+        if self.current_step == 1 and self.verbose:
+            console.print(f"[cyan]DEBUG: masking_start_step={self.masking_start_step}, mask_structural={self.mask_structural}[/cyan]")
+        
+        # Check if we should apply masking yet
         if not self.mask_structural:
             return batch  # No masking, use standard Unsloth behavior
+        
+        if self.current_step <= self.masking_start_step:
+            # Before masking_start_step: let model learn structure normally
+            if self.verbose and self.current_step % 10 == 0:
+                console.print(
+                    f"[dim]Step {self.current_step}/{self.masking_start_step}: "
+                    f"Learning structure (masking disabled)[/dim]"
+                )
+            return batch  # No masking yet
+        
+        # Log when masking starts (now at step masking_start_step + 1)
+        if self.current_step == self.masking_start_step + 1 and self.verbose:
+            console.print(
+                f"[green]✓ Step {self.current_step}: Masking activated! (after {self.masking_start_step} steps of structure learning)[/green]"
+            )
         
         # Apply selective loss masking
         if "labels" in batch:
@@ -142,7 +171,7 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                     mask_pct = (self.masked_tokens / self.total_tokens) * 100
                     console.print(
                         f"[dim]Batch {self.batch_count}: Masked {mask_pct:.1f}% of tokens "
-                        f"({self.masked_tokens}/{self.total_tokens})[/dim]"
+                        f"({self.masked_tokens}/{self.total_tokens}) [Step {self.current_step}][/dim]"
                     )
         
         return batch
@@ -426,6 +455,7 @@ def create_selective_loss_collator(
     mask_level: str = "conservative",
     schema_keys: Optional[List[str]] = None,
     dataset = None,
+    masking_start_step: int = 0,
     verbose: bool = False
 ):
     """Create a SelectiveLossVisionCollator with preset masking levels.
@@ -440,6 +470,7 @@ def create_selective_loss_collator(
             - "aggressive": Moderate + schema keys (auto-detected if not specified)
         schema_keys: Optional list of field names to mask (auto-detected if None)
         dataset: Training dataset (required for auto-detection in aggressive mode)
+        masking_start_step: Delay masking until this step (0 = immediate, >0 = learn structure first)
         verbose: Whether to print statistics
         
     Returns:
@@ -473,6 +504,7 @@ def create_selective_loss_collator(
             mask_structural_tokens=True,
             mask_schema_keys=False,
             mask_json_keywords=False,
+            masking_start_step=masking_start_step,
             verbose=verbose
         )
     
@@ -483,6 +515,7 @@ def create_selective_loss_collator(
             mask_structural_tokens=True,
             mask_schema_keys=False,
             mask_json_keywords=True,
+            masking_start_step=masking_start_step,
             verbose=verbose
         )
     
@@ -512,6 +545,7 @@ def create_selective_loss_collator(
             mask_schema_keys=True,
             schema_keys=schema_keys,
             mask_json_keywords=True,
+            masking_start_step=masking_start_step,
             verbose=verbose
         )
     
