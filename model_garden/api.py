@@ -822,6 +822,162 @@ async def health_check():
     return {"status": "healthy", "message": "Model Garden API is running"}
 
 
+# Model Registry endpoints
+@app.get("/api/v1/registry/models")
+async def get_registry_models(category: Optional[str] = None):
+    """Get all supported models from the registry.
+    
+    Args:
+        category: Optional category filter (text-llm, vision-vlm)
+    
+    Returns:
+        List of supported models with their configurations
+    """
+    from model_garden.model_registry import get_registry
+    
+    registry = get_registry()
+    models = registry.get_model_list_for_ui(category=category)
+    
+    return {
+        "success": True,
+        "data": models,
+        "total": len(models)
+    }
+
+
+@app.get("/api/v1/registry/models/{model_id:path}")
+async def get_registry_model(model_id: str):
+    """Get detailed information about a specific model from the registry.
+    
+    Args:
+        model_id: Model identifier (HuggingFace model ID, can include slashes)
+    
+    Returns:
+        Complete model information including defaults and capabilities
+    """
+    from model_garden.model_registry import get_model
+    
+    model = get_model(model_id)
+    
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model '{model_id}' not found in registry"
+        )
+    
+    return {
+        "success": True,
+        "data": {
+            "id": model.id,
+            "name": model.name,
+            "category": model.category,
+            "provider": model.provider,
+            "base_architecture": model.base_architecture,
+            "parameters": model.parameters,
+            "description": model.description,
+            "tags": model.tags,
+            "status": model.status,
+            "quantization": model.quantization,
+            "requirements": {
+                "min_vram_gb": model.requirements.min_vram_gb,
+                "recommended_vram_gb": model.requirements.recommended_vram_gb,
+                "min_ram_gb": model.requirements.min_ram_gb,
+                "cuda_compute_capability": model.requirements.cuda_compute_capability,
+                "min_gpus": model.requirements.min_gpus,
+            },
+            "capabilities": {
+                "training": model.capabilities.training,
+                "inference": model.capabilities.inference,
+                "vision": model.capabilities.vision,
+                "structured_outputs": model.capabilities.structured_outputs,
+                "streaming": model.capabilities.streaming,
+                "function_calling": model.capabilities.function_calling,
+            },
+            "training_defaults": model.training_defaults,
+            "inference_defaults": model.get_inference_config(),
+            "urls": model.urls,
+        }
+    }
+
+
+@app.get("/api/v1/registry/categories")
+async def get_registry_categories():
+    """Get all available model categories.
+    
+    Returns:
+        List of categories with their metadata
+    """
+    from model_garden.model_registry import get_registry
+    
+    registry = get_registry()
+    categories = registry.get_categories()
+    
+    return {
+        "success": True,
+        "data": categories
+    }
+
+
+@app.post("/api/v1/registry/validate/training")
+async def validate_training_model(request: Dict):
+    """Validate if a model can be used for training.
+    
+    Args:
+        request: Dict with 'model_id' key
+    
+    Returns:
+        Validation result with error message if invalid
+    """
+    from model_garden.model_registry import validate_model_for_training
+    
+    model_id = request.get("model_id")
+    if not model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing 'model_id' in request"
+        )
+    
+    is_valid, error_message = validate_model_for_training(model_id)
+    
+    return {
+        "success": True,
+        "data": {
+            "is_valid": is_valid,
+            "error_message": error_message
+        }
+    }
+
+
+@app.post("/api/v1/registry/validate/inference")
+async def validate_inference_model(request: Dict):
+    """Validate if a model can be used for inference.
+    
+    Args:
+        request: Dict with 'model_id' key
+    
+    Returns:
+        Validation result with error message if invalid
+    """
+    from model_garden.model_registry import validate_model_for_inference
+    
+    model_id = request.get("model_id")
+    if not model_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing 'model_id' in request"
+        )
+    
+    is_valid, error_message = validate_model_for_inference(model_id)
+    
+    return {
+        "success": True,
+        "data": {
+            "is_valid": is_valid,
+            "error_message": error_message
+        }
+    }
+
+
 # Models endpoints
 @app.get("/api/v1/models", response_model=PaginatedResponse)
 async def list_models(

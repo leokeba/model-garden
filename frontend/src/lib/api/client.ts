@@ -130,6 +130,107 @@ interface SystemStatus {
   };
 }
 
+// Model Registry Types
+interface RegistryModelRequirements {
+  min_vram_gb: number;
+  recommended_vram_gb: number;
+  gpu_required: boolean;
+  min_gpu_compute_capability?: string;
+}
+
+interface RegistryModelCapabilities {
+  supports_vision: boolean;
+  supports_chat: boolean;
+  supports_function_calling: boolean;
+  supports_structured_output: boolean;
+  max_sequence_length: number;
+  context_window?: number;
+}
+
+interface RegistryHyperparametersDefaults {
+  learning_rate: number;
+  num_epochs: number;
+  batch_size: number;
+  gradient_accumulation_steps: number;
+  max_steps: number;
+  warmup_steps: number;
+  logging_steps: number;
+  save_steps: number;
+  eval_steps?: number | null;
+  optim: string;
+  weight_decay: number;
+  lr_scheduler_type: string;
+  max_grad_norm: number;
+  adam_beta1?: number;
+  adam_beta2?: number;
+  adam_epsilon?: number;
+  dataloader_num_workers?: number;
+  dataloader_pin_memory?: boolean;
+  eval_strategy?: string;
+  load_best_model_at_end?: boolean;
+  metric_for_best_model?: string;
+  save_total_limit?: number;
+}
+
+interface RegistryLoRADefaults {
+  r: number;
+  lora_alpha: number;
+  lora_dropout: number;
+  lora_bias: string;
+  use_rslora: boolean;
+  use_gradient_checkpointing: string;
+  random_state: number;
+  target_modules: string[] | null;
+  task_type: string;
+}
+
+interface RegistryInferenceDefaults {
+  tensor_parallel_size: number;
+  gpu_memory_utilization: number;
+  max_model_len?: number | null;
+  dtype: string;
+  quantization?: string | null;
+}
+
+interface RegistryModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  parameters: string;
+  category: string;
+  tags: string[];
+  recommended_for?: string[];
+  requirements: RegistryModelRequirements;
+  capabilities: RegistryModelCapabilities;
+  training_defaults: {
+    hyperparameters: RegistryHyperparametersDefaults;
+    lora_config: RegistryLoRADefaults;
+    save_method?: string;
+  };
+  inference_defaults: RegistryInferenceDefaults;
+  version?: string;
+  source_url?: string;
+  license?: string;
+  notes?: string;
+  status?: string;
+  is_vision?: boolean;
+  is_quantized?: boolean;
+  min_vram_gb?: number;
+  recommended_vram_gb?: number;
+}
+
+interface RegistryCategory {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface RegistryModelsResponse {
+  models: RegistryModelInfo[];
+  total: number;
+  category?: string;
+}
+
 class APIClient {
   private baseURL: string;
 
@@ -259,6 +360,49 @@ class APIClient {
     });
   }
 
+  // Model Registry
+  async getRegistryModels(category?: string): Promise<RegistryModelsResponse> {
+    const endpoint = category ? `/registry/models?category=${category}` : '/registry/models';
+    const response = await this.request<{ success: boolean; data: RegistryModelInfo[]; total: number }>(endpoint);
+    return {
+      models: response.data,
+      total: response.total,
+      category,
+    };
+  }
+
+  async getRegistryModel(id: string): Promise<RegistryModelInfo> {
+    const response = await this.request<{ success: boolean; data: RegistryModelInfo }>(`/registry/models/${encodeURIComponent(id)}`);
+    return response.data;
+  }
+
+  async getRegistryCategories(): Promise<{ categories: Record<string, RegistryCategory> }> {
+    const response = await this.request<{ success: boolean; data: Record<string, RegistryCategory> }>('/registry/categories');
+    return { categories: response.data };
+  }
+
+  async validateModelForTraining(modelId: string, config: any): Promise<{
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  }> {
+    return this.request('/registry/validate/training', {
+      method: 'POST',
+      body: JSON.stringify({ model_id: modelId, config }),
+    });
+  }
+
+  async validateModelForInference(modelId: string, config: any): Promise<{
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  }> {
+    return this.request('/registry/validate/inference', {
+      method: 'POST',
+      body: JSON.stringify({ model_id: modelId, config }),
+    });
+  }
+
   // Generic methods for other endpoints
   async get<T = any>(endpoint: string): Promise<T> {
     return this.request(endpoint);
@@ -286,4 +430,8 @@ class APIClient {
 }
 
 export const api = new APIClient(API_BASE);
-export type { Model, SystemStatus, TrainingJob };
+export type {
+  Model, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemStatus,
+  TrainingJob
+};
+

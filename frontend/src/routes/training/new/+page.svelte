@@ -1,8 +1,10 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import type { RegistryModelInfo } from "$lib/api/client";
   import { api } from "$lib/api/client";
   import Button from "$lib/components/Button.svelte";
   import Card from "$lib/components/Card.svelte";
+  import { onMount } from "svelte";
 
   let formData = $state({
     name: "",
@@ -63,39 +65,146 @@
   let submitting = $state(false);
   let error = $state("");
 
-  const textModels = [
-    "unsloth/tinyllama-bnb-4bit",
-    "unsloth/phi-2-bnb-4bit",
-    "unsloth/mistral-7b-bnb-4bit",
-    "unsloth/llama-2-7b-bnb-4bit",
-    "unsloth/llama-3-8b-bnb-4bit",
-  ];
+  // Registry data - loaded from API
+  let textModels = $state<RegistryModelInfo[]>([]);
+  let visionModels = $state<RegistryModelInfo[]>([]);
+  let selectedModelInfo = $state<RegistryModelInfo | null>(null);
+  let loadingModels = $state(true);
+  let loadError = $state("");
 
-  const visionModels = [
-    "Qwen/Qwen2.5-VL-3B-Instruct",
-    "Qwen/Qwen2.5-VL-7B-Instruct",
-    "Qwen/Qwen2.5-VL-72B-Instruct",
-    "unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit",
-    "unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit",
-  ];
+  // Load models from registry on mount
+  onMount(async () => {
+    try {
+      loadingModels = true;
+      const [textResponse, visionResponse] = await Promise.all([
+        api.getRegistryModels("text-llm"),
+        api.getRegistryModels("vision-vlm"),
+      ]);
+
+      textModels = textResponse.models;
+      visionModels = visionResponse.models;
+
+      // Set initial selected model info
+      if (formData.model_type === "text" && textModels.length > 0) {
+        selectedModelInfo = textModels[0];
+        formData.base_model = textModels[0].id;
+      } else if (formData.model_type === "vision" && visionModels.length > 0) {
+        selectedModelInfo = visionModels[0];
+        formData.base_model = visionModels[0].id;
+      }
+    } catch (err) {
+      loadError =
+        err instanceof Error
+          ? err.message
+          : "Failed to load models from registry";
+      console.error("Failed to load registry models:", err);
+
+      // Fallback to hardcoded models if registry fails
+      textModels = [
+        {
+          id: "unsloth/tinyllama-bnb-4bit",
+          name: "TinyLlama 1.1B (4-bit)",
+          parameters: "1.1B",
+        } as RegistryModelInfo,
+        {
+          id: "unsloth/phi-2-bnb-4bit",
+          name: "Phi-2 2.7B (4-bit)",
+          parameters: "2.7B",
+        } as RegistryModelInfo,
+        {
+          id: "unsloth/mistral-7b-bnb-4bit",
+          name: "Mistral 7B (4-bit)",
+          parameters: "7B",
+        } as RegistryModelInfo,
+        {
+          id: "unsloth/llama-2-7b-bnb-4bit",
+          name: "Llama 2 7B (4-bit)",
+          parameters: "7B",
+        } as RegistryModelInfo,
+        {
+          id: "unsloth/llama-3-8b-bnb-4bit",
+          name: "Llama 3 8B (4-bit)",
+          parameters: "8B",
+        } as RegistryModelInfo,
+      ];
+      visionModels = [
+        {
+          id: "Qwen/Qwen2.5-VL-3B-Instruct",
+          name: "Qwen2.5-VL 3B",
+          parameters: "3B",
+        } as RegistryModelInfo,
+        {
+          id: "Qwen/Qwen2.5-VL-7B-Instruct",
+          name: "Qwen2.5-VL 7B",
+          parameters: "7B",
+        } as RegistryModelInfo,
+        {
+          id: "Qwen/Qwen2.5-VL-72B-Instruct",
+          name: "Qwen2.5-VL 72B",
+          parameters: "72B",
+        } as RegistryModelInfo,
+        {
+          id: "unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit",
+          name: "Qwen2.5-VL 3B (4-bit)",
+          parameters: "3B",
+        } as RegistryModelInfo,
+        {
+          id: "unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit",
+          name: "Qwen2.5-VL 7B (4-bit)",
+          parameters: "7B",
+        } as RegistryModelInfo,
+      ];
+    } finally {
+      loadingModels = false;
+    }
+  });
+
+  // Update selected model info and apply defaults when base_model changes
+  $effect(() => {
+    const currentModels =
+      formData.model_type === "vision" ? visionModels : textModels;
+    selectedModelInfo =
+      currentModels.find((m) => m.id === formData.base_model) || null;
+
+    // Apply registry defaults if model info is available
+    if (selectedModelInfo?.training_defaults) {
+      const defaults = selectedModelInfo.training_defaults;
+
+      // Apply hyperparameter defaults
+      if (defaults.hyperparameters) {
+        formData.hyperparameters = {
+          ...formData.hyperparameters,
+          ...defaults.hyperparameters,
+        };
+      }
+
+      // Apply LoRA defaults
+      if (defaults.lora_config) {
+        formData.lora_config = {
+          ...formData.lora_config,
+          ...defaults.lora_config,
+        };
+      }
+
+      // Apply save method default
+      if (defaults.save_method) {
+        formData.save_method = defaults.save_method;
+      }
+    }
+  });
 
   // Update available models when type changes
   $effect(() => {
     if (formData.model_type === "vision") {
-      formData.base_model = visionModels[0];
+      if (visionModels.length > 0) {
+        formData.base_model = visionModels[0].id;
+      }
       formData.dataset_path = "./data/vision_dataset.jsonl";
-      // Vision models need smaller batch size and larger gradient accumulation
-      formData.hyperparameters.batch_size = 1;
-      formData.hyperparameters.gradient_accumulation_steps = 8;
-      formData.hyperparameters.learning_rate = 0.00002; // Lower LR for vision
-      formData.hyperparameters.lr_scheduler_type = "cosine"; // Better for vision models
     } else {
-      formData.base_model = textModels[0];
+      if (textModels.length > 0) {
+        formData.base_model = textModels[0].id;
+      }
       formData.dataset_path = "./data/sample.jsonl";
-      formData.hyperparameters.batch_size = 2;
-      formData.hyperparameters.gradient_accumulation_steps = 4;
-      formData.hyperparameters.learning_rate = 0.0002;
-      formData.hyperparameters.lr_scheduler_type = "linear";
     }
   });
 
@@ -292,21 +401,77 @@
                 bind:value={formData.base_model}
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
+                disabled={loadingModels}
               >
-                {#if formData.model_type === "text"}
+                {#if loadingModels}
+                  <option value="">Loading models...</option>
+                {:else if formData.model_type === "text"}
                   {#each textModels as model}
-                    <option value={model}>{model}</option>
+                    <option value={model.id}
+                      >{model.name} ({model.parameters})</option
+                    >
                   {/each}
                 {:else}
                   {#each visionModels as model}
-                    <option value={model}>{model}</option>
+                    <option value={model.id}
+                      >{model.name} ({model.parameters})</option
+                    >
                   {/each}
                 {/if}
               </select>
+              {#if loadError}
+                <p class="text-xs text-yellow-600 mt-1">
+                  ⚠️ Using fallback models: {loadError}
+                </p>
+              {/if}
               {#if formData.model_type === "vision"}
                 <p class="text-xs text-gray-500 mt-1">
                   🎨 Vision-language models can analyze images and text together
                 </p>
+              {/if}
+
+              <!-- Show model info card if available -->
+              {#if selectedModelInfo && !loadingModels}
+                <div
+                  class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg"
+                >
+                  <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                      <h4 class="text-sm font-semibold text-blue-900 mb-1">
+                        📊 {selectedModelInfo.name}
+                      </h4>
+                      <p class="text-xs text-blue-800 mb-2">
+                        {selectedModelInfo.description}
+                      </p>
+
+                      {#if selectedModelInfo.requirements}
+                        <div class="space-y-1">
+                          <p class="text-xs text-blue-700">
+                            <strong>VRAM:</strong>
+                            {selectedModelInfo.requirements.min_vram_gb}GB
+                            minimum,
+                            {selectedModelInfo.requirements
+                              .recommended_vram_gb}GB recommended
+                          </p>
+                          {#if selectedModelInfo.capabilities?.context_window}
+                            <p class="text-xs text-blue-700">
+                              <strong>Context:</strong>
+                              {selectedModelInfo.capabilities.context_window.toLocaleString()}
+                              tokens
+                            </p>
+                          {/if}
+                        </div>
+                      {/if}
+
+                      {#if selectedModelInfo.recommended_for && selectedModelInfo.recommended_for.length > 0}
+                        <p class="text-xs text-blue-700 mt-2">
+                          <strong>Best for:</strong>
+                          {selectedModelInfo.recommended_for.join(", ")}
+                        </p>
+                      {/if}
+                    </div>
+                  </div>
+                </div>
               {/if}
             </div>
 
@@ -452,9 +617,18 @@
 
         <!-- Training Hyperparameters -->
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">
-            Training Hyperparameters
-          </h3>
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">
+              Training Hyperparameters
+            </h3>
+            {#if selectedModelInfo?.training_defaults}
+              <span
+                class="text-xs text-green-600 bg-green-50 px-2 py-1 rounded"
+              >
+                ✓ Using registry defaults
+              </span>
+            {/if}
+          </div>
 
           {#if formData.model_type === "vision"}
             <div
@@ -998,9 +1172,18 @@
 
         <!-- LoRA Configuration -->
         <div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-4">
-            LoRA Configuration
-          </h3>
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">
+              LoRA Configuration
+            </h3>
+            {#if selectedModelInfo?.training_defaults?.lora_config}
+              <span
+                class="text-xs text-green-600 bg-green-50 px-2 py-1 rounded"
+              >
+                ✓ Using registry defaults
+              </span>
+            {/if}
+          </div>
 
           <!-- Essential LoRA Parameters -->
           <div class="grid grid-cols-3 gap-4 mb-4">

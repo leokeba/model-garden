@@ -1,0 +1,283 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Model Garden Models Registry",
+  "description": "Central registry for all supported models with their configurations and capabilities",
+  "type": "object",
+  "required": ["version", "last_updated", "categories", "models"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version for backward compatibility",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of last registry update"
+    },
+    "categories": {
+      "type": "object",
+      "description": "Model categories for organization",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["name", "description"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "icon": { "type": "string" }
+        }
+      }
+    },
+    "models": {
+      "type": "object",
+      "description": "Registry of supported models",
+      "additionalProperties": {
+        "$ref": "#/definitions/model"
+      }
+    }
+  },
+  "definitions": {
+    "model": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "category",
+        "provider",
+        "base_architecture",
+        "parameters",
+        "description",
+        "tags",
+        "status",
+        "requirements",
+        "capabilities",
+        "training_defaults",
+        "inference_defaults",
+        "urls"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier (usually HuggingFace model ID)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable display name"
+        },
+        "category": {
+          "type": "string",
+          "description": "Category key from categories object"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["unsloth", "qwen", "meta", "microsoft", "google", "mistral", "other"],
+          "description": "Model provider/creator"
+        },
+        "base_architecture": {
+          "type": "string",
+          "enum": ["llama", "mistral", "phi", "qwen-vl", "gpt", "other"],
+          "description": "Base model architecture"
+        },
+        "parameters": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)?[BM]$",
+          "description": "Number of parameters (e.g., '7B', '1.1B')"
+        },
+        "description": {
+          "type": "string",
+          "description": "Brief description of the model"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Tags for filtering and search"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["stable", "experimental", "deprecated"],
+          "description": "Model support status"
+        },
+        "quantization": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": ["string", "null"],
+              "enum": ["4bit", "8bit", "awq", "gptq", "fp8", null],
+              "description": "Quantization method used"
+            },
+            "type": {
+              "type": ["string", "null"],
+              "enum": ["bitsandbytes", "awq", "gptq", "squeezellm", null],
+              "description": "Quantization library/type"
+            }
+          }
+        },
+        "requirements": {
+          "type": "object",
+          "required": ["min_vram_gb", "recommended_vram_gb", "min_ram_gb"],
+          "properties": {
+            "min_vram_gb": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Minimum GPU VRAM in GB"
+            },
+            "recommended_vram_gb": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Recommended GPU VRAM in GB"
+            },
+            "min_ram_gb": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Minimum system RAM in GB"
+            },
+            "cuda_compute_capability": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+$",
+              "description": "Minimum CUDA compute capability (e.g., '7.0')"
+            },
+            "min_gpus": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum number of GPUs required"
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "required": [
+            "training",
+            "inference",
+            "vision",
+            "structured_outputs",
+            "streaming"
+          ],
+          "properties": {
+            "training": {
+              "type": "boolean",
+              "description": "Supports fine-tuning"
+            },
+            "inference": {
+              "type": "boolean",
+              "description": "Supports inference via vLLM"
+            },
+            "vision": {
+              "type": "boolean",
+              "description": "Multimodal vision capabilities"
+            },
+            "structured_outputs": {
+              "type": "boolean",
+              "description": "Supports structured output generation"
+            },
+            "streaming": {
+              "type": "boolean",
+              "description": "Supports streaming responses"
+            },
+            "function_calling": {
+              "type": "boolean",
+              "description": "Supports function/tool calling"
+            }
+          }
+        },
+        "training_defaults": {
+          "type": "object",
+          "required": ["hyperparameters", "lora_config"],
+          "properties": {
+            "hyperparameters": {
+              "type": "object",
+              "required": [
+                "learning_rate",
+                "num_epochs",
+                "batch_size",
+                "gradient_accumulation_steps",
+                "warmup_steps",
+                "max_seq_length",
+                "optim",
+                "lr_scheduler_type"
+              ],
+              "properties": {
+                "learning_rate": { "type": "number", "minimum": 0 },
+                "num_epochs": { "type": "integer", "minimum": 1 },
+                "batch_size": { "type": "integer", "minimum": 1 },
+                "gradient_accumulation_steps": { "type": "integer", "minimum": 1 },
+                "warmup_steps": { "type": "integer", "minimum": 0 },
+                "max_seq_length": { "type": "integer", "minimum": 128 },
+                "optim": {
+                  "type": "string",
+                  "enum": ["adamw_8bit", "adamw_torch", "adamw_torch_fused", "adafactor", "sgd"]
+                },
+                "lr_scheduler_type": {
+                  "type": "string",
+                  "enum": ["linear", "cosine", "constant", "constant_with_warmup", "polynomial"]
+                }
+              }
+            },
+            "lora_config": {
+              "type": "object",
+              "required": ["r", "lora_alpha", "lora_dropout", "target_modules"],
+              "properties": {
+                "r": { "type": "integer", "minimum": 1, "maximum": 256 },
+                "lora_alpha": { "type": "integer", "minimum": 1 },
+                "lora_dropout": { "type": "number", "minimum": 0, "maximum": 0.5 },
+                "target_modules": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "use_rslora": { "type": "boolean" }
+              }
+            },
+            "selective_loss": {
+              "type": "object",
+              "properties": {
+                "supported": { "type": "boolean" },
+                "default_level": {
+                  "type": "string",
+                  "enum": ["conservative", "moderate", "aggressive"]
+                },
+                "recommended": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        "inference_defaults": {
+          "type": "object",
+          "required": ["max_model_len", "dtype", "gpu_memory_utilization"],
+          "properties": {
+            "max_model_len": { "type": "integer", "minimum": 128 },
+            "dtype": {
+              "type": "string",
+              "enum": ["auto", "float16", "bfloat16", "float32"]
+            },
+            "gpu_memory_utilization": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 1.0
+            },
+            "quantization": {
+              "type": ["string", "null"],
+              "enum": ["awq", "gptq", "squeezellm", "fp8", null]
+            },
+            "tensor_parallel_size": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default tensor parallelism across GPUs"
+            }
+          }
+        },
+        "urls": {
+          "type": "object",
+          "properties": {
+            "huggingface": {
+              "type": ["string", "null"],
+              "format": "uri"
+            },
+            "docs": {
+              "type": ["string", "null"],
+              "format": "uri"
+            }
+          }
+        }
+      }
+    }
+  }
+}

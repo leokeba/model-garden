@@ -59,8 +59,9 @@ dmypy.json
 *.parquet
 !data/example_dataset.jsonl
 
-# Storage files
-/storage/
+# Storage files (but keep registry files)
+/storage/*
+!/storage/models_registry*
 
 # Logs
 logs/
