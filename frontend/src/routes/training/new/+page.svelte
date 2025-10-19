@@ -213,11 +213,12 @@
   let showAdvancedHyperparams = $state(false);
   let showAdvancedLora = $state(false);
 
-  function updateOutputDir() {
-    if (formData.name && !formData.output_dir) {
+  // Auto-update output directory when name changes
+  $effect(() => {
+    if (formData.name) {
       formData.output_dir = `./models/${formData.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
     }
-  }
+  });
 
   async function handleSubmit(event: SubmitEvent) {
     event.preventDefault();
@@ -385,7 +386,6 @@
                 type="text"
                 id="name"
                 bind:value={formData.name}
-                oninput={updateOutputDir}
                 placeholder="my-finance-model"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 required
