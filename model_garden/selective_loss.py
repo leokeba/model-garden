@@ -125,8 +125,11 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         # First, use Unsloth's collator to handle vision data properly
         batch = super().__call__(features)
         
-        # Increment step counter
-        self.current_step += 1
+        # Only increment step counter during training (not evaluation)
+        # During eval, PyTorch uses torch.no_grad() context, so gradients are disabled
+        is_training = torch.is_grad_enabled()
+        if is_training:
+            self.current_step += 1
         
         # DEBUG: Log configuration on first call
         if self.current_step == 1 and self.verbose:
@@ -138,7 +141,7 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         
         if self.current_step <= self.masking_start_step:
             # Before masking_start_step: let model learn structure normally
-            if self.verbose and self.current_step % 10 == 0:
+            if self.verbose and self.current_step % 10 == 0 and is_training:
                 console.print(
                     f"[dim]Step {self.current_step}/{self.masking_start_step}: "
                     f"Learning structure (masking disabled)[/dim]"
@@ -146,7 +149,7 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
             return batch  # No masking yet
         
         # Log when masking starts (now at step masking_start_step + 1)
-        if self.current_step == self.masking_start_step + 1 and self.verbose:
+        if self.current_step == self.masking_start_step + 1 and self.verbose and is_training:
             console.print(
                 f"[green]✓ Step {self.current_step}: Masking activated! (after {self.masking_start_step} steps of structure learning)[/green]"
             )
@@ -159,11 +162,12 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 batch.get("input_ids", None)
             )
             
-            # Increment batch count
-            self.batch_count += 1
+            # Increment batch count (only during training)
+            if is_training:
+                self.batch_count += 1
             
             # Update statistics
-            if self.verbose:
+            if self.verbose and is_training:
                 newly_masked = (batch["labels"] == -100).sum() - (original_labels == -100).sum()
                 total = batch["labels"].numel()
                 self.total_tokens += total
