@@ -1,28 +1,28 @@
 <script lang="ts">
   interface Props {
-    variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
-    size?: 'sm' | 'md' | 'lg';
+    variant?: "primary" | "secondary" | "danger" | "warning" | "ghost";
+    size?: "sm" | "md" | "lg";
     disabled?: boolean;
     loading?: boolean;
     fullWidth?: boolean;
     href?: string;
-    type?: 'button' | 'submit' | 'reset';
+    type?: "button" | "submit" | "reset";
     onclick?: () => void;
     class?: string;
     children?: any;
   }
 
   let {
-    variant = 'primary',
-    size = 'md',
+    variant = "primary",
+    size = "md",
     disabled = false,
     loading = false,
     fullWidth = false,
     href,
-    type = 'button',
+    type = "button",
     onclick,
-    class: className = '',
-    children
+    class: className = "",
+    children,
   }: Props = $props();
 </script>
 
@@ -35,7 +35,9 @@
     class:cursor-not-allowed={disabled}
   >
     {#if loading}
-      <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+      <div
+        class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+      ></div>
     {/if}
     {@render children?.()}
   </a>
@@ -48,7 +50,9 @@
     {onclick}
   >
     {#if loading}
-      <div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+      <div
+        class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+      ></div>
     {/if}
     {@render children?.()}
   </button>

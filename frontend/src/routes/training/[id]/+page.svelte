@@ -22,6 +22,7 @@
   let validationMetrics = $state<any[]>([]);
   let showAdvancedSettings = $state(false);
   let cancelling = $state(false);
+  let stoppingEarly = $state(false);
 
   // Carbon emissions data
   let carbonData = $state<any>(null);
@@ -148,6 +149,13 @@
           } else if (update.type === "error" && job) {
             job.error_message = update.message;
             error = update.message;
+          } else if (update.type === "early_stop_requested") {
+            // Early stop was requested
+            logs = [
+              ...logs,
+              `[${new Date().toLocaleTimeString()}] ⏸️ Early stopping requested - training will stop gracefully after current step...`,
+            ];
+            setTimeout(() => scrollLogsToBottom(), 10);
           }
         } catch (err) {
           console.error("Failed to parse WebSocket message:", err);
@@ -273,6 +281,33 @@
     }
   }
 
+  async function stopEarly() {
+    if (!jobId || !job) return;
+
+    const confirmMessage = `Stop training early for "${job.config?.name || job.name}"?\n\nThis will gracefully finish the current step and save the model.\nUnlike Cancel, early stopping lets the model save properly.`;
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      stoppingEarly = true;
+      const response = await api.post(`/training/jobs/${jobId}/stop`, {});
+
+      if (response.success) {
+        logs = [
+          ...logs,
+          `[${new Date().toLocaleTimeString()}] ⏸️ Early stopping requested - training will finish current step and save...`,
+        ];
+        setTimeout(() => scrollLogsToBottom(), 10);
+      } else {
+        error = response.message || "Failed to request early stopping";
+      }
+    } catch (err) {
+      error =
+        err instanceof Error ? err.message : "Failed to request early stopping";
+    } finally {
+      stoppingEarly = false;
+    }
+  }
+
   onMount(async () => {
     await loadJob();
 
@@ -306,13 +341,24 @@
         </div>
         {#if job}
           <div class="flex items-center gap-3">
+            {#if job.status === "running"}
+              <Button
+                variant="warning"
+                size="sm"
+                onclick={stopEarly}
+                loading={stoppingEarly}
+                disabled={stoppingEarly || cancelling}
+              >
+                {stoppingEarly ? "Stopping..." : "⏸️ Stop Early"}
+              </Button>
+            {/if}
             {#if job.status === "running" || job.status === "queued"}
               <Button
                 variant="danger"
                 size="sm"
                 onclick={cancelJob}
                 loading={cancelling}
-                disabled={cancelling}
+                disabled={cancelling || stoppingEarly}
               >
                 {cancelling ? "Cancelling..." : "Cancel"}
               </Button>

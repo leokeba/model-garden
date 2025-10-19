@@ -355,6 +355,18 @@ class ProgressCallback(TrainerCallback):
                     raise KeyboardInterrupt()
         except Exception:
             pass
+        
+        # Check for early stopping request (graceful stop)
+        try:
+            early_stop_map = globals().get("early_stop_requests", {})
+            if early_stop_map.get(self.job_id, False):
+                print(f"🛑 Early stopping requested for job {self.job_id} - will stop gracefully")
+                control.should_training_stop = True
+                # Clear the flag
+                del early_stop_map[self.job_id]
+        except Exception:
+            pass
+        
         if logs:
             # Extract metrics from logs
             current_step = state.global_step
@@ -582,7 +594,9 @@ def run_training_job(job_id: str):
             progress_callback.cancellation_event = globals().get("cancellation_events", {}).get(job_id)
             
             # Build callbacks list
-            callbacks = [progress_callback]
+            from typing import List as TypingList
+            from transformers import TrainerCallback as BaseCallback
+            callbacks: TypingList[BaseCallback] = [progress_callback]
             
             # Add early stopping if enabled
             if job.get("early_stopping_enabled", False):
@@ -715,7 +729,9 @@ def run_training_job(job_id: str):
             progress_callback = ProgressCallback(job_id, manager)
             
             # Build callbacks list
-            callbacks = [progress_callback]
+            from typing import List as TypingList
+            from transformers import TrainerCallback as BaseCallback
+            callbacks: TypingList[BaseCallback] = [progress_callback]
             
             # Add early stopping if enabled
             if job.get("early_stopping_enabled", False):
@@ -726,7 +742,7 @@ def run_training_job(job_id: str):
                     metric="eval_loss",
                     greater_is_better=False
                 )
-                callbacks.append(early_stopping)  # type: ignore
+                callbacks.append(early_stopping)
                 print(f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})")
             
             trainer.train(
@@ -1519,6 +1535,53 @@ async def delete_or_cancel_training_job(job_id: str):
         success=True,
         message=f"Training job {job_id} {status_msg}"
     )
+
+
+@app.post("/api/v1/training/jobs/{job_id}/stop", response_model=APIResponse)
+async def request_early_stop(job_id: str):
+    """Request early stopping for a running training job.
+    
+    This will gracefully stop training at the next evaluation, allowing the model
+    to be saved properly. Different from cancellation which stops immediately.
+    """
+    if job_id not in training_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training job {job_id} not found"
+        )
+    
+    job = training_jobs[job_id]
+    
+    # Only allow early stopping for running jobs
+    if job["status"] != "running":
+        return APIResponse(
+            success=False,
+            message=f"Cannot request early stopping for job with status: {job['status']}"
+        )
+    
+    # Set a flag that the ProgressCallback can check
+    try:
+        early_stop_map = globals().setdefault("early_stop_requests", {})
+        early_stop_map[job_id] = True
+        print(f"🛑 Early stopping requested for job {job_id}")
+        
+        # Notify WebSocket clients
+        await manager.send_update(job_id, {
+            "type": "early_stop_requested",
+            "job_id": job_id,
+            "message": "Early stopping requested - will stop at next evaluation",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        })
+        
+        return APIResponse(
+            success=True,
+            message="Early stopping requested - training will stop at next evaluation"
+        )
+    except Exception as e:
+        return APIResponse(
+            success=False,
+            message=f"Failed to request early stopping: {str(e)}"
+        )
 
 
 @app.get("/api/v1/training/queue", response_model=APIResponse)
