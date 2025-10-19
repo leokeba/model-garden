@@ -35,6 +35,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from transformers import TrainerCallback
 
+# Memory management utilities
+from model_garden.memory_management import cleanup_training_resources
+
 # Don't import training modules at module level - they import unsloth which spawns workers!
 # Import them lazily in the functions that need them (run_training_job)
 # from model_garden.training import ModelTrainer  # REMOVED - now lazy-loaded
@@ -75,6 +78,10 @@ class TrainingJobRequest(BaseModel):
     selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
     selective_loss_masking_start_step: int = 0  # Delay masking until this step (0=immediate)
     selective_loss_verbose: bool = False  # Print masking statistics
+    # Early stopping
+    early_stopping_enabled: bool = False  # Enable early stopping
+    early_stopping_patience: int = 3  # Number of evals with no improvement before stopping
+    early_stopping_threshold: float = 0.0  # Minimum improvement to count
 
 
 class TrainingJobInfo(BaseModel):
@@ -433,59 +440,6 @@ class ProgressCallback(TrainerCallback):
             }))
 
 
-def cleanup_training_resources(*objects_to_delete):
-    """Aggressively clean up training resources to free memory.
-    
-    This function performs comprehensive memory cleanup including:
-    - Explicit deletion of all passed objects
-    - Multiple garbage collection passes (handles circular references)
-    - GPU memory cache clearing
-    - Returning freed memory to OS via malloc_trim
-    
-    Args:
-        *objects_to_delete: Variable number of objects to explicitly delete
-        
-    Example:
-        cleanup_training_resources(
-            trainer.model, trainer.tokenizer, trainer.processor,
-            trainer, dataset, callback
-        )
-    """
-    print("🧹 Cleaning up training resources...")
-    
-    import gc
-    import torch
-    
-    # Delete all objects explicitly
-    for obj in objects_to_delete:
-        if obj is not None:
-            try:
-                del obj
-            except Exception:
-                pass  # Some objects might not be deletable
-    
-    # Force garbage collection multiple times
-    # Multiple passes handle circular references and finalizers
-    for _ in range(3):
-        gc.collect()
-    
-    # Clear GPU cache if CUDA is available
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-    
-    # Try to return memory to OS (Linux-specific)
-    # malloc_trim(0) forces glibc to release freed memory back to the kernel
-    try:
-        import ctypes
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-        print("✓ Returned memory to OS (malloc_trim)")
-    except Exception:
-        pass  # Not critical if this fails (non-Linux systems)
-    
-    print("✓ Training resources cleaned up")
-
-
 async def run_model_loading(
     job_id: str,
     model_path: str,
@@ -621,11 +575,27 @@ def run_training_job(job_id: str):
                 formatted_val_dataset = trainer.format_dataset(val_dataset)
                 print(f"✓ Validation dataset loaded ({len(formatted_val_dataset)} examples)")
             
-            # Train with progress callback
+            # Train with progress callback and optional early stopping
             hyperparams = job["hyperparameters"]
             progress_callback = ProgressCallback(job_id, manager)
             # Attach cancellation event so callback/trainer can stop gracefully
             progress_callback.cancellation_event = globals().get("cancellation_events", {}).get(job_id)
+            
+            # Build callbacks list
+            callbacks = [progress_callback]
+            
+            # Add early stopping if enabled
+            if job.get("early_stopping_enabled", False):
+                from model_garden.early_stopping import EarlyStoppingCallback
+                early_stopping = EarlyStoppingCallback(
+                    patience=job.get("early_stopping_patience", 3),
+                    threshold=job.get("early_stopping_threshold", 0.0),
+                    metric="eval_loss",
+                    greater_is_better=False
+                )
+                callbacks.append(early_stopping)
+                print(f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})")
+            
             trainer.train(
                 dataset=formatted_train_dataset,
                 eval_dataset=formatted_val_dataset,
@@ -651,7 +621,7 @@ def run_training_job(job_id: str):
                 load_best_model_at_end=hyperparams.get("load_best_model_at_end", True),
                 metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
                 save_total_limit=hyperparams.get("save_total_limit", 3),
-                callbacks=[progress_callback],
+                callbacks=callbacks,
                 selective_loss=job.get("selective_loss", False),
                 selective_loss_level=job.get("selective_loss_level", "conservative"),
                 selective_loss_schema_keys=job.get("selective_loss_schema_keys"),
@@ -740,9 +710,25 @@ def run_training_job(job_id: str):
                 )
                 print(f"✓ Validation dataset loaded ({len(val_dataset)} examples)")
             
-            # Train with progress callback
+            # Train with progress callback and optional early stopping
             hyperparams = job["hyperparameters"]
             progress_callback = ProgressCallback(job_id, manager)
+            
+            # Build callbacks list
+            callbacks = [progress_callback]
+            
+            # Add early stopping if enabled
+            if job.get("early_stopping_enabled", False):
+                from model_garden.early_stopping import EarlyStoppingCallback
+                early_stopping = EarlyStoppingCallback(
+                    patience=job.get("early_stopping_patience", 3),
+                    threshold=job.get("early_stopping_threshold", 0.0),
+                    metric="eval_loss",
+                    greater_is_better=False
+                )
+                callbacks.append(early_stopping)  # type: ignore
+                print(f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})")
+            
             trainer.train(
                 dataset=train_dataset,
                 eval_dataset=val_dataset,
@@ -768,7 +754,7 @@ def run_training_job(job_id: str):
                 load_best_model_at_end=hyperparams.get("load_best_model_at_end", True),
                 metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
                 save_total_limit=hyperparams.get("save_total_limit", 3),
-                callbacks=[progress_callback],
+                callbacks=callbacks,
             )
             
             # Save final model
@@ -830,8 +816,78 @@ def run_training_job(job_id: str):
         
         print(f"✅ Training job {job_id} completed successfully!")
         
+    except KeyboardInterrupt:
+        import traceback
+        print(f"✋ Training job {job_id} cancelled by user")
+        
+        # Cleanup training resources
+        try:
+            # Collect objects that need cleanup (use locals() to safely get defined variables)
+            cleanup_objects = []
+            for var_name in ['trainer', 'formatted_train_dataset', 'formatted_val_dataset', 
+                           'train_dataset', 'val_dataset', 'progress_callback']:
+                if var_name in locals():
+                    obj = locals()[var_name]
+                    if obj is not None:
+                        cleanup_objects.append(obj)
+            
+            if cleanup_objects:
+                cleanup_training_resources(*cleanup_objects)
+        except Exception as cleanup_error:
+            print(f"⚠️  Error during cleanup: {cleanup_error}")
+        
+        # Update job status to cancelled - ensure job exists
+        if job_id in training_jobs:
+            job = training_jobs[job_id]
+            job["status"] = "cancelled"
+            job["completed_at"] = datetime.utcnow().isoformat() + "Z"
+            job["error_message"] = "Training cancelled by user"
+        
+            # Persist status change
+            storage_manager.save_training_jobs(training_jobs)
+            
+            # Mark job as cancelled in queue
+            queue = get_job_queue()
+            asyncio.run(queue.cancel_job(job_id))
+            
+            # Notify WebSocket clients
+            asyncio.run(manager.send_update(job_id, {
+                "type": "status_update",
+                "job_id": job_id,
+                "status": "cancelled",
+                "completed_at": job["completed_at"],
+                "error_message": "Training cancelled by user",
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }))
+        
+        # Clear cancellation event
+        try:
+            _ce_map = globals().get("cancellation_events")
+            if _ce_map and job_id in _ce_map:
+                del _ce_map[job_id]
+        except Exception:
+            pass
+        
     except Exception as e:
         import traceback
+        print(f"❌ Training job {job_id} failed: {e}")
+        
+        # Cleanup training resources even on failure
+        try:
+            # Collect objects that need cleanup (use locals() to safely get defined variables)
+            cleanup_objects = []
+            for var_name in ['trainer', 'formatted_train_dataset', 'formatted_val_dataset', 
+                           'train_dataset', 'val_dataset', 'progress_callback']:
+                if var_name in locals():
+                    obj = locals()[var_name]
+                    if obj is not None:
+                        cleanup_objects.append(obj)
+            
+            if cleanup_objects:
+                cleanup_training_resources(*cleanup_objects)
+        except Exception as cleanup_error:
+            print(f"⚠️  Error during cleanup: {cleanup_error}")
+        
         # Update job status to failed - ensure job exists
         if job_id in training_jobs:
             job = training_jobs[job_id]
@@ -859,8 +915,15 @@ def run_training_job(job_id: str):
             print(f"❌ Training job {job_id} failed but job not found in storage: {e}")
         
         # Print full traceback for debugging
-        print(f"❌ Training job {job_id} failed: {e}")
         traceback.print_exc()
+        
+        # Clear cancellation event
+        try:
+            _ce_map = globals().get("cancellation_events")
+            if _ce_map and job_id in _ce_map:
+                del _ce_map[job_id]
+        except Exception:
+            pass
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""

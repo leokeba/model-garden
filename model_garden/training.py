@@ -433,6 +433,8 @@ class ModelTrainer:
         self,
         output_dir: str,
         save_method: str = "merged_16bit",
+        maximum_memory_usage: float = 0.75,
+        max_shard_size: str = "5GB",
     ) -> None:
         """Save the trained model.
 
@@ -440,8 +442,12 @@ class ModelTrainer:
             output_dir: Directory to save the model
             save_method: How to save the model:
                 - 'merged_16bit': Merge LoRA and save in 16-bit
-                - 'merged_4bit': Merge LoRA and save in 4-bit
+                - 'merged_4bit': Merge LoRA and save in 4-bit (not recommended for GGUF conversion)
                 - 'lora': Save only LoRA adapters
+            maximum_memory_usage: Maximum RAM usage ratio (0.0-0.95, lower = less RAM, default: 0.75)
+                                  Reduce this (e.g., 0.5) if you run out of memory during merge
+            max_shard_size: Maximum size per shard file (e.g., "1GB", "2GB", "5GB")
+                           Smaller values use less peak memory during save
         """
         console.print(f"[cyan]Saving model with method: {save_method}[/cyan]")
 
@@ -460,17 +466,24 @@ class ModelTrainer:
             self.tokenizer.save_pretrained(str(output_path))
         elif save_method == "merged_16bit":
             # Merge and save in 16-bit
+            console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
             self.model.save_pretrained_merged(
                 str(output_path),
                 self.tokenizer,
                 save_method="merged_16bit",
+                maximum_memory_usage=maximum_memory_usage,
+                max_shard_size=max_shard_size,
             )
         elif save_method == "merged_4bit":
             # Merge and save in 4-bit
+            console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
+            console.print("[yellow]⚠️  Warning: 4-bit merge may reduce accuracy for GGUF conversion[/yellow]")
             self.model.save_pretrained_merged(
                 str(output_path),
                 self.tokenizer,
-                save_method="merged_4bit",
+                save_method="merged_4bit_forced",
+                maximum_memory_usage=maximum_memory_usage,
+                max_shard_size=max_shard_size,
             )
         else:
             raise ValueError(f"Unknown save method: {save_method}")

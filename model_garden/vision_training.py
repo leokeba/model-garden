@@ -834,12 +834,18 @@ class VisionLanguageTrainer:
         self,
         output_dir: str,
         save_method: str = "merged_16bit",
+        maximum_memory_usage: float = 0.75,
+        max_shard_size: str = "5GB",
     ) -> None:
         """Save the fine-tuned vision-language model.
 
         Args:
             output_dir: Directory to save the model
             save_method: How to save ('lora', 'merged_16bit', 'merged_4bit')
+            maximum_memory_usage: Maximum RAM usage ratio (0.0-0.95, lower = less RAM, default: 0.75)
+                                  Reduce this (e.g., 0.5) if you run out of memory during merge
+            max_shard_size: Maximum size per shard file (e.g., "1GB", "2GB", "5GB")
+                           Smaller values use less peak memory during save
         """
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
 
@@ -858,6 +864,7 @@ class VisionLanguageTrainer:
         elif save_method == "merged_16bit":
             # Merge LoRA weights and save in 16-bit
             console.print("[cyan]Merging LoRA weights and saving in 16-bit...[/cyan]")
+            console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
             try:
                 from unsloth import FastLanguageModel
                 # Merge and save using Unsloth
@@ -874,7 +881,9 @@ class VisionLanguageTrainer:
                 self.model.save_pretrained_merged(  # type: ignore
                     output_dir,
                     self.tokenizer,
-                    save_method="merged_16bit"
+                    save_method="merged_16bit",
+                    maximum_memory_usage=maximum_memory_usage,
+                    max_shard_size=max_shard_size,
                 )
                 if self.processor:
                     self.processor.save_pretrained(output_dir)
@@ -933,6 +942,8 @@ class VisionLanguageTrainer:
         elif save_method == "merged_4bit":
             # Merge LoRA weights and save in 4-bit
             console.print("[cyan]Merging LoRA weights and saving in 4-bit...[/cyan]")
+            console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
+            console.print("[yellow]⚠️  Warning: 4-bit merge may reduce accuracy for GGUF conversion[/yellow]")
             try:
                 from unsloth import FastLanguageModel
                 # Clear GPU cache before merging
@@ -949,7 +960,9 @@ class VisionLanguageTrainer:
                 self.model.save_pretrained_merged(  # type: ignore
                     output_dir,
                     self.tokenizer,
-                    save_method="merged_4bit"
+                    save_method="merged_4bit_forced",
+                    maximum_memory_usage=maximum_memory_usage,
+                    max_shard_size=max_shard_size,
                 )
                 if self.processor:
                     self.processor.save_pretrained(output_dir)

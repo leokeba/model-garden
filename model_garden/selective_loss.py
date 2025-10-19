@@ -77,12 +77,29 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         ... )
     """
     
-    # JSON structural characters to mask (including whitespace and quotes)
+    # JSON structural characters to mask (NOT including < and > which are for XML/HTML tags)
     # Quotes are structural in JSON - they delimit strings but carry no semantic meaning
     STRUCTURAL_CHARS = {'{', '}', '[', ']', ':', ',', '"', ' ', '\n', '\t', '\r'}
     
     # Only null is truly structural - true/false can be semantic content
     JSON_KEYWORDS = {'null'}
+    
+    # JSON type keywords (these appear as values but are not semantic for form extraction)
+    JSON_TYPE_KEYWORDS = {'object', 'array', 'string', 'number', 'integer', 'boolean', 'null'}
+    
+    # JSON Schema keywords that should be masked (not semantic content for form extraction)
+    SCHEMA_KEYWORDS = {
+        # Schema structure
+        '$schema', '$id', '$ref', '$defs', 'definitions',
+        # Type keywords
+        'type', 'properties', 'items', 'required', 'additionalProperties',
+        'enum', 'const', 'anyOf', 'oneOf', 'allOf', 'not',
+        # Validation keywords
+        'minimum', 'maximum', 'minLength', 'maxLength', 'pattern',
+        'minItems', 'maxItems', 'uniqueItems', 'format',
+        # Metadata (keep 'title' as it might be semantic)
+        'description', 'default', 'examples',
+    }
     
     def __init__(
         self,
@@ -157,6 +174,17 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         # Apply selective loss masking
         if "labels" in batch:
             original_labels = batch["labels"].clone()
+            
+            # DEBUG: On first masked batch, check what Unsloth gave us
+            if is_training and self.batch_count == 0 and self.verbose:
+                first_seq = original_labels[0]
+                total_tokens = len(first_seq)
+                prompt_masked = (first_seq == -100).sum().item()
+                console.print(f"[cyan]🔍 Batch structure check (first sequence):[/cyan]")
+                console.print(f"   Total tokens: {total_tokens}")
+                console.print(f"   Prompt tokens (masked to -100): {prompt_masked} ({prompt_masked/total_tokens*100:.1f}%)")
+                console.print(f"   Assistant tokens (not -100): {total_tokens - prompt_masked} ({(total_tokens - prompt_masked)/total_tokens*100:.1f}%)")
+            
             batch["labels"] = self._apply_selective_masking(
                 batch["labels"], 
                 batch.get("input_ids", None)
@@ -179,6 +207,9 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                         f"[dim]Batch {self.batch_count}: Masked {mask_pct:.1f}% of tokens "
                         f"({self.masked_tokens}/{self.total_tokens}) [Step {self.current_step}][/dim]"
                     )
+                    
+                    # Show sample of unmasked content from first example in batch
+                    self._print_unmasked_sample(batch["labels"][0], original_labels[0])
         
         return batch
     
@@ -211,9 +242,10 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         """Identify which token positions are structural (not semantic).
         
         Strategy:
-        1. Decode tokens to text
-        2. Use character-level analysis to find structural chars
-        3. Map character positions back to token indices
+        1. Decode each token individually
+        2. Check if token is structural based on its text content
+        3. For schema keys, use sliding window to match multi-token keys
+        4. Mark structural tokens for masking
         
         Args:
             token_ids: Tensor of token IDs for one sequence
@@ -226,10 +258,10 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         if not valid_mask.any():
             return []
         
-        # Decode to text (excluding already-masked tokens)
+        # Decode to full text for context
         valid_tokens = token_ids[valid_mask]
         try:
-            decoded_text = self.processor.tokenizer.decode(
+            full_text = self.processor.tokenizer.decode(
                 valid_tokens, 
                 skip_special_tokens=False
             )
@@ -239,88 +271,110 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 console.print(f"[yellow]Warning: Failed to decode tokens: {e}[/yellow]")
             return []
         
-        # Build mapping from character position to token index
-        char_to_token = self._build_char_to_token_map(valid_tokens, decoded_text)
+        # Identify structural tokens
+        token_indices_to_mask = set()  # Use set to avoid duplicates
         
-        # Find structural character positions
-        structural_positions = self._find_structural_char_positions(decoded_text)
-        
-        # Map character positions to token indices
-        token_indices = []
-        for char_pos in structural_positions:
-            token_idx = char_to_token.get(char_pos)
-            if token_idx is not None:
-                # Map back to original sequence position (accounting for masked tokens)
-                original_idx = torch.where(valid_mask)[0][token_idx].item()
-                token_indices.append(original_idx)
-        
-        return list(set(token_indices))
-    
-    def _find_structural_char_positions(self, text: str) -> Set[int]:
-        """Find character positions of structural JSON tokens.
-        
-        Args:
-            text: Decoded text to analyze
-            
-        Returns:
-            Set of character positions to mask
-        """
-        positions = set()
-        
-        # Mask single structural characters
-        for i, char in enumerate(text):
-            if char in self.STRUCTURAL_CHARS:
-                positions.add(i)
-        
-        # Mask JSON keywords if enabled (only 'null' - true/false can be semantic)
-        if self.mask_keywords:
-            for keyword in self.JSON_KEYWORDS:
-                # Use word boundaries to avoid masking parts of real content
-                pattern = r'\b' + re.escape(keyword) + r'\b'
-                for match in re.finditer(pattern, text):
-                    positions.update(range(match.start(), match.end()))
-        
-        # Mask schema keys if enabled
-        if self.mask_keys and self.schema_keys:
-            for key in self.schema_keys:
-                # Match quoted keys like "Marque": or "contents":
-                pattern = r'"' + re.escape(key) + r'"\s*:'
-                for match in re.finditer(pattern, text):
-                    # Mask the key and quotes, but not the colon (already masked)
-                    positions.update(range(match.start(), match.end() - 1))
-        
-        return positions
-    
-    def _build_char_to_token_map(self, token_ids, text: str) -> Dict[int, int]:
-        """Build mapping from character position to token index.
-        
-        This is needed because we identify structural positions at the character level
-        (using regex/string analysis) but need to mask at the token level.
-        
-        Args:
-            token_ids: Tensor of token IDs
-            text: Full decoded text
-            
-        Returns:
-            Dictionary mapping character position to token index
-        """
-        char_to_token = {}
-        current_pos = 0
-        
-        for token_idx, token_id in enumerate(token_ids):
+        # First pass: mask individual structural tokens
+        for i, token_id in enumerate(valid_tokens):
             # Decode individual token
-            token_text = self.processor.tokenizer.decode([token_id.item()])
-            token_len = len(token_text)
+            try:
+                token_text = self.processor.tokenizer.decode([token_id.item()], skip_special_tokens=False)
+            except:
+                continue
             
-            # Map all characters in this token to this token index
-            for offset in range(token_len):
-                char_pos = current_pos + offset
-                if char_pos < len(text):
-                    char_to_token[char_pos] = token_idx
-            
-            current_pos += token_len
+            # Check if this token should be masked (non-schema-key checks)
+            if self._is_structural_token(token_text, full_text, check_schema_keys=False):
+                # Map back to original sequence position (accounting for masked tokens)
+                original_idx = torch.where(valid_mask)[0][i].item()
+                token_indices_to_mask.add(original_idx)
         
-        return char_to_token
+        # Second pass: mask schema keys using sliding window
+        if self.mask_keys and self.schema_keys:
+            token_indices_to_mask.update(self._find_schema_key_spans(valid_tokens, valid_mask))
+        
+        return list(token_indices_to_mask)
+    
+    def _find_schema_key_spans(self, valid_tokens, valid_mask):
+        """Find token spans that correspond to schema keys using sliding window.
+        
+        Args:
+            valid_tokens: Tensor of non-masked token IDs
+            valid_mask: Boolean mask of valid positions in original sequence
+            
+        Returns:
+            Set of token indices to mask
+        """
+        indices_to_mask = set()
+        
+        for key in self.schema_keys:
+            # Try sliding windows of different sizes (1 to 10 tokens)
+            for window_size in range(1, min(11, len(valid_tokens) + 1)):
+                for start_idx in range(len(valid_tokens) - window_size + 1):
+                    # Decode this window
+                    window_tokens = valid_tokens[start_idx:start_idx + window_size]
+                    try:
+                        window_text = self.processor.tokenizer.decode(
+                            window_tokens, 
+                            skip_special_tokens=False
+                        ).strip()
+                    except:
+                        continue
+                    
+                    # Check if this window matches the schema key (with or without quotes)
+                    if window_text == key or window_text == f'"{key}"' or window_text == f"'{key}'":
+                        # Mask all tokens in this window
+                        for i in range(start_idx, start_idx + window_size):
+                            original_idx = torch.where(valid_mask)[0][i].item()
+                            indices_to_mask.add(original_idx)
+        
+        return indices_to_mask
+    
+    def _is_structural_token(self, token_text: str, full_context: str, check_schema_keys: bool = True) -> bool:
+        """Determine if a token is structural (should be masked).
+        
+        Args:
+            token_text: The decoded text of the individual token
+            full_context: The full decoded text for context
+            check_schema_keys: Whether to check for schema keys (set False to avoid duplication with sliding window)
+            
+        Returns:
+            True if token should be masked, False if it's semantic content
+        """
+        # Strip whitespace for checking
+        stripped = token_text.strip()
+        
+        # 1. Mask pure whitespace tokens
+        if not stripped:
+            return True
+        
+        # 2. Mask pure structural character tokens
+        if all(c in self.STRUCTURAL_CHARS for c in token_text):
+            return True
+        
+        # 3. Mask JSON Schema keywords
+        for keyword in self.SCHEMA_KEYWORDS:
+            if re.search(r'\b' + re.escape(keyword) + r'\b', stripped):
+                return True
+        
+        # 4. Mask JSON type keywords (object, string, number, etc.)
+        for type_keyword in self.JSON_TYPE_KEYWORDS:
+            if stripped.lower() == type_keyword:
+                return True
+        
+        # 5. Mask JSON null keyword
+        if self.mask_keywords and stripped == 'null':
+            return True
+        
+        # 6. Mask schema field names if enabled (handled by sliding window now)
+        # This is kept for backwards compatibility but won't match multi-token keys
+        if check_schema_keys and self.mask_keys and self.schema_keys:
+            for key in self.schema_keys:
+                # Check if token is exactly the schema key (single-token keys only)
+                if stripped == key or stripped == f'"{key}"':
+                    return True
+        
+        # 7. Keep semantic content
+        return False
     
     def get_masking_stats(self) -> Dict[str, Any]:
         """Get statistics about token masking.
@@ -342,6 +396,94 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
             'mask_percentage': (self.masked_tokens / self.total_tokens) * 100,
             'batch_count': self.batch_count
         }
+    
+    def _print_unmasked_sample(self, masked_labels, original_labels):
+        """Print a sample of the unmasked (semantic) content being learned.
+        
+        Args:
+            masked_labels: Labels tensor after masking [seq_len]
+            original_labels: Labels tensor before masking [seq_len]
+        """
+        try:
+            # Get indices of tokens that are NOT masked AFTER our masking
+            unmasked_after = (masked_labels != -100)
+            
+            # Get indices of tokens that were NOT masked BEFORE our masking (i.e., assistant response only)
+            unmasked_before = (original_labels != -100)
+            
+            if not unmasked_after.any():
+                console.print("[dim]  └─ No unmasked tokens in this example[/dim]")
+                return
+            
+            # Only consider tokens that were valid in the original (not prompt tokens)
+            valid_original_count = unmasked_before.sum().item()
+            if valid_original_count == 0:
+                console.print("[dim]  └─ No valid tokens in original (all prompt)[/dim]")
+                return
+            
+            # DEBUG: Show what tokens are in the original labels (before our masking)
+            if self.batch_count == 10:  # Only on first verbose batch to avoid spam
+                console.print("[yellow]  🔍 DEBUG: Checking original labels (what Unsloth gave us):[/yellow]")
+                
+                # Count masked vs unmasked in original
+                total_tokens = len(original_labels)
+                original_masked = (original_labels == -100).sum().item()
+                original_unmasked = total_tokens - original_masked
+                console.print(f"[yellow]     Total tokens in sequence: {total_tokens}[/yellow]")
+                console.print(f"[yellow]     Masked by Unsloth (prompt): {original_masked} ({original_masked/total_tokens*100:.1f}%)[/yellow]")
+                console.print(f"[yellow]     Unmasked (assistant): {original_unmasked} ({original_unmasked/total_tokens*100:.1f}%)[/yellow]")
+                
+                # Decode ONLY the unmasked tokens (should be assistant only)
+                if unmasked_before.any():
+                    original_valid_tokens = original_labels[unmasked_before]
+                    original_decoded = self.processor.tokenizer.decode(
+                        original_valid_tokens[:100],  # First 100 tokens
+                        skip_special_tokens=False
+                    )
+                    console.print(f"[yellow]     First 100 unmasked tokens (should be assistant only): {repr(original_decoded[:300])}[/yellow]")
+                else:
+                    console.print(f"[yellow]     WARNING: No unmasked tokens found![/yellow]")
+            
+            # Extract unmasked token IDs (what we're keeping for training)
+            unmasked_tokens = masked_labels[unmasked_after]
+            
+            # Decode to text
+            unmasked_text = self.processor.tokenizer.decode(
+                unmasked_tokens,
+                skip_special_tokens=True
+            )
+            
+            # Also get the full original text for comparison
+            original_tokens = original_labels[unmasked_before]
+            original_text = self.processor.tokenizer.decode(
+                original_tokens,
+                skip_special_tokens=True
+            )
+            
+            # Calculate how much was kept vs masked (only count originally valid tokens)
+            kept_tokens = unmasked_after.sum().item()
+            kept_pct = (kept_tokens / valid_original_count * 100) if valid_original_count > 0 else 0
+            
+            console.print(f"[dim]  └─ Unmasked content ({kept_pct:.1f}% kept, {kept_tokens}/{valid_original_count} tokens):[/dim]")
+            
+            # Truncate if too long
+            max_display = 500
+            if len(unmasked_text) > max_display:
+                display_text = unmasked_text[:max_display] + "..."
+            else:
+                display_text = unmasked_text
+            
+            console.print(f"[green]     {repr(display_text)}[/green]")
+            
+            # Show original if not too long (for comparison)
+            if len(original_text) <= 400:
+                console.print(f"[dim]     Original ({len(original_text)} chars): {repr(original_text[:200])}{'...' if len(original_text) > 200 else ''}[/dim]")
+                
+        except Exception as e:
+            console.print(f"[yellow]  └─ Could not decode unmasked tokens: {e}[/yellow]")
+            import traceback
+            if self.verbose:
+                traceback.print_exc()
     
     def print_stats(self):
         """Print masking statistics."""
@@ -511,7 +653,10 @@ def create_selective_loss_collator(
             mask_schema_keys=False,
             mask_json_keywords=False,
             masking_start_step=masking_start_step,
-            verbose=verbose
+            verbose=verbose,
+            train_on_responses_only=True,  # CRITICAL: Only compute loss on assistant responses
+            instruction_part="<|im_start|>user",  # Marker for user prompts
+            response_part="<|im_start|>assistant"  # Marker for assistant responses
         )
     
     elif mask_level == "moderate":
@@ -522,7 +667,10 @@ def create_selective_loss_collator(
             mask_schema_keys=False,
             mask_json_keywords=True,
             masking_start_step=masking_start_step,
-            verbose=verbose
+            verbose=verbose,
+            train_on_responses_only=True,  # CRITICAL: Only compute loss on assistant responses
+            instruction_part="<|im_start|>user",  # Marker for user prompts
+            response_part="<|im_start|>assistant"  # Marker for assistant responses
         )
     
     elif mask_level == "aggressive":
@@ -552,7 +700,10 @@ def create_selective_loss_collator(
             schema_keys=schema_keys,
             mask_json_keywords=True,
             masking_start_step=masking_start_step,
-            verbose=verbose
+            verbose=verbose,
+            train_on_responses_only=True,  # CRITICAL: Only compute loss on assistant responses
+            instruction_part="<|im_start|>user",  # Marker for user prompts
+            response_part="<|im_start|>assistant"  # Marker for assistant responses
         )
     
     else:
