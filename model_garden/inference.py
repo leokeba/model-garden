@@ -96,6 +96,27 @@ def estimate_model_size_gb(model_path: str) -> float:
     return 7.0
 
 
+def get_free_gpu_memory_gb() -> float:
+    """Get currently available (free) GPU memory in GB.
+    
+    Returns:
+        Free GPU memory in GB, or 0.0 if no GPU is available
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            # Force synchronize and clear cache to get accurate free memory
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            
+            # Get free memory for the first GPU (device 0)
+            free_memory, total_memory = torch.cuda.mem_get_info(0)
+            return free_memory / (1024 ** 3)  # Convert bytes to GB
+    except Exception as e:
+        console.print(f"[yellow]⚠️  Could not detect free GPU memory: {e}[/yellow]")
+    return 0.0
+
+
 def calculate_gpu_memory_utilization(
     model_path: str,
     max_model_len: Optional[int] = None,
@@ -107,6 +128,8 @@ def calculate_gpu_memory_utilization(
     - Model weights
     - KV cache (based on max_model_len)
     - Temporary buffers and overhead
+    
+    It also checks actual available memory to avoid OOM errors when switching models.
     
     Args:
         model_path: Path to the model or HuggingFace model ID
@@ -122,7 +145,9 @@ def calculate_gpu_memory_utilization(
         console.print("[yellow]⚠️  No GPU detected, using default utilization of 0.9[/yellow]")
         return 0.9
     
-    console.print(f"[cyan]💾 Detected GPU memory: {gpu_memory_gb:.1f} GB[/cyan]")
+    # Check actual free memory (important when switching models)
+    free_memory_gb = get_free_gpu_memory_gb()
+    console.print(f"[cyan]💾 GPU memory: {free_memory_gb:.1f} GB free / {gpu_memory_gb:.1f} GB total[/cyan]")
     
     # Estimate model size
     model_size_gb = estimate_model_size_gb(model_path)
@@ -147,23 +172,44 @@ def calculate_gpu_memory_utilization(
     # Add safety margin for temporary buffers and CUDA graphs (20%)
     total_with_margin = total_needed * 1.20
     
-    # Calculate utilization
-    if total_with_margin >= gpu_memory_gb:
-        # Model won't fit comfortably, use aggressive utilization
-        utilization = 0.95
-        console.print(f"[yellow]⚠️  Model memory requirements ({total_with_margin:.1f} GB) are close to GPU capacity[/yellow]")
-        console.print(f"[yellow]   Using aggressive utilization: {utilization}[/yellow]")
-    elif total_with_margin >= gpu_memory_gb * 0.7:
+    # If free memory is significantly less than total memory, we need to be more conservative
+    # This happens when switching models - old model may not be fully cleared yet
+    memory_pressure_ratio = free_memory_gb / gpu_memory_gb
+    if memory_pressure_ratio < 0.95:
+        console.print(f"[yellow]⚠️  GPU memory not fully cleared ({memory_pressure_ratio*100:.1f}% free)[/yellow]")
+        console.print(f"[yellow]   Adjusting target to use free memory instead of total memory[/yellow]")
+        # Use free memory as the effective total, with extra safety margin
+        effective_gpu_memory = free_memory_gb * 0.95  # 5% safety margin
+    else:
+        effective_gpu_memory = gpu_memory_gb
+    
+    # Check if KV cache is unreasonably large compared to available memory
+    # If KV cache + model won't fit, warn but continue (vLLM will handle it)
+    if total_needed > (effective_gpu_memory * 0.75):
+        console.print(f"[yellow]⚠️  Requested max_model_len ({max_model_len}) may be too large for available memory[/yellow]")
+        console.print(f"[yellow]   vLLM may automatically reduce max_model_len to fit[/yellow]")
+    
+    # Calculate utilization based on effective memory
+    if total_with_margin >= effective_gpu_memory:
+        # Model won't fit comfortably, need to use very high utilization
+        # But cap at 0.95 to leave minimal room for overhead
+        # Calculate how much we need: if we need 36GB but only have 23GB,
+        # we need utilization of at least (36/23) * 0.90 = but cap at 0.95
+        required_util = (total_needed / effective_gpu_memory) * 0.95
+        utilization = min(0.95, max(0.85, required_util))
+        console.print(f"[yellow]⚠️  Model memory requirements ({total_with_margin:.1f} GB) exceed available capacity ({effective_gpu_memory:.1f} GB)[/yellow]")
+        console.print(f"[yellow]   Using high utilization: {utilization:.2f} (vLLM will adjust KV cache accordingly)[/yellow]")
+    elif total_with_margin >= effective_gpu_memory * 0.7:
         # Model is a significant portion of memory
-        utilization = 0.88
-        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/gpu_memory_gb)*100:.0f}% of GPU memory[/cyan]")
+        utilization = 0.85
+        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/effective_gpu_memory)*100:.0f}% of available GPU memory[/cyan]")
         console.print(f"[cyan]  Using standard utilization: {utilization}[/cyan]")
     else:
         # Model fits comfortably, use conservative utilization
         # This leaves plenty of room for batching and multiple concurrent requests
         # Use at least 0.5 to ensure good throughput, cap at 0.75 to leave room for batching
-        utilization = max(0.50, min(0.75, (total_with_margin / gpu_memory_gb) + 0.20))
-        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/gpu_memory_gb)*100:.0f}% of GPU memory[/cyan]")
+        utilization = max(0.50, min(0.75, (total_with_margin / effective_gpu_memory) + 0.20))
+        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/effective_gpu_memory)*100:.0f}% of available GPU memory[/cyan]")
         console.print(f"[cyan]  Using conservative utilization: {utilization} (leaves room for batching)[/cyan]")
     
     return round(utilization, 2)
@@ -296,6 +342,25 @@ class InferenceService:
             return
 
         console.print(f"[cyan]Loading model: {self.model_path}[/cyan]")
+        
+        # Force aggressive GPU cleanup before loading to ensure clean state
+        # This is important when switching models to avoid OOM errors
+        try:
+            import torch
+            import gc
+            
+            # Multiple GC passes to handle circular references
+            for _ in range(3):
+                gc.collect()
+            
+            # Clear GPU cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                
+            console.print("[cyan]✓ Pre-load cleanup completed[/cyan]")
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Pre-load cleanup warning: {e}[/yellow]")
         
         try:
             from vllm import AsyncEngineArgs, AsyncLLMEngine

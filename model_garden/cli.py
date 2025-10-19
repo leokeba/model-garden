@@ -880,21 +880,24 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
 @click.option("--model-path", required=True, help="Path to the model to serve")
 @click.option("--port", default=8000, help="Port to run the inference server on")
 @click.option("--host", default="0.0.0.0", help="Host to bind the server to")
-@click.option("--tensor-parallel-size", default=1, help="Number of GPUs to use for tensor parallelism")
-@click.option("--gpu-memory-utilization", default=0.0, type=float, help="GPU memory utilization (0.0-1.0, 0 = auto)")
-@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default="auto", help="Quantization method (auto = detect from model)")
-@click.option("--max-model-len", type=int, help="Maximum sequence length")
-def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len):
+@click.option("--tensor-parallel-size", default=None, type=int, help="Number of GPUs to use for tensor parallelism (default: from registry or 1)")
+@click.option("--gpu-memory-utilization", default=None, type=float, help="GPU memory utilization (0.0-1.0, default: from registry or auto)")
+@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default=None, help="Quantization method (default: from registry or auto)")
+@click.option("--max-model-len", type=int, default=None, help="Maximum sequence length (default: from registry)")
+@click.option("--dtype", type=click.Choice(["auto", "float16", "bfloat16", "float32"]), default=None, help="Data type (default: from registry or auto)")
+def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len, dtype):
     """
     Start an inference server with vLLM for high-throughput model serving.
     
     This command loads a model using vLLM and starts a FastAPI server
     with OpenAI-compatible endpoints for text generation and chat completions.
     
+    Parameters not specified will use defaults from the model registry if available.
+    
     Examples:
     
         \b
-        # Serve a model on default port 8000
+        # Serve a model on default port 8000 (uses registry defaults)
         uv run model-garden serve-model --model-path ./models/my-model
         
         \b
@@ -914,9 +917,51 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
     try:
         import os
         import uvicorn
+        from model_garden.model_registry import get_model
         
         console.print("\n[bold cyan]🚀 Model Garden - Inference Server[/bold cyan]\n")
         console.print(f"[cyan]Loading model:[/cyan] {model_path}")
+        
+        # Try to get model defaults from registry
+        model_info = None
+        try:
+            model_info = get_model(model_path)
+            if model_info:
+                console.print(f"[green]📋 Found model in registry:[/green] {model_info.name}")
+        except Exception as e:
+            console.print(f"[yellow]ℹ️  Model not in registry, using defaults[/yellow]")
+        
+        # Apply defaults from registry if parameters not specified
+        if model_info:
+            if tensor_parallel_size is None:
+                tensor_parallel_size = model_info.inference_defaults.tensor_parallel_size
+                console.print(f"  Using registry default tensor_parallel_size: {tensor_parallel_size}")
+            
+            if gpu_memory_utilization is None:
+                gpu_memory_utilization = model_info.inference_defaults.gpu_memory_utilization
+                console.print(f"  Using registry default gpu_memory_utilization: {gpu_memory_utilization}")
+            
+            if quantization is None:
+                quantization = model_info.inference_defaults.quantization or "auto"
+                console.print(f"  Using registry default quantization: {quantization}")
+            
+            if max_model_len is None:
+                max_model_len = model_info.inference_defaults.max_model_len
+                console.print(f"  Using registry default max_model_len: {max_model_len}")
+            
+            if dtype is None:
+                dtype = model_info.inference_defaults.dtype
+                console.print(f"  Using registry default dtype: {dtype}")
+        else:
+            # Fallback defaults if not in registry
+            if tensor_parallel_size is None:
+                tensor_parallel_size = 1
+            if gpu_memory_utilization is None:
+                gpu_memory_utilization = 0.0  # auto mode
+            if quantization is None:
+                quantization = "auto"
+            if dtype is None:
+                dtype = "auto"
         
         # Reduce torch compile workers to save memory (default is 24, we use 8)
         os.environ["TORCH_COMPILE_MAX_WORKERS"] = "8"
@@ -927,12 +972,14 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
         
         if tensor_parallel_size > 1:
             os.environ["MODEL_GARDEN_TENSOR_PARALLEL_SIZE"] = str(tensor_parallel_size)
-        # Always set GPU memory utilization (0 = auto mode)
+        # Always set GPU memory utilization
         os.environ["MODEL_GARDEN_GPU_MEMORY_UTILIZATION"] = str(gpu_memory_utilization)
         if quantization:
             os.environ["MODEL_GARDEN_QUANTIZATION"] = quantization
         if max_model_len:
             os.environ["MODEL_GARDEN_MAX_MODEL_LEN"] = str(max_model_len)
+        if dtype:
+            os.environ["MODEL_GARDEN_DTYPE"] = dtype
         
         console.print(f"\n[cyan]Starting server on[/cyan] http://{host}:{port}")
         console.print(f"[cyan]API docs available at[/cyan] http://{host}:{port}/docs\n")
@@ -964,19 +1011,24 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
 @click.option("--temperature", default=0.7, type=float, help="Sampling temperature")
 @click.option("--top-p", default=0.9, type=float, help="Top-p (nucleus) sampling parameter")
 @click.option("--stream/--no-stream", default=False, help="Enable streaming output")
-@click.option("--tensor-parallel-size", default=1, type=int, help="Number of GPUs for tensor parallelism")
-@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default="auto", help="Quantization method (auto = detect from model)")
-def inference_generate(model_path, prompt, max_tokens, temperature, top_p, stream, tensor_parallel_size, quantization):
+@click.option("--tensor-parallel-size", default=None, type=int, help="Number of GPUs for tensor parallelism (default: from registry or 1)")
+@click.option("--gpu-memory-utilization", default=None, type=float, help="GPU memory utilization (0.0-1.0, default: from registry or auto)")
+@click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default=None, help="Quantization method (default: from registry or auto)")
+@click.option("--max-model-len", type=int, default=None, help="Maximum sequence length (default: from registry)")
+@click.option("--dtype", type=click.Choice(["auto", "float16", "bfloat16", "float32"]), default=None, help="Data type (default: from registry or auto)")
+def inference_generate(model_path, prompt, max_tokens, temperature, top_p, stream, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len, dtype):
     """
     Generate text using vLLM inference engine (one-off generation).
     
     This command loads a model, generates a response, and exits.
     For persistent serving, use the 'serve-model' command instead.
     
+    Parameters not specified will use defaults from the model registry if available.
+    
     Examples:
     
         \b
-        # Generate text with default settings
+        # Generate text with default settings (uses registry defaults)
         uv run model-garden inference-generate \\
             --model-path ./models/my-model \\
             --prompt "Once upon a time"
@@ -999,15 +1051,51 @@ def inference_generate(model_path, prompt, max_tokens, temperature, top_p, strea
     """
     try:
         from model_garden.inference import InferenceService
+        from model_garden.model_registry import get_model
         import asyncio
         
         console.print("\n[bold cyan]🤖 Model Garden - Text Generation[/bold cyan]\n")
         console.print(f"[cyan]Loading model:[/cyan] {model_path}\n")
         
+        # Try to get model defaults from registry
+        model_info = None
+        try:
+            model_info = get_model(model_path)
+            if model_info:
+                console.print(f"[green]📋 Found model in registry:[/green] {model_info.name}\n")
+        except Exception:
+            pass
+        
+        # Apply defaults from registry if parameters not specified
+        if model_info:
+            if tensor_parallel_size is None:
+                tensor_parallel_size = model_info.inference_defaults.tensor_parallel_size
+            if gpu_memory_utilization is None:
+                gpu_memory_utilization = model_info.inference_defaults.gpu_memory_utilization
+            if quantization is None:
+                quantization = model_info.inference_defaults.quantization or "auto"
+            if max_model_len is None:
+                max_model_len = model_info.inference_defaults.max_model_len
+            if dtype is None:
+                dtype = model_info.inference_defaults.dtype
+        else:
+            # Fallback defaults if not in registry
+            if tensor_parallel_size is None:
+                tensor_parallel_size = 1
+            if gpu_memory_utilization is None:
+                gpu_memory_utilization = 0.0  # auto mode
+            if quantization is None:
+                quantization = "auto"
+            if dtype is None:
+                dtype = "auto"
+        
         # Create inference service
         service = InferenceService(
             model_path=model_path,
             tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_model_len=max_model_len,
+            dtype=dtype,
             quantization=quantization
         )
         

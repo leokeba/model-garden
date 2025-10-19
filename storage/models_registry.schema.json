@@ -250,8 +250,9 @@
             },
             "gpu_memory_utilization": {
               "type": "number",
-              "minimum": 0.1,
-              "maximum": 1.0
+              "minimum": 0.0,
+              "maximum": 1.0,
+              "description": "GPU memory utilization (0.0 = auto-calculate based on model)"
             },
             "quantization": {
               "type": ["string", "null"],

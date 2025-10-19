@@ -6,12 +6,12 @@
     "text-llm": {
       "name": "Text-Only Language Models",
       "description": "Models for text generation and completion tasks",
-      "icon": "✍️"
+      "icon": "\u270d\ufe0f"
     },
     "vision-vlm": {
       "name": "Vision-Language Models",
       "description": "Multimodal models for image + text understanding",
-      "icon": "🎨"
+      "icon": "\ud83c\udfa8"
     }
   },
   "models": {
@@ -23,7 +23,12 @@
       "base_architecture": "llama",
       "parameters": "1.1B",
       "description": "Compact model perfect for testing and low-memory environments",
-      "tags": ["small", "fast", "testing", "quantized"],
+      "tags": [
+        "small",
+        "fast",
+        "testing",
+        "quantized"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -58,15 +63,21 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         }
       },
       "inference_defaults": {
         "max_model_len": 2048,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/tinyllama-bnb-4bit",
@@ -81,7 +92,12 @@
       "base_architecture": "phi",
       "parameters": "2.7B",
       "description": "Microsoft's Phi-2 with excellent quality-to-size ratio",
-      "tags": ["medium", "quality", "efficient", "quantized"],
+      "tags": [
+        "medium",
+        "quality",
+        "efficient",
+        "quantized"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -116,15 +132,21 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "dense"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "dense"
+          ],
           "use_rslora": false
         }
       },
       "inference_defaults": {
         "max_model_len": 2048,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/phi-2-bnb-4bit",
@@ -139,7 +161,12 @@
       "base_architecture": "mistral",
       "parameters": "7B",
       "description": "High-quality 7B model with excellent performance",
-      "tags": ["large", "high-quality", "popular", "quantized"],
+      "tags": [
+        "large",
+        "high-quality",
+        "popular",
+        "quantized"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -174,15 +201,21 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         }
       },
       "inference_defaults": {
         "max_model_len": 4096,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/mistral-7b-bnb-4bit",
@@ -197,7 +230,12 @@
       "base_architecture": "llama",
       "parameters": "7B",
       "description": "Meta's Llama 2 - popular and well-tested",
-      "tags": ["large", "popular", "tested", "quantized"],
+      "tags": [
+        "large",
+        "popular",
+        "tested",
+        "quantized"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -232,15 +270,21 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         }
       },
       "inference_defaults": {
         "max_model_len": 4096,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/llama-2-7b-bnb-4bit",
@@ -255,7 +299,12 @@
       "base_architecture": "llama",
       "parameters": "8B",
       "description": "Latest Llama 3 with improved performance",
-      "tags": ["large", "latest", "high-quality", "quantized"],
+      "tags": [
+        "large",
+        "latest",
+        "high-quality",
+        "quantized"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -290,15 +339,21 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         }
       },
       "inference_defaults": {
         "max_model_len": 8192,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/llama-3-8b-bnb-4bit",
@@ -313,7 +368,12 @@
       "base_architecture": "qwen-vl",
       "parameters": "3B",
       "description": "Compact vision-language model for image understanding",
-      "tags": ["vision", "multimodal", "small", "efficient"],
+      "tags": [
+        "vision",
+        "multimodal",
+        "small",
+        "efficient"
+      ],
       "status": "stable",
       "quantization": {
         "method": null,
@@ -335,7 +395,7 @@
       },
       "training_defaults": {
         "hyperparameters": {
-          "learning_rate": 0.00002,
+          "learning_rate": 2e-05,
           "num_epochs": 3,
           "batch_size": 1,
           "gradient_accumulation_steps": 8,
@@ -348,7 +408,12 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         },
         "selective_loss": {
@@ -358,10 +423,11 @@
         }
       },
       "inference_defaults": {
-        "max_model_len": 2048,
+        "max_model_len": 8192,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct",
@@ -376,7 +442,12 @@
       "base_architecture": "qwen-vl",
       "parameters": "7B",
       "description": "High-quality vision-language model (recommended for production)",
-      "tags": ["vision", "multimodal", "recommended", "high-quality"],
+      "tags": [
+        "vision",
+        "multimodal",
+        "recommended",
+        "high-quality"
+      ],
       "status": "stable",
       "quantization": {
         "method": null,
@@ -398,7 +469,7 @@
       },
       "training_defaults": {
         "hyperparameters": {
-          "learning_rate": 0.00002,
+          "learning_rate": 2e-05,
           "num_epochs": 3,
           "batch_size": 1,
           "gradient_accumulation_steps": 8,
@@ -411,7 +482,12 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         },
         "selective_loss": {
@@ -421,10 +497,11 @@
         }
       },
       "inference_defaults": {
-        "max_model_len": 2048,
+        "max_model_len": 8192,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": "fp8",
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct",
@@ -439,7 +516,12 @@
       "base_architecture": "qwen-vl",
       "parameters": "72B",
       "description": "Largest vision-language model (requires multi-GPU setup)",
-      "tags": ["vision", "multimodal", "large", "advanced"],
+      "tags": [
+        "vision",
+        "multimodal",
+        "large",
+        "advanced"
+      ],
       "status": "experimental",
       "quantization": {
         "method": null,
@@ -462,7 +544,7 @@
       },
       "training_defaults": {
         "hyperparameters": {
-          "learning_rate": 0.00001,
+          "learning_rate": 1e-05,
           "num_epochs": 3,
           "batch_size": 1,
           "gradient_accumulation_steps": 16,
@@ -475,7 +557,12 @@
           "r": 32,
           "lora_alpha": 32,
           "lora_dropout": 0.05,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": true
         },
         "selective_loss": {
@@ -487,7 +574,7 @@
       "inference_defaults": {
         "max_model_len": 2048,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.90,
+        "gpu_memory_utilization": 0.9,
         "quantization": null,
         "tensor_parallel_size": 2
       },
@@ -504,7 +591,12 @@
       "base_architecture": "qwen-vl",
       "parameters": "3B",
       "description": "Memory-efficient 4-bit quantized vision model",
-      "tags": ["vision", "multimodal", "quantized", "efficient"],
+      "tags": [
+        "vision",
+        "multimodal",
+        "quantized",
+        "efficient"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -526,7 +618,7 @@
       },
       "training_defaults": {
         "hyperparameters": {
-          "learning_rate": 0.00002,
+          "learning_rate": 2e-05,
           "num_epochs": 3,
           "batch_size": 1,
           "gradient_accumulation_steps": 8,
@@ -539,7 +631,12 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         },
         "selective_loss": {
@@ -549,10 +646,11 @@
         }
       },
       "inference_defaults": {
-        "max_model_len": 2048,
+        "max_model_len": 8192,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.80,
-        "quantization": null
+        "gpu_memory_utilization": 0.8,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit",
@@ -567,7 +665,12 @@
       "base_architecture": "qwen-vl",
       "parameters": "7B",
       "description": "High-quality vision model with reduced memory footprint",
-      "tags": ["vision", "multimodal", "quantized", "recommended"],
+      "tags": [
+        "vision",
+        "multimodal",
+        "quantized",
+        "recommended"
+      ],
       "status": "stable",
       "quantization": {
         "method": "4bit",
@@ -589,7 +692,7 @@
       },
       "training_defaults": {
         "hyperparameters": {
-          "learning_rate": 0.00002,
+          "learning_rate": 2e-05,
           "num_epochs": 3,
           "batch_size": 1,
           "gradient_accumulation_steps": 8,
@@ -602,7 +705,12 @@
           "r": 16,
           "lora_alpha": 16,
           "lora_dropout": 0.0,
-          "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
           "use_rslora": false
         },
         "selective_loss": {
@@ -612,10 +720,11 @@
         }
       },
       "inference_defaults": {
-        "max_model_len": 2048,
+        "max_model_len": 8192,
         "dtype": "auto",
-        "gpu_memory_utilization": 0.85,
-        "quantization": null
+        "gpu_memory_utilization": 0.0,
+        "quantization": null,
+        "tensor_parallel_size": 1
       },
       "urls": {
         "huggingface": "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit",

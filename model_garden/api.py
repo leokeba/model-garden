@@ -1665,11 +1665,53 @@ class LoadModelRequest(BaseModel):
 
 @app.post("/api/v1/inference/load", response_model=APIResponse)
 async def load_inference_model(request: LoadModelRequest, background_tasks: BackgroundTasks):
-    """Load a model for inference (queued if another model is loading)."""
+    """Load a model for inference (queued if another model is loading).
+    
+    If parameters are not specified, defaults from the model registry are applied.
+    """
     from model_garden.inference import InferenceService, get_inference_service, set_inference_service
     from model_garden.job_queue import get_job_queue, JobType, JobStatus
+    from model_garden.model_registry import get_model
     
     queue = get_job_queue()
+    
+    # Try to get model defaults from registry
+    model_info = None
+    try:
+        model_info = get_model(request.model_path)
+        if model_info:
+            print(f"📋 Found model in registry: {model_info.name}")
+    except Exception as e:
+        print(f"ℹ️  Model not in registry, using provided parameters: {e}")
+    
+    # Apply defaults from registry if parameters not specified
+    max_model_len = request.max_model_len
+    dtype = request.dtype
+    gpu_memory_utilization = request.gpu_memory_utilization
+    quantization = request.quantization
+    tensor_parallel_size = request.tensor_parallel_size
+    
+    if model_info:
+        # Apply defaults for unspecified parameters
+        if max_model_len is None:
+            max_model_len = model_info.inference_defaults.max_model_len
+            print(f"  Using registry default max_model_len: {max_model_len}")
+        
+        if dtype == "auto":
+            dtype = model_info.inference_defaults.dtype
+            print(f"  Using registry default dtype: {dtype}")
+        
+        if gpu_memory_utilization == 0.0:
+            gpu_memory_utilization = model_info.inference_defaults.gpu_memory_utilization
+            print(f"  Using registry default gpu_memory_utilization: {gpu_memory_utilization}")
+        
+        if quantization is None and model_info.inference_defaults.quantization:
+            quantization = model_info.inference_defaults.quantization
+            print(f"  Using registry default quantization: {quantization}")
+        
+        if tensor_parallel_size == 1 and model_info.inference_defaults.tensor_parallel_size > 1:
+            tensor_parallel_size = model_info.inference_defaults.tensor_parallel_size
+            print(f"  Using registry default tensor_parallel_size: {tensor_parallel_size}")
     
     # Check if a model is already loaded
     current_service = get_inference_service()
