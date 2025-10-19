@@ -1,4 +1,4 @@
-"""Job queue management for background training tasks."""
+"""Job queue management for background tasks (training, model loading, etc.)."""
 
 import asyncio
 from enum import Enum
@@ -6,6 +6,14 @@ from typing import Dict, Optional, Any, Callable
 from datetime import datetime
 from pathlib import Path
 import json
+
+
+class JobType(str, Enum):
+    """Job type enumeration."""
+    TRAINING = "training"
+    MODEL_LOADING = "model_loading"
+    MODEL_UNLOADING = "model_unloading"
+    DATASET_PROCESSING = "dataset_processing"
 
 
 class JobStatus(str, Enum):
@@ -293,6 +301,59 @@ class JobQueue:
             self._queue[job_id]["status_message"] = message
             self._save_queue()
             return True
+    
+    async def has_running_job(self, job_type: Optional[JobType] = None) -> bool:
+        """
+        Check if there are any running jobs, optionally of a specific type.
+        
+        Args:
+            job_type: Optional job type to filter by
+            
+        Returns:
+            True if there are running jobs (of the specified type)
+        """
+        running_jobs = await self.list_jobs(
+            status=JobStatus.RUNNING,
+            job_type=job_type.value if job_type else None
+        )
+        return len(running_jobs) > 0
+    
+    async def get_running_job(self, job_type: Optional[JobType] = None) -> Optional[Dict[str, Any]]:
+        """
+        Get currently running job, optionally of a specific type.
+        
+        Args:
+            job_type: Optional job type to filter by
+            
+        Returns:
+            Running job dict or None
+        """
+        running_jobs = await self.list_jobs(
+            status=JobStatus.RUNNING,
+            job_type=job_type.value if job_type else None
+        )
+        return running_jobs[0] if running_jobs else None
+    
+    async def get_next_job_by_type(self, job_type: JobType) -> Optional[Dict[str, Any]]:
+        """
+        Get next queued job of a specific type.
+        
+        Args:
+            job_type: Type of job to get
+            
+        Returns:
+            Job data dict or None if no queued jobs of this type
+        """
+        queued_jobs = await self.list_jobs(
+            status=JobStatus.QUEUED,
+            job_type=job_type.value
+        )
+        
+        if not queued_jobs:
+            return None
+        
+        # First job in sorted list (highest priority, oldest)
+        return queued_jobs[0]
 
 
 # Global queue instance

@@ -30,6 +30,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - 4-bit, 8-bit, and 16-bit quantization
 - **🆕 Vision-Language Models** - Fine-tune Qwen2.5-VL (3B/7B/72B) for image + text tasks
 - **🎨 Multimodal Training** - Unified interface for text-only and vision-language models
+- **📊 Dataset Validation** - Auto-detect schemas, validate formats, generate statistics
 
 ### ⚡ Efficient Inference (NEW!)
 - **High-throughput serving** powered by vLLM
@@ -46,12 +47,14 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - Track GPU, CPU, and RAM power consumption
 - Historical carbon data and analytics
 - Per-model and per-job carbon reports
+- **BoAmps v1.1.0 compliance** - Standardized carbon reporting with real hardware data
 
 ### 🎯 Developer-Friendly
 - Simple REST API and CLI interface
 - Real-time training progress and job management
 - Comprehensive model management
 - **Integrated web dashboard** - Manage text and vision models via intuitive UI
+- **Priority job queue** - Background processing with queue management endpoints
 
 ---
 
@@ -376,7 +379,7 @@ pre-commit run --all-files
 
 **Current Status**: Phase 1 complete! Ready for production testing.
 
-### Phase 2: Core Features 🚧 (90% Complete!)
+### Phase 2: Core Features 🚧 (96% Complete!)
 - [x] **vLLM inference integration with streaming**
 - [x] **OpenAI-compatible inference API endpoints**
 - [x] **CLI commands for inference (serve, generate, chat)**
@@ -389,13 +392,12 @@ pre-commit run --all-files
 - [x] **Inference UI in web dashboard** (chat + completion modes)
 - [x] **Carbon emissions in training job details** ✨
 - [x] **Emissions page with BoAmps reports** ✨
-- [x] **BoAmps API scaffold** (GET /carbon/boamps/{job_id}) 🔧
-- [ ] **BoAmps real data integration** - Fill measures/infrastructure with actual hardware metrics
-- [ ] **Carbon CLI commands** - Add `carbon report`, `carbon summary`, `carbon export` commands
-- [ ] **Dataset management UI and API endpoints**
-- [ ] **Job queue and background processing**
-- [ ] **Real-time training monitoring via WebSocket**
-- [ ] **Advanced carbon analytics dashboard**
+- [x] **BoAmps real data integration** ✨ - Real hardware metrics in all report sections
+- [x] **Job queue for training & model loading** ✨ - Priority-based queue with API endpoints
+- [x] **Dataset validation and statistics** ✨ - Schema detection, format support, quality checks
+- [ ] **Carbon CLI commands** - Add `carbon report`, `carbon summary`, `carbon export` commands (deferred)
+- [ ] **Real-time training monitoring via WebSocket** - Live loss/accuracy charts
+- [ ] **Advanced carbon analytics dashboard** - Trends, comparisons, recommendations
 
 ### Phase 3: Production Features 📋
 - [ ] User authentication and authorization

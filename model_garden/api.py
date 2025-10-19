@@ -486,6 +486,56 @@ def cleanup_training_resources(*objects_to_delete):
     print("✓ Training resources cleaned up")
 
 
+async def run_model_loading(
+    job_id: str,
+    model_path: str,
+    tensor_parallel_size: int,
+    gpu_memory_utilization: float,
+    max_model_len: Optional[int],
+    dtype: str,
+    quantization: Optional[str]
+):
+    """Execute model loading in the background."""
+    from model_garden.inference import InferenceService, set_inference_service
+    from model_garden.job_queue import get_job_queue
+    
+    queue = get_job_queue()
+    
+    try:
+        # Mark job as running
+        await queue.start_job(job_id)
+        
+        print(f"🔄 Loading model: {model_path}")
+        
+        # Create inference service
+        service = InferenceService(
+            model_path=model_path,
+            tensor_parallel_size=tensor_parallel_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            quantization=quantization,
+        )
+        
+        # Load the model
+        await service.load_model()
+        
+        # Set as global service
+        set_inference_service(service)
+        
+        # Mark job as completed
+        model_info = service.get_model_info()
+        await queue.complete_job(job_id, result=model_info)
+        
+        print(f"✅ Model loaded successfully: {model_path}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Model loading failed: {error_msg}")
+        await queue.fail_job(job_id, error=error_msg)
+        raise
+
+
 def run_training_job(job_id: str):
     """Execute a training job in the background."""
     try:
@@ -1614,9 +1664,12 @@ class LoadModelRequest(BaseModel):
 
 
 @app.post("/api/v1/inference/load", response_model=APIResponse)
-async def load_inference_model(request: LoadModelRequest):
-    """Load a model for inference."""
+async def load_inference_model(request: LoadModelRequest, background_tasks: BackgroundTasks):
+    """Load a model for inference (queued if another model is loading)."""
     from model_garden.inference import InferenceService, get_inference_service, set_inference_service
+    from model_garden.job_queue import get_job_queue, JobType, JobStatus
+    
+    queue = get_job_queue()
     
     # Check if a model is already loaded
     current_service = get_inference_service()
@@ -1626,34 +1679,76 @@ async def load_inference_model(request: LoadModelRequest):
             message=f"Model already loaded: {current_service.model_path}. Unload it first."
         )
     
-    try:
-        # Create new inference service
-        service = InferenceService(
-            model_path=request.model_path,
-            tensor_parallel_size=request.tensor_parallel_size,
-            gpu_memory_utilization=request.gpu_memory_utilization,
-            max_model_len=request.max_model_len,
-            dtype=request.dtype,
-            quantization=request.quantization,
+    # Check if a model is currently loading
+    loading_job = await queue.get_running_job(JobType.MODEL_LOADING)
+    if loading_job:
+        return APIResponse(
+            success=False,
+            message=f"A model is already loading: {loading_job.get('job_config', {}).get('model_path', 'unknown')}. Please wait or cancel it first."
+        )
+    
+    # Check if there are queued model loading jobs
+    has_queued = await queue.has_running_job(JobType.MODEL_LOADING)
+    if has_queued:
+        # Add to queue
+        job_id = f"model-loading-{int(datetime.now().timestamp())}"
+        await queue.add_job(
+            job_id=job_id,
+            job_type=JobType.MODEL_LOADING,
+            job_config={
+                "model_path": request.model_path,
+                "tensor_parallel_size": request.tensor_parallel_size,
+                "gpu_memory_utilization": request.gpu_memory_utilization,
+                "max_model_len": request.max_model_len,
+                "dtype": request.dtype,
+                "quantization": request.quantization,
+            },
+            priority=0
         )
         
-        # Load the model
-        await service.load_model()
-        
-        # Set as global service
-        set_inference_service(service)
+        position = await queue.get_queue_position(job_id)
         
         return APIResponse(
             success=True,
-            data=service.get_model_info(),
-            message=f"Model loaded successfully: {request.model_path}"
+            data={"job_id": job_id, "status": "queued", "queue_position": position},
+            message=f"Model loading queued (position: {position})"
         )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to load model: {str(e)}"
-        )
+    
+    # No model loading in progress, start immediately
+    job_id = f"model-loading-{int(datetime.now().timestamp())}"
+    
+    # Add to queue as running
+    await queue.add_job(
+        job_id=job_id,
+        job_type=JobType.MODEL_LOADING,
+        job_config={
+            "model_path": request.model_path,
+            "tensor_parallel_size": request.tensor_parallel_size,
+            "gpu_memory_utilization": request.gpu_memory_utilization,
+            "max_model_len": request.max_model_len,
+            "dtype": request.dtype,
+            "quantization": request.quantization,
+        },
+        priority=0
+    )
+    
+    # Start loading in background
+    background_tasks.add_task(
+        run_model_loading,
+        job_id,
+        request.model_path,
+        request.tensor_parallel_size,
+        request.gpu_memory_utilization,
+        request.max_model_len,
+        request.dtype,
+        request.quantization
+    )
+    
+    return APIResponse(
+        success=True,
+        data={"job_id": job_id, "status": "loading"},
+        message=f"Model loading started: {request.model_path}"
+    )
 
 
 @app.post("/api/v1/inference/unload", response_model=APIResponse)
@@ -1697,19 +1792,76 @@ async def unload_inference_model():
 
 @app.get("/api/v1/inference/status")
 async def get_inference_status():
-    """Get inference service status."""
+    """Get inference service status including queue information."""
     from model_garden.inference import get_inference_service
+    from model_garden.job_queue import get_job_queue, JobType
+    
+    queue = get_job_queue()
+    
+    # Check for running or queued model loading jobs
+    loading_job = await queue.get_running_job(JobType.MODEL_LOADING)
+    queued_jobs = await queue.list_jobs(status=JobStatus.QUEUED, job_type=JobType.MODEL_LOADING.value)
     
     service = get_inference_service()
-    if not service:
-        return {
-            "loaded": False,
-            "model_info": None,
+    
+    response = {
+        "loaded": service is not None and service.is_loaded,
+        "model_info": service.get_model_info() if service and service.is_loaded else None,
+    }
+    
+    # Add loading status if a model is being loaded
+    if loading_job:
+        response["loading"] = {
+            "job_id": loading_job["job_id"],
+            "model_path": loading_job["job_config"].get("model_path"),
+            "started_at": loading_job["started_at"],
+            "status_message": loading_job["status_message"]
         }
     
+    # Add queue information if models are queued
+    if queued_jobs:
+        response["queue"] = {
+            "count": len(queued_jobs),
+            "jobs": [
+                {
+                    "job_id": job["job_id"],
+                    "model_path": job["job_config"].get("model_path"),
+                    "queued_at": job["queued_at"],
+                    "position": i + 1
+                }
+                for i, job in enumerate(queued_jobs)
+            ]
+        }
+    
+    return response
+
+
+@app.get("/api/v1/inference/queue")
+async def get_model_loading_queue():
+    """Get model loading queue status."""
+    from model_garden.job_queue import get_job_queue, JobType, JobStatus
+    
+    queue = get_job_queue()
+    
+    # Get all model loading jobs
+    all_jobs = await queue.list_jobs(job_type=JobType.MODEL_LOADING.value)
+    
+    running = [j for j in all_jobs if j["status"] == JobStatus.RUNNING]
+    queued = [j for j in all_jobs if j["status"] == JobStatus.QUEUED]
+    completed = [j for j in all_jobs if j["status"] == JobStatus.COMPLETED][:10]  # Last 10
+    failed = [j for j in all_jobs if j["status"] == JobStatus.FAILED][:10]  # Last 10
+    
     return {
-        "loaded": service.is_loaded,
-        "model_info": service.get_model_info() if service.is_loaded else None,
+        "running": running,
+        "queued": queued,
+        "completed": completed,
+        "failed": failed,
+        "summary": {
+            "running_count": len(running),
+            "queued_count": len(queued),
+            "total_completed": len([j for j in all_jobs if j["status"] == JobStatus.COMPLETED]),
+            "total_failed": len([j for j in all_jobs if j["status"] == JobStatus.FAILED]),
+        }
     }
 
 
@@ -2033,6 +2185,8 @@ async def list_datasets():
 @app.post("/api/v1/datasets/upload")
 async def upload_dataset(file: UploadFile = File(...)):
     """Upload a dataset file."""
+    from model_garden.dataset_validator import DatasetValidator
+    
     datasets_dir = Path("./storage/datasets")
     datasets_dir.mkdir(parents=True, exist_ok=True)
     
@@ -2069,29 +2223,56 @@ async def upload_dataset(file: UploadFile = File(...)):
             while chunk := await file.read(8192):  # Read 8KB at a time
                 f.write(chunk)
         
+        # Validate dataset with new validator
+        validation_stats = None
+        if file_ext in [".json", ".jsonl", ".csv"]:
+            try:
+                validation_stats = DatasetValidator.validate_dataset(file_path)
+                
+                # If there are critical errors, delete the file and fail
+                if validation_stats.validation_errors:
+                    file_path.unlink()
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "message": "Dataset validation failed",
+                            "errors": validation_stats.validation_errors,
+                            "warnings": validation_stats.warnings
+                        }
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"Warning: Dataset validation failed: {e}")
+        
         # Get file stats
         stat = file_path.stat()
         
-        # Try to count examples
+        # Use validation stats if available, otherwise fallback to old counting
         example_count = 0
-        try:
-            if file_ext == ".jsonl":
-                with open(file_path, "r") as f:
-                    example_count = sum(1 for _ in f)
-            elif file_ext == ".json":
-                with open(file_path, "r") as f:
-                    data = json.load(f)
-                    example_count = len(data) if isinstance(data, list) else 1
-            elif file_ext == ".csv":
-                df = pd.read_csv(file_path)
-                example_count = len(df)
-            elif file_ext == ".parquet":
-                df = pd.read_parquet(file_path)
-                example_count = len(df)
-        except Exception as e:
-            print(f"Warning: Could not count examples: {e}")
+        if validation_stats:
+            example_count = validation_stats.total_rows
+        else:
+            try:
+                if file_ext == ".jsonl":
+                    with open(file_path, "r") as f:
+                        example_count = sum(1 for _ in f)
+                elif file_ext == ".json":
+                    with open(file_path, "r") as f:
+                        data = json.load(f)
+                        example_count = len(data) if isinstance(data, list) else 1
+                elif file_ext == ".csv":
+                    import pandas as pd
+                    df = pd.read_csv(file_path)
+                    example_count = len(df)
+                elif file_ext == ".parquet":
+                    import pandas as pd
+                    df = pd.read_parquet(file_path)
+                    example_count = len(df)
+            except Exception as e:
+                print(f"Warning: Could not count examples: {e}")
         
-        return {
+        response_data = {
             "success": True,
             "message": f"Dataset {file.filename} uploaded successfully",
             "dataset": {
@@ -2103,6 +2284,23 @@ async def upload_dataset(file: UploadFile = File(...)):
             }
         }
         
+        # Add validation details if available
+        if validation_stats:
+            response_data["validation"] = {
+                "schema_type": DatasetValidator.detect_schema_type(validation_stats.sample_rows) if validation_stats.sample_rows else "unknown",
+                "fields": validation_stats.fields,
+                "warnings": validation_stats.warnings,
+                "has_images": validation_stats.has_images,
+                "image_count": validation_stats.image_count,
+                "avg_input_length": validation_stats.avg_input_length,
+                "avg_output_length": validation_stats.avg_output_length,
+                "total_tokens_estimate": validation_stats.total_tokens_estimate,
+            }
+        
+        return response_data
+        
+    except HTTPException:
+        raise
     except Exception as e:
         # Clean up on error
         if file_path.exists():
@@ -2111,6 +2309,53 @@ async def upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upload dataset: {str(e)}"
+        )
+
+
+@app.get("/api/v1/datasets/{dataset_name}/stats")
+async def get_dataset_stats(dataset_name: str):
+    """Get detailed statistics for a dataset."""
+    from model_garden.dataset_validator import DatasetValidator
+    
+    datasets_dir = Path("./storage/datasets")
+    file_path = datasets_dir / dataset_name
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset {dataset_name} not found"
+        )
+    
+    try:
+        stats = DatasetValidator.validate_dataset(file_path)
+        
+        return {
+            "name": dataset_name,
+            "total_rows": stats.total_rows,
+            "format": stats.format,
+            "fields": stats.fields,
+            "field_types": stats.field_types,
+            "missing_fields": stats.missing_fields,
+            "file_size_bytes": stats.file_size_bytes,
+            "validation_errors": stats.validation_errors,
+            "warnings": stats.warnings,
+            "sample_rows": stats.sample_rows,
+            "schema_type": DatasetValidator.detect_schema_type(stats.sample_rows) if stats.sample_rows else "unknown",
+            "text_stats": {
+                "avg_input_length": stats.avg_input_length,
+                "avg_output_length": stats.avg_output_length,
+                "total_tokens_estimate": stats.total_tokens_estimate,
+            } if stats.avg_input_length is not None else None,
+            "vision_stats": {
+                "has_images": stats.has_images,
+                "image_count": stats.image_count,
+                "sample_image_paths": stats.image_paths,
+            } if stats.has_images else None,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to analyze dataset: {str(e)}"
         )
 
 
