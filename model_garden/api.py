@@ -489,6 +489,10 @@ def cleanup_training_resources(*objects_to_delete):
 def run_training_job(job_id: str):
     """Execute a training job in the background."""
     try:
+        # Get queue and mark job as running
+        queue = get_job_queue()
+        asyncio.run(queue.start_job(job_id))
+        
         # Ensure there's a cancellation event map and register an event for this job
         _ce_map = globals().setdefault("cancellation_events", {})
         _ce_map[job_id] = threading.Event()
@@ -767,6 +771,13 @@ def run_training_job(job_id: str):
         # Persist model storage
         storage_manager.save_models(models_storage)
         
+        # Mark job as completed in queue
+        queue = get_job_queue()
+        asyncio.run(queue.complete_job(job_id, result={
+            "model_id": model_id,
+            "output_dir": job["output_dir"]
+        }))
+        
         print(f"✅ Training job {job_id} completed successfully!")
         
     except Exception as e:
@@ -780,6 +791,10 @@ def run_training_job(job_id: str):
         
             # Persist status change
             storage_manager.save_training_jobs(training_jobs)
+            
+            # Mark job as failed in queue
+            queue = get_job_queue()
+            asyncio.run(queue.fail_job(job_id, str(e)))
             
             # Notify WebSocket clients
             asyncio.run(manager.send_update(job_id, {
@@ -1360,8 +1375,13 @@ async def delete_or_cancel_training_job(job_id: str):
             message=f"Training job {job_id} deleted successfully"
         )
     
+    # Try to cancel in queue (only works if job is queued, not running)
+    queue = get_job_queue()
+    cancelled_in_queue = await queue.cancel_job(job_id)
+    
     # If job is running/queued, cancel it
     job["status"] = "cancelled"
+    job["completed_at"] = datetime.utcnow().isoformat() + "Z"
     storage_manager.save_training_jobs(training_jobs)
     
     # Notify WebSocket clients
@@ -1369,6 +1389,7 @@ async def delete_or_cancel_training_job(job_id: str):
         "type": "status_update",
         "job_id": job_id,
         "status": "cancelled",
+        "completed_at": job["completed_at"],
         "timestamp": datetime.utcnow().isoformat() + "Z"
     })
     # If a cancellation event exists for this job, set it to signal the training loop
@@ -1379,9 +1400,11 @@ async def delete_or_cancel_training_job(job_id: str):
     except Exception:
         pass
     
+    status_msg = "cancelled from queue" if cancelled_in_queue else "cancellation requested (job may be running)"
+    
     return APIResponse(
         success=True,
-        message=f"Training job {job_id} cancelled successfully"
+        message=f"Training job {job_id} {status_msg}"
     )
 
 
