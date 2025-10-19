@@ -9,6 +9,23 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from dotenv import load_dotenv
+
+# Load environment variables from .env file FIRST
+load_dotenv()
+
+# Configure PyTorch to use fewer compile workers to reduce memory usage
+# Default is CPU count (often 24-32), which uses ~16GB RAM for workers alone!
+# We set to 4 workers which is enough for most workloads and uses ~2GB RAM
+if "TORCH_COMPILE_MAX_WORKERS" not in os.environ:
+    os.environ["TORCH_COMPILE_MAX_WORKERS"] = "4"
+
+# Also set worker timeout to clean up idle workers faster
+if "TORCH_COMPILE_WORKER_TIMEOUT" not in os.environ:
+    os.environ["TORCH_COMPILE_WORKER_TIMEOUT"] = "300"  # 5 minutes
+# Also set worker timeout to clean up idle workers faster
+if "TORCH_COMPILE_WORKER_TIMEOUT" not in os.environ:
+    os.environ["TORCH_COMPILE_WORKER_TIMEOUT"] = "300"  # 5 minutes
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException, status, WebSocket, WebSocketDisconnect
 import threading
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,10 +34,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from transformers import TrainerCallback
 
-from model_garden.training import ModelTrainer
-
-# Load environment variables from .env file
-load_dotenv()
+# Don't import training modules at module level - they import unsloth which spawns workers!
+# Import them lazily in the functions that need them (run_training_job)
+# from model_garden.training import ModelTrainer  # REMOVED - now lazy-loaded
 
 
 # Pydantic models for API
@@ -416,6 +432,59 @@ class ProgressCallback(TrainerCallback):
             }))
 
 
+def cleanup_training_resources(*objects_to_delete):
+    """Aggressively clean up training resources to free memory.
+    
+    This function performs comprehensive memory cleanup including:
+    - Explicit deletion of all passed objects
+    - Multiple garbage collection passes (handles circular references)
+    - GPU memory cache clearing
+    - Returning freed memory to OS via malloc_trim
+    
+    Args:
+        *objects_to_delete: Variable number of objects to explicitly delete
+        
+    Example:
+        cleanup_training_resources(
+            trainer.model, trainer.tokenizer, trainer.processor,
+            trainer, dataset, callback
+        )
+    """
+    print("🧹 Cleaning up training resources...")
+    
+    import gc
+    import torch
+    
+    # Delete all objects explicitly
+    for obj in objects_to_delete:
+        if obj is not None:
+            try:
+                del obj
+            except Exception:
+                pass  # Some objects might not be deletable
+    
+    # Force garbage collection multiple times
+    # Multiple passes handle circular references and finalizers
+    for _ in range(3):
+        gc.collect()
+    
+    # Clear GPU cache if CUDA is available
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    
+    # Try to return memory to OS (Linux-specific)
+    # malloc_trim(0) forces glibc to release freed memory back to the kernel
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+        print("✓ Returned memory to OS (malloc_trim)")
+    except Exception:
+        pass  # Not critical if this fails (non-Linux systems)
+    
+    print("✓ Training resources cleaned up")
+
+
 def run_training_job(job_id: str):
     """Execute a training job in the background."""
     try:
@@ -538,6 +607,19 @@ def run_training_job(job_id: str):
             # Save model
             save_method = job.get("save_method", "merged_16bit")
             trainer.save_model(job["output_dir"], save_method=save_method)
+            
+            # Aggressively free memory after training completes
+            cleanup_training_resources(
+                trainer.model,
+                trainer.tokenizer,
+                trainer.processor,
+                trainer,
+                formatted_train_dataset,
+                formatted_val_dataset,
+                train_dataset,
+                progress_callback
+            )
+            
             # Clear cancellation event on normal completion
             try:
                 _ce_map = globals().get("cancellation_events")
@@ -546,6 +628,9 @@ def run_training_job(job_id: str):
             except Exception:
                 pass
         else:
+            # Lazy import ModelTrainer to avoid spawning torch workers at API startup
+            from model_garden.training import ModelTrainer
+            
             # Use standard ModelTrainer for text-only models
             trainer = ModelTrainer(
                 base_model=job["base_model"],
@@ -635,6 +720,16 @@ def run_training_job(job_id: str):
             save_method = hyperparams.get("save_method", "merged_16bit")
             if save_method != "lora":
                 trainer.save_model(job["output_dir"], save_method=save_method)
+        
+            # Aggressively free memory after training completes
+            cleanup_training_resources(
+                trainer.model,
+                trainer.tokenizer,
+                trainer,
+                train_dataset,
+                val_dataset,
+                progress_callback
+            )
         
         # Update job status to completed
         job["status"] = "completed"
@@ -755,6 +850,23 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     print("🌱 Model Garden API shutting down...")
+    
+    # Cleanup torch compile workers to free memory
+    try:
+        import signal
+        import subprocess
+        print("🧹 Cleaning up PyTorch compile workers...")
+        result = subprocess.run(
+            ["pkill", "-9", "-f", "torch._inductor.compile_worker"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            print("✓ PyTorch compile workers terminated")
+        else:
+            print("  (No compile workers found)")
+    except Exception as e:
+        print(f"Warning: Error cleaning up compile workers: {e}")
     
     # Cleanup inference service if loaded
     from model_garden.inference import get_inference_service, set_inference_service

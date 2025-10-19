@@ -23,10 +23,11 @@ os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
 # Suppress non-critical warnings
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
-# Import unsloth first for optimal performance
+# CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
+# This ensures Unsloth's PyTorch patches are applied correctly for optimal performance
 from unsloth import FastLanguageModel
 
-# Then import other ML libraries
+# Then import other ML libraries AFTER unsloth
 from datasets import Dataset, load_dataset
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn

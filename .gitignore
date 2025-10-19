@@ -58,6 +58,7 @@ dmypy.json
 *.csv
 *.parquet
 !data/example_dataset.jsonl
+!data/vision_dataset.jsonl
 
 # Storage files (but keep registry files)
 /storage/*

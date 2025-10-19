@@ -1,0 +1,15 @@
+{"text": "What shape is shown in this image?", "image": "data/test_images/red_square.jpg", "response": "The image shows a red square. A square is a quadrilateral with four equal sides and four right angles."}
+{"text": "Describe the shape and color you see.", "image": "data/test_images/blue_circle.jpg", "response": "I see a blue circle. A circle is a round shape where all points are equidistant from the center."}
+{"text": "What geometric shape is displayed?", "image": "data/test_images/green_triangle.jpg", "response": "This is a green triangle. A triangle is a polygon with three sides and three angles."}
+{"text": "Can you identify the shape in this image?", "image": "data/test_images/purple_star.jpg", "response": "The image shows a purple star. A star is a polygon with pointed projections radiating from a center, typically with five or more points."}
+{"text": "What do you see in this image?", "image": "data/test_images/yellow_rectangle.jpg", "response": "I see a yellow rectangle. A rectangle is a quadrilateral with four right angles, where opposite sides are equal in length."}
+{"text": "What color is the square in this image?", "image": "data/test_images/red_square.jpg", "response": "The square in this image is red."}
+{"text": "How many sides does this shape have?", "image": "data/test_images/green_triangle.jpg", "response": "This triangle has three sides."}
+{"text": "Is this shape round or angular?", "image": "data/test_images/blue_circle.jpg", "response": "This shape is round. A circle has no angles or corners."}
+{"text": "What makes this shape different from a square?", "image": "data/test_images/yellow_rectangle.jpg", "response": "Unlike a square where all sides are equal, this rectangle has two pairs of equal sides. The longer sides are different in length from the shorter sides."}
+{"text": "Count the points on this shape.", "image": "data/test_images/purple_star.jpg", "response": "This star has five points radiating outward from its center."}
+{"text": "What is the primary characteristic of this shape?", "image": "data/test_images/red_square.jpg", "response": "The primary characteristic of a square is that all four sides are equal in length and all four angles are 90 degrees."}
+{"text": "Compare this shape to a rectangle.", "image": "data/test_images/red_square.jpg", "response": "While both are quadrilaterals with four right angles, a square is a special type of rectangle where all sides are equal. A rectangle can have sides of different lengths."}
+{"text": "What geometric properties does this shape have?", "image": "data/test_images/blue_circle.jpg", "response": "This circle has infinite lines of symmetry, no vertices or edges, and a constant radius from its center to any point on its perimeter."}
+{"text": "Describe the visual appearance.", "image": "data/test_images/purple_star.jpg", "response": "The image displays a purple star shape with pointed projections extending from a central point, creating a symmetrical pattern."}
+{"text": "What is the shape and its color?", "image": "data/test_images/green_triangle.jpg", "response": "The shape is a green triangle with three sides and three vertices."}

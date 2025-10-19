@@ -713,9 +713,9 @@ class InferenceService:
             console.print(f"[red]⚠️  Abnormal stop: finish_reason={finish_reason}, "
                          f"completion_tokens={completion_tokens}/{sampling_params.max_tokens}[/red]")
         
-        # Post-process structured outputs to fix common JSON issues
-        if hasattr(sampling_params, 'structured_outputs') and sampling_params.structured_outputs:
-            generated_text = self._sanitize_json_output(generated_text)
+        # # Post-process structured outputs to fix common JSON issues
+        # if hasattr(sampling_params, 'structured_outputs') and sampling_params.structured_outputs:
+        #     generated_text = self._sanitize_json_output(generated_text)
         
         return {
             "text": generated_text,

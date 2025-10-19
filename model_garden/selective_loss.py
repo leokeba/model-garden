@@ -18,20 +18,22 @@ Usage:
         mask_level="conservative",
         verbose=True
     )
+    
+Implementation Note:
+    Import order matters! Unsloth MUST be imported before torch/transformers/trl
+    to apply optimizations. This module is lazy-loaded (only imported when training),
+    so having unsloth at the top doesn't cause worker spawn at API startup.
 """
 
-import torch
+# Standard library imports
 import re
-from typing import List, Dict, Set, Optional, Any
-from unsloth.trainer import UnslothVisionDataCollator
-from rich.console import Console
+from typing import List, Dict, Set, Optional, Any, TYPE_CHECKING
 
-console = Console()
-
+# CRITICAL: Import unsloth FIRST before torch (Unsloth requires this for optimizations)
 from unsloth.trainer import UnslothVisionDataCollator
+
+# Then import torch and other ML libraries
 import torch
-import re
-from typing import List, Set, Dict, Optional, Any
 from rich.console import Console
 
 console = Console()

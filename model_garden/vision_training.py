@@ -19,6 +19,11 @@ os.environ['HF_HOME'] = HF_HOME
 os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
 os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
 
+# CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
+# This ensures Unsloth's PyTorch patches are applied correctly
+from unsloth import FastLanguageModel
+
+# Now import other ML libraries AFTER unsloth
 from datasets import Dataset, load_dataset
 from PIL import Image
 from rich.console import Console
@@ -26,9 +31,27 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 # Import carbon tracking
 from model_garden.carbon import CarbonTracker
+# Import selective_loss at module level since unsloth is already imported
 from model_garden.selective_loss import create_selective_loss_collator
 
 console = Console()
+
+
+def _cleanup_memory_after_merge():
+    """Clean up GPU and system memory after model merge.
+    
+    Performs:
+    - Garbage collection
+    - GPU cache clearing
+    - Memory synchronization
+    """
+    import gc
+    import torch
+    
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
 
 class VisionLanguageTrainer:
@@ -71,9 +94,6 @@ class VisionLanguageTrainer:
         hf_token = os.getenv('HF_TOKEN')
         
         try:
-            # Try loading with Unsloth first (if supported)
-            from unsloth import FastLanguageModel
-            
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -145,9 +165,6 @@ class VisionLanguageTrainer:
         console.print("[cyan]Configuring LoRA adapters for vision-language model...[/cyan]")
 
         try:
-            # Try Unsloth method first
-            from unsloth import FastLanguageModel
-            
             if target_modules is None:
                 # Vision-language models often have different module names
                 target_modules = [
@@ -700,6 +717,9 @@ class VisionLanguageTrainer:
         
         # Choose data collator based on selective_loss flag
         if selective_loss:
+            # Lazy import to avoid spawning torch compile workers at module import time
+            from model_garden.selective_loss import create_selective_loss_collator
+            
             console.print(f"[cyan]🎯 Using selective loss masking (level: {selective_loss_level})[/cyan]")
             if selective_loss_masking_start_step > 0:
                 console.print(f"[yellow]⏱️  Masking delayed until step {selective_loss_masking_start_step}[/yellow]")
@@ -713,6 +733,7 @@ class VisionLanguageTrainer:
                 verbose=selective_loss_verbose
             )
         else:
+            from unsloth.trainer import UnslothVisionDataCollator
             data_collator = UnslothVisionDataCollator(self.model, self.processor)
         
         # Ensure model and tokenizer are loaded
@@ -839,9 +860,18 @@ class VisionLanguageTrainer:
             console.print("[cyan]Merging LoRA weights and saving in 16-bit...[/cyan]")
             try:
                 from unsloth import FastLanguageModel
-                # Merge and save
-                self.model = FastLanguageModel.for_inference(self.model)
-                self.model.save_pretrained_merged(
+                # Merge and save using Unsloth
+                # Clear GPU cache before merging to free up memory
+                import gc
+                import torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    console.print(f"[cyan]💾 GPU memory cleared before merge[/cyan]")
+                
+                if self.model is None:
+                    raise RuntimeError("Model not loaded. Call load_model() first.")
+                self.model.save_pretrained_merged(  # type: ignore
                     output_dir,
                     self.tokenizer,
                     save_method="merged_16bit"
@@ -849,12 +879,26 @@ class VisionLanguageTrainer:
                 if self.processor:
                     self.processor.save_pretrained(output_dir)
                 console.print("[green]✓ Merged model saved in 16-bit precision[/green]")
+                
+                # Clean config for vLLM compatibility
+                self._clean_merged_config(output_dir)
+                
+                # Aggressively free memory after successful merge
+                console.print("[cyan]🧹 Cleaning up memory after merge...[/cyan]")
+                self.model = None
+                self.tokenizer = None
+                self.processor = None
+                _cleanup_memory_after_merge()
+                console.print("[green]✓ Memory cleaned up[/green]")
             except Exception as e:
                 console.print(f"[yellow]⚠️  Unsloth merge failed: {e}[/yellow]")
-                console.print("[cyan]Trying manual merge...[/cyan]")
+                console.print("[cyan]Trying PEFT merge as fallback...[/cyan]")
                 # Manual merge using PEFT
                 try:
                     from peft import PeftModel
+                    # Clear memory before merge attempt
+                    _cleanup_memory_after_merge()
+                    
                     # Merge adapters
                     if self.model is None:
                         raise RuntimeError("Model not loaded.")
@@ -864,7 +908,18 @@ class VisionLanguageTrainer:
                         self.tokenizer.save_pretrained(output_dir)
                     if self.processor:
                         self.processor.save_pretrained(output_dir)
-                    console.print("[green]✓ Model merged and saved successfully[/green]")
+                    console.print("[green]✓ Model merged and saved successfully (PEFT fallback)[/green]")
+                    
+                    # Clean config for vLLM compatibility
+                    self._clean_merged_config(output_dir)
+                    
+                    # Aggressively free memory after successful merge
+                    console.print("[cyan]🧹 Cleaning up memory after merge...[/cyan]")
+                    self.model = None
+                    self.tokenizer = None
+                    self.processor = None
+                    _cleanup_memory_after_merge()
+                    console.print("[green]✓ Memory cleaned up[/green]")
                 except Exception as merge_error:
                     console.print(f"[red]❌ Merge failed: {merge_error}[/red]")
                     console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
@@ -880,9 +935,18 @@ class VisionLanguageTrainer:
             console.print("[cyan]Merging LoRA weights and saving in 4-bit...[/cyan]")
             try:
                 from unsloth import FastLanguageModel
+                # Clear GPU cache before merging
+                import gc
+                import torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    console.print(f"[cyan]💾 GPU memory cleared before merge[/cyan]")
+                
                 # Merge and save
-                self.model = FastLanguageModel.for_inference(self.model)
-                self.model.save_pretrained_merged(
+                if self.model is None:
+                    raise RuntimeError("Model not loaded. Call load_model() first.")
+                self.model.save_pretrained_merged(  # type: ignore
                     output_dir,
                     self.tokenizer,
                     save_method="merged_4bit"
@@ -890,6 +954,17 @@ class VisionLanguageTrainer:
                 if self.processor:
                     self.processor.save_pretrained(output_dir)
                 console.print("[green]✓ Merged model saved in 4-bit precision[/green]")
+                
+                # Clean config for vLLM compatibility
+                self._clean_merged_config(output_dir)
+                
+                # Aggressively free memory after successful merge
+                console.print("[cyan]🧹 Cleaning up memory after merge...[/cyan]")
+                self.model = None
+                self.tokenizer = None
+                self.processor = None
+                _cleanup_memory_after_merge()
+                console.print("[green]✓ Memory cleaned up[/green]")
             except Exception as e:
                 console.print(f"[red]❌ 4-bit merge not supported: {e}[/red]")
                 console.print("[yellow]Falling back to 16-bit merge[/yellow]")
