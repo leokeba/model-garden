@@ -77,28 +77,45 @@ Model Garden is a comprehensive platform for fine-tuning and serving Large Langu
 
 ## Project Phases
 
-### Phase 1: Foundation (MVP)
-- Basic FastAPI backend structure
-- Single model fine-tuning with Unsloth
-- Basic vLLM inference endpoint
-- CodeCarbon integration
-- Simple CLI for training
+### Phase 1: Foundation (MVP) ✅ COMPLETE
+- ✅ FastAPI backend with REST API
+- ✅ Model fine-tuning with Unsloth (text + vision)
+- ✅ vLLM inference with streaming
+- ✅ CodeCarbon integration
+- ✅ CLI for training, inference, and serving
+- ✅ Web UI with Svelte + TailwindCSS
+- ✅ Model registry and job management
 
-### Phase 2: Core Features
-- Multiple model support
-- Dataset management
-- Training job queue
-- Model versioning
-- Enhanced carbon tracking
+### Phase 2: Core Features 🚧 90% COMPLETE
+**Completed:**
+- ✅ Multiple model support (text + vision-language)
+- ✅ HuggingFace Hub integration
+- ✅ OpenAI-compatible inference API
+- ✅ Structured outputs (JSON mode)
+- ✅ Real carbon tracking (training + inference)
+- ✅ Persistent emissions database
+- ✅ Emissions dashboard with BoAmps reports
+- ✅ Model versioning
+- ✅ Inference UI (chat + completion)
 
-### Phase 3: Web Interface
-- Svelte frontend development
-- Dashboard implementation
-- Real-time monitoring
-- User authentication
-- Experiment tracking
+**In Progress:**
+- 🔧 BoAmps real data integration (scaffold complete)
+- 🔧 Carbon CLI commands (documented, not implemented)
+- 🔧 Dataset management UI
+- 🔧 Training job queue
+- 🔧 Real-time monitoring via WebSocket
+- 🔧 Advanced carbon analytics
 
-### Phase 4: Production Ready
+### Phase 3: Production Features 📋 PLANNED
+- User authentication and authorization
+- Multi-tenancy support
+- Model registry and marketplace
+- Advanced deployment options
+- A/B testing framework
+- Cost optimization tools
+- Enhanced observability
+
+### Phase 4: Enterprise & Scale 🔮 FUTURE
 - Multi-GPU support
 - Advanced deployment options
 - Performance optimization

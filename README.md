@@ -376,23 +376,26 @@ pre-commit run --all-files
 
 **Current Status**: Phase 1 complete! Ready for production testing.
 
-### Phase 2: Core Features 🚧 (85% Complete!)
+### Phase 2: Core Features 🚧 (90% Complete!)
 - [x] **vLLM inference integration with streaming**
 - [x] **OpenAI-compatible inference API endpoints**
 - [x] **CLI commands for inference (serve, generate, chat)**
 - [x] **Structured outputs** (JSON mode, schema validation) 🆕
 - [x] **Multi-modal inference** (vision + text) 🆕
 - [x] **HuggingFace Hub integration** 🆕
-- [x] **Real carbon tracking with CodeCarbon** ✨ NEW!
-- [x] **Carbon tracking for training & inference** ✨ NEW!
-- [x] **Persistent emissions database** ✨ NEW!
+- [x] **Real carbon tracking with CodeCarbon** ✨
+- [x] **Carbon tracking for training & inference** ✨
+- [x] **Persistent emissions database** ✨
 - [x] **Inference UI in web dashboard** (chat + completion modes)
-- [x] **Carbon emissions in training job details** ✨ NEW!
-- [ ] **BoAmps full implementation** (API scaffold done, need real data integration) - next priority
-- [ ] Dataset management UI and API endpoints
-- [ ] Job queue and background processing
-- [ ] Real-time training monitoring via WebSocket
-- [ ] Advanced carbon analytics dashboard
+- [x] **Carbon emissions in training job details** ✨
+- [x] **Emissions page with BoAmps reports** ✨
+- [x] **BoAmps API scaffold** (GET /carbon/boamps/{job_id}) 🔧
+- [ ] **BoAmps real data integration** - Fill measures/infrastructure with actual hardware metrics
+- [ ] **Carbon CLI commands** - Add `carbon report`, `carbon summary`, `carbon export` commands
+- [ ] **Dataset management UI and API endpoints**
+- [ ] **Job queue and background processing**
+- [ ] **Real-time training monitoring via WebSocket**
+- [ ] **Advanced carbon analytics dashboard**
 
 ### Phase 3: Production Features 📋
 - [ ] User authentication and authorization

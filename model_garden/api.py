@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from dotenv import load_dotenv
+from model_garden.job_queue import get_job_queue, JobStatus
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -1280,13 +1281,29 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     # Persist to disk
     storage_manager.save_training_jobs(training_jobs)
     
+    # Add to job queue
+    queue = get_job_queue()
+    await queue.add_job(
+        job_id=job_id,
+        job_type="training",
+        job_config=job_info,
+        priority=0
+    )
+    
+    # Get queue position
+    position = await queue.get_queue_position(job_id)
+    position_msg = f" (position in queue: {position})" if position and position > 1 else ""
+    
     # Start training job in background
     background_tasks.add_task(run_training_job, job_id)
     
     return APIResponse(
         success=True,
-        data={"job_id": job_id},
-        message=f"Training job {job_id} created and queued for execution"
+        data={
+            "job_id": job_id,
+            "queue_position": position
+        },
+        message=f"Training job {job_id} created and queued for execution{position_msg}"
     )
 
 
@@ -1299,7 +1316,15 @@ async def get_training_job(job_id: str):
             detail=f"Training job {job_id} not found"
         )
     
-    job_data = training_jobs[job_id]
+    job_data = training_jobs[job_id].copy()
+    
+    # Add queue information if job is queued
+    if job_data["status"] == "queued":
+        queue = get_job_queue()
+        position = await queue.get_queue_position(job_id)
+        if position:
+            job_data["queue_position"] = position
+    
     return TrainingJobInfo(**job_data)
 
 
@@ -1357,6 +1382,46 @@ async def delete_or_cancel_training_job(job_id: str):
     return APIResponse(
         success=True,
         message=f"Training job {job_id} cancelled successfully"
+    )
+
+
+@app.get("/api/v1/training/queue", response_model=APIResponse)
+async def get_training_queue():
+    """Get current training job queue status."""
+    queue = get_job_queue()
+    
+    # Get all queued jobs
+    queued_jobs = await queue.list_jobs(status=JobStatus.QUEUED, job_type="training")
+    
+    # Get running jobs
+    running_jobs = await queue.list_jobs(status=JobStatus.RUNNING, job_type="training")
+    
+    return APIResponse(
+        success=True,
+        data={
+            "queued": len(queued_jobs),
+            "running": len(running_jobs),
+            "queued_jobs": [
+                {
+                    "job_id": j["job_id"],
+                    "name": j["job_config"].get("name", "Unnamed"),
+                    "position": i + 1,
+                    "queued_at": j["queued_at"],
+                    "priority": j["priority"]
+                }
+                for i, j in enumerate(queued_jobs)
+            ],
+            "running_jobs": [
+                {
+                    "job_id": j["job_id"],
+                    "name": j["job_config"].get("name", "Unnamed"),
+                    "started_at": j["started_at"],
+                    "status_message": j["status_message"]
+                }
+                for j in running_jobs
+            ]
+        },
+        message=f"{len(queued_jobs)} jobs queued, {len(running_jobs)} running"
     )
 
 
