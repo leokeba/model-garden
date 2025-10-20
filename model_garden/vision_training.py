@@ -20,6 +20,10 @@ os.environ['HF_HOME'] = HF_HOME
 os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
 os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
 
+# Configure PyTorch CUDA memory allocator for better performance
+# max_split_size_mb limits memory fragmentation, expandable_segments allows dynamic growth
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512,expandable_segments:True'
+
 # CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
 # This ensures Unsloth's PyTorch patches are applied correctly
 from unsloth import FastLanguageModel
@@ -30,6 +34,7 @@ from datasets import Dataset, load_dataset
 from PIL import Image
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from transformers.trainer_callback import TrainerControl
 
 # Import carbon tracking
 from model_garden.carbon import CarbonTracker
@@ -625,7 +630,7 @@ class VisionLanguageTrainer:
         adam_beta2: float = 0.999,
         adam_epsilon: float = 1e-8,
         dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = True,
+        dataloader_pin_memory: bool = False,  # CRITICAL: Disable to prevent RAM accumulation
         eval_strategy: str = "steps",
         load_best_model_at_end: bool = True,
         metric_for_best_model: str = "eval_loss",
@@ -676,11 +681,11 @@ class VisionLanguageTrainer:
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
         
-        # MEMORY LEAK PREVENTION: Warn if using DataLoader workers with vision models
+        # Note: Using DataLoader workers with vision models can be tricky
         if dataloader_num_workers > 0:
-            console.print(f"[yellow]⚠️  WARNING: Using {dataloader_num_workers} DataLoader workers[/yellow]")
-            console.print("[yellow]   This can cause memory leaks with PIL images due to multiprocessing[/yellow]")
-            console.print("[yellow]   Recommend setting dataloader_num_workers=0 for vision training[/yellow]")
+            console.print(f"[yellow]⚠️  INFO: Using {dataloader_num_workers} DataLoader workers[/yellow]")
+            console.print("[yellow]   Multiple workers can improve throughput but use more memory[/yellow]")
+            console.print("[yellow]   If you experience issues, try setting dataloader_num_workers=0[/yellow]")
         
         # Initialize carbon tracker
         carbon_tracker = None
@@ -708,52 +713,35 @@ class VisionLanguageTrainer:
         from unsloth.trainer import UnslothVisionDataCollator
         from transformers import TrainerCallback
         
-        # Add memory cleanup callback to prevent leaks during training and evaluation
-        class MemoryCleanupCallback(TrainerCallback):
-            """Callback to clean up memory periodically to prevent accumulation."""
+        # Memory monitoring callback for debugging and visibility
+        class MemoryMonitorCallback(TrainerCallback):
+            """Monitor memory usage and tensor count during training.
             
-            def __init__(self, cleanup_every_n_steps: int = 10):
-                """Initialize memory cleanup callback.
-                
-                Args:
-                    cleanup_every_n_steps: Run garbage collection every N training steps
-                """
-                self.cleanup_every_n_steps = cleanup_every_n_steps
-                self.last_cleanup_step = 0
+            This callback provides visibility into memory usage patterns during training.
+            Memory grows during the first ~80-100 steps (warmup phase) as PyTorch
+            allocates memory pools, then stabilizes for the rest of training.
+            """
             
             def on_step_end(self, args, state, control, **kwargs):
-                """Clean up memory periodically during training.
-                
-                Memory can accumulate during training steps due to:
-                - Gradient computation artifacts
-                - Intermediate tensors in loss computation  
-                - Python object references not being freed
-                - PyTorch's autograd graph caching
-                """
-                # Only cleanup every N steps to avoid performance impact
-                if state.global_step - self.last_cleanup_step >= self.cleanup_every_n_steps:
-                    # Force zero gradients to break any lingering references
-                    model = kwargs.get('model')
-                    if model is not None and hasattr(model, 'zero_grad'):
-                        model.zero_grad(set_to_none=True)  # set_to_none frees memory
+                """Log memory stats every 10 steps."""
+                if state.global_step % 10 == 0:
+                    import gc
+                    import torch
+                    import psutil
                     
-                    # Garbage collection
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    self.last_cleanup_step = state.global_step
-            
-            def on_evaluate(self, args, state, control, **kwargs):
-                """Clean up memory after each evaluation.
-                
-                During validation, PyTorch accumulates various buffers and Python objects.
-                Explicitly triggering garbage collection helps release this memory.
-                """
-                # Force garbage collection to clean up accumulated objects
-                gc.collect()
-                if torch.cuda.is_available():
-                    # Clear GPU cache (though leak is in system RAM, this helps overall)
-                    torch.cuda.empty_cache()
+                    # Count tensor objects for debugging
+                    tensors = [obj for obj in gc.get_objects() if isinstance(obj, torch.Tensor)]
+                    cpu_tensors = [t for t in tensors if t.device.type == 'cpu']
+                    cuda_tensors = [t for t in tensors if t.device.type == 'cuda']
+                    
+                    # Get process memory usage
+                    process = psutil.Process()
+                    mem_mb = process.memory_info().rss / (1024 * 1024)
+                    
+                    console.print(f"[cyan]Step {state.global_step}: {len(tensors)} tensors "
+                                  f"(CPU: {len(cpu_tensors)}, GPU: {len(cuda_tensors)}), RAM: {int(mem_mb)} MB[/cyan]")
+                # Return None to match base class signature (control is passed by reference and modified in place)
+                return None
         
         # For vision models, keep data as list - don't convert to Dataset
         # The UnslothVisionDataCollator expects PIL Images which don't survive PyArrow serialization
@@ -833,7 +821,7 @@ class VisionLanguageTrainer:
         
         training_args = SFTConfig(**training_args_dict)
 
-        console.print("[yellow]⚠️  Vision-language training uses UnslothVisionDataCollator[/yellow]")
+        console.print("[cyan]ℹ️  Vision training uses UnslothVisionDataCollator for efficient image processing[/cyan]")
         
         # Choose data collator based on selective_loss flag
         if selective_loss:
@@ -863,14 +851,13 @@ class VisionLanguageTrainer:
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer not loaded. Call load_model() first.")
         
-        # Add memory cleanup callback to default callbacks
-        # AGGRESSIVE CLEANUP: Run every 10 steps during training to prevent accumulation
-        memory_callback = MemoryCleanupCallback(cleanup_every_n_steps=10)
-        all_callbacks = [memory_callback]
+        # Add memory monitoring callback (optional but useful for debugging)
+        memory_monitor = MemoryMonitorCallback()
+        all_callbacks = [memory_monitor]
         if callbacks:
             all_callbacks.extend(callbacks)
         
-        console.print("[yellow]💡 Memory cleanup enabled: GC every 10 steps + after each evaluation[/yellow]")
+        console.print("[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]")
             
         trainer = SFTTrainer(
             model=self.model,

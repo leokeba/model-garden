@@ -33,6 +33,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from trl.trainer.sft_trainer import SFTTrainer
 from transformers import TrainingArguments
+from transformers.trainer_callback import TrainerCallback, TrainerControl
 from typing import cast
 
 # Import carbon tracking
@@ -421,13 +422,51 @@ class ModelTrainer:
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
+        # Memory monitoring callback for debugging and visibility
+        class MemoryMonitorCallback(TrainerCallback):
+            """Monitor memory usage and tensor count during training.
+            
+            This callback provides visibility into memory usage patterns during training.
+            Memory grows during the first ~80-100 steps (warmup phase) as PyTorch
+            allocates memory pools, then stabilizes for the rest of training.
+            """
+            
+            def on_step_end(self, args, state, control, **kwargs):
+                """Log memory stats every 10 steps."""
+                if state.global_step % 10 == 0:
+                    import gc
+                    import torch
+                    import psutil
+                    
+                    # Count tensor objects for debugging
+                    tensors = [obj for obj in gc.get_objects() if isinstance(obj, torch.Tensor)]
+                    cpu_tensors = [t for t in tensors if t.device.type == 'cpu']
+                    cuda_tensors = [t for t in tensors if t.device.type == 'cuda']
+                    
+                    # Get process memory usage
+                    process = psutil.Process()
+                    mem_mb = process.memory_info().rss / (1024 * 1024)
+                    
+                    console.print(f"[cyan]Step {state.global_step}: {len(tensors)} tensors "
+                                  f"(CPU: {len(cpu_tensors)}, GPU: {len(cuda_tensors)}), RAM: {int(mem_mb)} MB[/cyan]")
+                # Return None to match base class signature (control is passed by reference and modified in place)
+                return None
+        
+        # Add memory monitoring callback (optional but useful for debugging)
+        memory_monitor = MemoryMonitorCallback()
+        all_callbacks = [memory_monitor]
+        if callbacks:
+            all_callbacks.extend(callbacks)
+        
+        console.print("[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]")
+        
         trainer = SFTTrainer(
             model=self.model,
             tokenizer=self.tokenizer,  # type: ignore
             train_dataset=dataset,
             eval_dataset=eval_dataset,
             args=training_args,
-            callbacks=callbacks if callbacks else [],
+            callbacks=all_callbacks,
         )
 
         # Train

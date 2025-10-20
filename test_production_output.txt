@@ -1,0 +1,87 @@
+/home/leo/Dev/model-garden/.venv/lib/python3.13/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/leo/Dev/model-garden/.venv/lib/python3.13/site-packages/transformers/utils/hub.py:111: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Skipping import of cpp extensions due to incompatible torch version 2.8.0+cu128 for torchao version 0.14.0         Please see GitHub issue #2919 for more info
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+INFO 10-20 16:05:15 [__init__.py:216] Automatically detected platform cuda.
+🦥 Unsloth Zoo will now patch everything to make training faster!
+================================================================================
+PRODUCTION-LIKE MEMORY LEAK TEST
+Using: SFTTrainer + UnslothVisionDataCollator + Callbacks
+================================================================================
+
+1. Loading dataset...
+   Memory: 1209.2 MB -> 1216.5 MB
+
+2. Formatting dataset...
+Loading vision-language model: Qwen/Qwen2.5-VL-3B-Instruct
+Precision: 4-bit (memory efficient)
+The image processor of type `Qwen2VLImageProcessor` is now loaded as a fast processor by default, even if the model checkpoint was saved with a slow processor. This is a breaking change and may produce slightly different outputs. To continue using the slow processor, instantiate this class with `use_fast=False`. Note that this behavior will be extended to all models in a future release.
+==((====))==  Unsloth 2025.10.3: Fast Qwen2_5_Vl patching. Transformers: 4.56.2. vLLM: 0.11.0.
+   \\   /|    NVIDIA GeForce RTX 3090 Ti. Num GPUs = 1. Max memory: 23.544 GB. Platform: Linux.
+O^O/ \_/ \    Torch: 2.8.0+cu128. CUDA: 8.6. CUDA Toolkit: 12.8. Triton: 3.4.0
+\        /    Bfloat16 = TRUE. FA [Xformers = 0.0.32.post1. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+Unsloth: Fast downloading is enabled - ignore downloading bars which are red colored!
+✓ Model loaded with Unsloth optimizations
+⠋ Loading model...
+   Configuring LoRA adapters...
+Configuring LoRA adapters for vision-language model...
+✓ LoRA adapters configured (Unsloth)
+Formatting vision-language dataset...
+Converting OpenAI messages format to simple format for compatibility...
+✓ Dataset formatted (100 examples)
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None, 'pad_token_id': 151643}.
+==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1
+   \\   /|    Num examples = 100 | Num Epochs = 4 | Total steps = 50
+O^O/ \_/ \    Batch size per device = 2 | Gradient accumulation steps = 4
+\        /    Data Parallel GPUs = 1 | Total batch size (2 x 4 x 1) = 8
+ "-____-"     Trainable parameters = 37,152,768 of 3,791,775,744 (0.98% trained)
+   Memory: 1579.7 MB (dataset is a list with 100 examples)
+
+3. Setting up training with SFTTrainer...
+Unsloth: Model does not have a default image size - using 512
+   Memory before trainer creation: 1582.5 MB
+   Memory after trainer creation: 1612.9 MB
+
+4. Running training (50 steps)...
+   Monitoring memory every 10 steps...
+--------------------------------------------------------------------------------
+  0%|          | 0/50 [00:00<?, ?it/s]  2%|▏         | 1/50 [00:21<17:34, 21.52s/it]  4%|▍         | 2/50 [00:29<10:41, 13.37s/it]  6%|▌         | 3/50 [00:38<08:52, 11.34s/it]  8%|▊         | 4/50 [00:46<07:50, 10.23s/it] 10%|█         | 5/50 [00:54<07:09,  9.54s/it] 12%|█▏        | 6/50 [01:04<07:03,  9.62s/it] 14%|█▍        | 7/50 [01:15<07:07,  9.94s/it] 16%|█▌        | 8/50 [01:25<07:06, 10.16s/it] 18%|█▊        | 9/50 [01:33<06:26,  9.43s/it]/home/leo/Dev/model-garden/test_production_like_leak.py:103: FutureWarning: `torch.distributed.reduce_op` is deprecated, please use `torch.distributed.ReduceOp` instead
+  tensors = [obj for obj in gc.get_objects() if isinstance(obj, torch.Tensor)]
+ 20%|██        | 10/50 [01:43<06:23,  9.58s/it]                                                20%|██        | 10/50 [01:43<06:23,  9.58s/it] 22%|██▏       | 11/50 [01:51<05:56,  9.15s/it] 24%|██▍       | 12/50 [02:01<05:53,  9.29s/it] 26%|██▌       | 13/50 [02:04<04:32,  7.37s/it] 28%|██▊       | 14/50 [02:11<04:22,  7.29s/it] 30%|███       | 15/50 [02:19<04:24,  7.55s/it] 32%|███▏      | 16/50 [02:28<04:26,  7.83s/it] 34%|███▍      | 17/50 [02:36<04:19,  7.87s/it] 36%|███▌      | 18/50 [02:45<04:30,  8.46s/it] 38%|███▊      | 19/50 [02:54<04:26,  8.58s/it] 40%|████      | 20/50 [03:04<04:28,  8.95s/it]                                                40%|████      | 20/50 [03:04<04:28,  8.95s/it] 42%|████▏     | 21/50 [03:13<04:19,  8.95s/it] 44%|████▍     | 22/50 [03:21<04:02,  8.65s/it] 46%|████▌     | 23/50 [03:29<03:48,  8.45s/it] 48%|████▊     | 24/50 [03:37<03:33,  8.21s/it] 50%|█████     | 25/50 [03:46<03:33,  8.53s/it] 52%|█████▏    | 26/50 [03:51<02:59,  7.50s/it] 54%|█████▍    | 27/50 [04:00<03:05,  8.06s/it] 56%|█████▌    | 28/50 [04:10<03:07,  8.54s/it] 58%|█████▊    | 29/50 [04:18<02:55,  8.37s/it] 60%|██████    | 30/50 [04:28<02:55,  8.77s/it]                                                60%|██████    | 30/50 [04:28<02:55,  8.77s/it] 62%|██████▏   | 31/50 [04:36<02:46,  8.75s/it] 64%|██████▍   | 32/50 [04:45<02:36,  8.71s/it] 66%|██████▌   | 33/50 [04:54<02:29,  8.79s/it] 68%|██████▊   | 34/50 [05:03<02:22,  8.89s/it] 70%|███████   | 35/50 [05:11<02:10,  8.69s/it] 72%|███████▏  | 36/50 [05:19<01:58,  8.45s/it] 74%|███████▍  | 37/50 [05:28<01:49,  8.46s/it] 76%|███████▌  | 38/50 [05:36<01:40,  8.36s/it] 78%|███████▊  | 39/50 [05:40<01:16,  6.96s/it] 80%|████████  | 40/50 [05:49<01:16,  7.68s/it]                                                80%|████████  | 40/50 [05:49<01:16,  7.68s/it] 82%|████████▏ | 41/50 [05:57<01:09,  7.68s/it] 84%|████████▍ | 42/50 [06:06<01:04,  8.11s/it] 86%|████████▌ | 43/50 [06:14<00:57,  8.18s/it] 88%|████████▊ | 44/50 [06:21<00:47,  7.92s/it] 90%|█████████ | 45/50 [06:30<00:40,  8.15s/it] 92%|█████████▏| 46/50 [06:39<00:33,  8.49s/it] 94%|█████████▍| 47/50 [06:48<00:25,  8.40s/it] 96%|█████████▌| 48/50 [06:55<00:16,  8.05s/it] 98%|█████████▊| 49/50 [07:01<00:07,  7.63s/it]100%|██████████| 50/50 [07:10<00:00,  7.96s/it]                                               100%|██████████| 50/50 [07:10<00:00,  7.96s/it]                                               100%|██████████| 50/50 [07:11<00:00,  7.96s/it]100%|██████████| 50/50 [07:11<00:00,  8.63s/it]
+Unsloth: Will smartly offload gradients to save VRAM!
+   Step 10: 6529 tensors (CPU: 330, GPU: 6199), RAM: 4952.0 MB
+{'loss': 0.2464, 'grad_norm': 0.28021323680877686, 'learning_rate': 0.000164, 'epoch': 0.8}
+   Step 20: 6529 tensors (CPU: 330, GPU: 6199), RAM: 5238.0 MB
+{'loss': 0.125, 'grad_norm': 0.2378697693347931, 'learning_rate': 0.000124, 'epoch': 1.56}
+   Step 30: 6529 tensors (CPU: 330, GPU: 6199), RAM: 5257.5 MB
+{'loss': 0.0418, 'grad_norm': 0.16756242513656616, 'learning_rate': 8.4e-05, 'epoch': 2.32}
+   Step 40: 6529 tensors (CPU: 330, GPU: 6199), RAM: 5233.2 MB
+{'loss': 0.0076, 'grad_norm': 0.05876906216144562, 'learning_rate': 4.4000000000000006e-05, 'epoch': 3.08}
+   Step 50: 6529 tensors (CPU: 330, GPU: 6199), RAM: 5230.2 MB
+{'loss': 0.0028, 'grad_norm': 0.0709509328007698, 'learning_rate': 4.000000000000001e-06, 'epoch': 3.88}
+{'train_runtime': 431.7124, 'train_samples_per_second': 0.927, 'train_steps_per_second': 0.116, 'train_loss': 0.08473886277526617, 'epoch': 3.88}
+--------------------------------------------------------------------------------
+
+5. Results:
+   Memory before training: 1612.9 MB
+   Memory after training:  5246.9 MB
+   Total growth: +3634.0 MB
+
+6. Step-by-step analysis:
+   Steps 10->20: +286.0 MB (28.6 MB/step)
+   Steps 20->30: +19.6 MB (2.0 MB/step)
+   Steps 30->40: +-24.4 MB (-2.4 MB/step)
+   Steps 40->50: +-3.0 MB (-0.3 MB/step)
+
+================================================================================
+TEST COMPLETE
+================================================================================
+
+Average leak rate: 7.0 MB/step
+Extrapolated to 250 steps: 1738.5 MB
+
+✓ No significant leak detected in test
+   Something different between test and production?

@@ -1,0 +1,19 @@
+/home/leo/Dev/model-garden/.venv/lib/python3.13/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/home/leo/Dev/model-garden/.venv/lib/python3.13/site-packages/transformers/utils/hub.py:111: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Skipping import of cpp extensions due to incompatible torch version 2.8.0+cu128 for torchao version 0.14.0         Please see GitHub issue #2919 for more info
+================================================================================
+Training Loop Memory Leak Simulation
+================================================================================
+
+1. Loading and formatting dataset...
+   Memory after load: 640.3 MB (delta: +14.0 MB)
+   Formatting dataset (converting base64 to PIL images)...
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+INFO 10-20 14:34:44 [__init__.py:216] Automatically detected platform cuda.
+🦥 Unsloth Zoo will now patch everything to make training faster!
+Traceback (most recent call last):
+  File "/home/leo/Dev/model-garden/test_training_loop_simulation.py", line 41, in <module>
+    from model_garden.vision_training import VisionLanguageModelTrainer
+ImportError: cannot import name 'VisionLanguageModelTrainer' from 'model_garden.vision_training' (/home/leo/Dev/model-garden/model_garden/vision_training.py)
