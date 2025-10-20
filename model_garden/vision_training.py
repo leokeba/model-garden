@@ -40,6 +40,8 @@ from transformers.trainer_callback import TrainerControl
 from model_garden.carbon import CarbonTracker
 # Import selective_loss at module level since unsloth is already imported
 from model_garden.selective_loss import create_selective_loss_collator
+# Import shared training utilities
+from model_garden.training_utils import detect_model_dtype, get_training_precision_config, MemoryMonitorCallback
 
 console = Console()
 
@@ -713,36 +715,6 @@ class VisionLanguageTrainer:
         from unsloth.trainer import UnslothVisionDataCollator
         from transformers import TrainerCallback
         
-        # Memory monitoring callback for debugging and visibility
-        class MemoryMonitorCallback(TrainerCallback):
-            """Monitor memory usage and tensor count during training.
-            
-            This callback provides visibility into memory usage patterns during training.
-            Memory grows during the first ~80-100 steps (warmup phase) as PyTorch
-            allocates memory pools, then stabilizes for the rest of training.
-            """
-            
-            def on_step_end(self, args, state, control, **kwargs):
-                """Log memory stats every 10 steps."""
-                if state.global_step % 10 == 0:
-                    import gc
-                    import torch
-                    import psutil
-                    
-                    # Count tensor objects for debugging
-                    tensors = [obj for obj in gc.get_objects() if isinstance(obj, torch.Tensor)]
-                    cpu_tensors = [t for t in tensors if t.device.type == 'cpu']
-                    cuda_tensors = [t for t in tensors if t.device.type == 'cuda']
-                    
-                    # Get process memory usage
-                    process = psutil.Process()
-                    mem_mb = process.memory_info().rss / (1024 * 1024)
-                    
-                    console.print(f"[cyan]Step {state.global_step}: {len(tensors)} tensors "
-                                  f"(CPU: {len(cpu_tensors)}, GPU: {len(cuda_tensors)}), RAM: {int(mem_mb)} MB[/cyan]")
-                # Return None to match base class signature (control is passed by reference and modified in place)
-                return None
-        
         # For vision models, keep data as list - don't convert to Dataset
         # The UnslothVisionDataCollator expects PIL Images which don't survive PyArrow serialization
         if isinstance(dataset, list):
@@ -772,11 +744,12 @@ class VisionLanguageTrainer:
 
         # Build training args - SFTConfig has different parameters than TrainingArguments
         # Detect model's actual dtype to set precision correctly
-        import torch
-        model_dtype = None
-        if self.model is not None and hasattr(self.model, 'dtype'):
-            model_dtype = self.model.dtype
-        is_bfloat16_model = model_dtype == torch.bfloat16
+        model_dtype = detect_model_dtype(self.model, self.load_in_4bit, self.load_in_8bit)
+        precision_config = get_training_precision_config(self.model, self.load_in_4bit, self.load_in_8bit)
+        
+        # Log detected dtype for debugging
+        console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
+        console.print(f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]")
         
         training_args_dict = {
             "output_dir": output_dir,
@@ -786,10 +759,9 @@ class VisionLanguageTrainer:
             "max_steps": max_steps if use_max_steps else -1,
             "num_train_epochs": 1.0 if use_max_steps else num_train_epochs,
             "learning_rate": learning_rate,
-            # Precision settings: Match the model's actual dtype
-            # Quantized models (4-bit/8-bit) use bfloat16, but some 16-bit models also use bfloat16
-            "fp16": not (self.load_in_4bit or self.load_in_8bit or is_bfloat16_model),
-            "bf16": self.load_in_4bit or self.load_in_8bit or is_bfloat16_model,
+            # Precision settings: Match the model's actual dtype using shared utilities
+            "fp16": precision_config['fp16'],
+            "bf16": precision_config['bf16'],
             "logging_steps": logging_steps,
             "optim": optim,
             "weight_decay": weight_decay,
@@ -852,11 +824,12 @@ class VisionLanguageTrainer:
             raise RuntimeError("Tokenizer not loaded. Call load_model() first.")
         
         # Add memory monitoring callback (optional but useful for debugging)
+        # Use shared implementation from training_utils to avoid duplication
         memory_monitor = MemoryMonitorCallback()
         all_callbacks = [memory_monitor]
         if callbacks:
             all_callbacks.extend(callbacks)
-        
+
         console.print("[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]")
             
         trainer = SFTTrainer(

@@ -29,6 +29,13 @@ from unsloth import FastLanguageModel
 
 # Then import other ML libraries AFTER unsloth
 from datasets import Dataset, load_dataset
+
+# Import shared training utilities for dtype detection
+from model_garden.training_utils import (
+    detect_model_dtype,
+    get_training_precision_config,
+    MemoryMonitorCallback,
+)
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from trl.trainer.sft_trainer import SFTTrainer
@@ -386,6 +393,17 @@ class ModelTrainer:
         final_load_best = load_best_model_at_end and eval_dataset is not None
         final_metric = metric_for_best_model if eval_dataset is not None else None
 
+        # Ensure model is loaded
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        # Detect model dtype and set precision for training
+        model_dtype = detect_model_dtype(self.model, self.load_in_4bit, False)
+        precision_config = get_training_precision_config(self.model, self.load_in_4bit, False)
+        
+        console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
+        console.print(f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]")
+
         training_args = TrainingArguments(
             output_dir=output_dir,
             per_device_train_batch_size=per_device_train_batch_size,
@@ -395,8 +413,8 @@ class ModelTrainer:
             max_steps=max_steps,
             num_train_epochs=num_train_epochs,
             learning_rate=learning_rate,
-            fp16=not self.load_in_4bit,
-            bf16=self.load_in_4bit,
+            fp16=precision_config['fp16'],
+            bf16=precision_config['bf16'],
             logging_steps=logging_steps,
             optim=optim,
             weight_decay=weight_decay,
@@ -422,37 +440,9 @@ class ModelTrainer:
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        # Memory monitoring callback for debugging and visibility
-        class MemoryMonitorCallback(TrainerCallback):
-            """Monitor memory usage and tensor count during training.
-            
-            This callback provides visibility into memory usage patterns during training.
-            Memory grows during the first ~80-100 steps (warmup phase) as PyTorch
-            allocates memory pools, then stabilizes for the rest of training.
-            """
-            
-            def on_step_end(self, args, state, control, **kwargs):
-                """Log memory stats every 10 steps."""
-                if state.global_step % 10 == 0:
-                    import gc
-                    import torch
-                    import psutil
-                    
-                    # Count tensor objects for debugging
-                    tensors = [obj for obj in gc.get_objects() if isinstance(obj, torch.Tensor)]
-                    cpu_tensors = [t for t in tensors if t.device.type == 'cpu']
-                    cuda_tensors = [t for t in tensors if t.device.type == 'cuda']
-                    
-                    # Get process memory usage
-                    process = psutil.Process()
-                    mem_mb = process.memory_info().rss / (1024 * 1024)
-                    
-                    console.print(f"[cyan]Step {state.global_step}: {len(tensors)} tensors "
-                                  f"(CPU: {len(cpu_tensors)}, GPU: {len(cuda_tensors)}), RAM: {int(mem_mb)} MB[/cyan]")
-                # Return None to match base class signature (control is passed by reference and modified in place)
-                return None
-        
         # Add memory monitoring callback (optional but useful for debugging)
+        # Use shared implementation from training_utils to avoid duplication
+        from model_garden.training_utils import MemoryMonitorCallback
         memory_monitor = MemoryMonitorCallback()
         all_callbacks = [memory_monitor]
         if callbacks:
