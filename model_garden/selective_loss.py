@@ -173,17 +173,27 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         
         # Apply selective loss masking
         if "labels" in batch:
-            original_labels = batch["labels"].clone()
+            # MEMORY FIX: Only clone for statistics if verbose, and detach immediately
+            original_masked_count = 0
+            if self.verbose and is_training:
+                # Count original masked tokens (use item() to convert to Python int immediately)
+                original_masked_count = (batch["labels"] == -100).sum().item()
             
             # DEBUG: On first masked batch, check what Unsloth gave us
             if is_training and self.batch_count == 0 and self.verbose:
-                first_seq = original_labels[0]
+                first_seq = batch["labels"][0]
                 total_tokens = len(first_seq)
                 prompt_masked = (first_seq == -100).sum().item()
                 console.print(f"[cyan]🔍 Batch structure check (first sequence):[/cyan]")
                 console.print(f"   Total tokens: {total_tokens}")
                 console.print(f"   Prompt tokens (masked to -100): {prompt_masked} ({prompt_masked/total_tokens*100:.1f}%)")
                 console.print(f"   Assistant tokens (not -100): {total_tokens - prompt_masked} ({(total_tokens - prompt_masked)/total_tokens*100:.1f}%)")
+            
+            # Store original for logging only if needed
+            original_labels = None
+            if self.verbose and is_training and self.batch_count % 10 == 0:
+                # Clone only when we need to print, and detach to avoid gradient tracking
+                original_labels = batch["labels"][0].clone().detach()
             
             batch["labels"] = self._apply_selective_masking(
                 batch["labels"], 
@@ -196,10 +206,11 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
             
             # Update statistics
             if self.verbose and is_training:
-                newly_masked = (batch["labels"] == -100).sum() - (original_labels == -100).sum()
+                # MEMORY FIX: Calculate on-the-fly without storing tensors
+                newly_masked_count = (batch["labels"] == -100).sum().item() - original_masked_count
                 total = batch["labels"].numel()
                 self.total_tokens += total
-                self.masked_tokens += newly_masked.item()
+                self.masked_tokens += newly_masked_count
                 
                 if self.batch_count % 10 == 0:  # Print every 10 batches
                     mask_pct = (self.masked_tokens / self.total_tokens) * 100
@@ -209,7 +220,10 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                     )
                     
                     # Show sample of unmasked content from first example in batch
-                    self._print_unmasked_sample(batch["labels"][0], original_labels[0])
+                    if original_labels is not None:
+                        self._print_unmasked_sample(batch["labels"][0], original_labels)
+                        # MEMORY FIX: Explicitly delete the cloned tensor
+                        del original_labels
         
         return batch
     
@@ -223,8 +237,8 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         Returns:
             Modified labels with -100 for structural tokens
         """
-        masked_labels = labels.clone()
-        
+        # MEMORY FIX: Modify labels in-place instead of cloning
+        # This reduces peak memory during training/evaluation
         for i in range(labels.size(0)):
             # Get the label sequence for this example
             label_tokens = labels[i]
@@ -234,9 +248,9 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
             
             # Apply masking (-100 is ignored by PyTorch loss functions)
             if mask_indices:
-                masked_labels[i, mask_indices] = -100
+                labels[i, mask_indices] = -100
         
-        return masked_labels
+        return labels
     
     def _find_structural_indices(self, token_ids):
         """Identify which token positions are structural (not semantic).

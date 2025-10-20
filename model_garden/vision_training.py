@@ -4,6 +4,7 @@ Supports multimodal models like Qwen2.5-VL for fine-tuning on vision-language ta
 """
 
 import base64
+import gc
 import io
 import json
 import os
@@ -24,6 +25,7 @@ os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
 from unsloth import FastLanguageModel
 
 # Now import other ML libraries AFTER unsloth
+import torch
 from datasets import Dataset, load_dataset
 from PIL import Image
 from rich.console import Console
@@ -41,17 +43,22 @@ def _cleanup_memory_after_merge():
     """Clean up GPU and system memory after model merge.
     
     Performs:
-    - Garbage collection
+    - Garbage collection (multiple passes)
     - GPU cache clearing
     - Memory synchronization
     """
     import gc
     import torch
     
-    gc.collect()
+    # Multiple passes of garbage collection to ensure all cycles are broken
+    for _ in range(3):
+        gc.collect()
+    
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+        # Reset peak memory stats to get accurate readings for next operation
+        torch.cuda.reset_peak_memory_stats()
 
 
 class VisionLanguageTrainer:
@@ -379,19 +386,36 @@ class VisionLanguageTrainer:
 
         Returns:
             PIL Image object
+        
+        Note:
+            Images are loaded once and kept in RAM for efficiency. The conversion to RGB
+            ensures consistent format and forces full loading (avoiding lazy loading issues).
         """
         # Already a PIL Image
         if isinstance(image_data, Image.Image):
+            # Ensure RGB format for consistency
+            if image_data.mode != "RGB":
+                return image_data.convert("RGB")
             return image_data
         
         # File path
         if isinstance(image_data, str):
             if image_data.startswith("data:image") or (len(image_data) > 100 and not os.path.exists(image_data)):
                 # Looks like base64
-                return self._decode_base64_image(image_data)
+                img = self._decode_base64_image(image_data)
+                # Ensure RGB format
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                return img
             elif os.path.exists(image_data):
-                # File path
-                return Image.open(image_data)
+                # Load image from file
+                img = Image.open(image_data)
+                # Convert to RGB to ensure consistent format and fully load pixels
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                # Force load to ensure pixels are in memory (avoid lazy loading)
+                img.load()
+                return img
         
         # Fallback: create blank image
         console.print(f"[yellow]⚠️  Unknown image format, using blank image[/yellow]")
@@ -652,6 +676,12 @@ class VisionLanguageTrainer:
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
         
+        # MEMORY LEAK PREVENTION: Warn if using DataLoader workers with vision models
+        if dataloader_num_workers > 0:
+            console.print(f"[yellow]⚠️  WARNING: Using {dataloader_num_workers} DataLoader workers[/yellow]")
+            console.print("[yellow]   This can cause memory leaks with PIL images due to multiprocessing[/yellow]")
+            console.print("[yellow]   Recommend setting dataloader_num_workers=0 for vision training[/yellow]")
+        
         # Initialize carbon tracker
         carbon_tracker = None
         emissions_data = None
@@ -676,6 +706,54 @@ class VisionLanguageTrainer:
         from trl.trainer.sft_trainer import SFTTrainer
         from trl.trainer.sft_config import SFTConfig
         from unsloth.trainer import UnslothVisionDataCollator
+        from transformers import TrainerCallback
+        
+        # Add memory cleanup callback to prevent leaks during training and evaluation
+        class MemoryCleanupCallback(TrainerCallback):
+            """Callback to clean up memory periodically to prevent accumulation."""
+            
+            def __init__(self, cleanup_every_n_steps: int = 10):
+                """Initialize memory cleanup callback.
+                
+                Args:
+                    cleanup_every_n_steps: Run garbage collection every N training steps
+                """
+                self.cleanup_every_n_steps = cleanup_every_n_steps
+                self.last_cleanup_step = 0
+            
+            def on_step_end(self, args, state, control, **kwargs):
+                """Clean up memory periodically during training.
+                
+                Memory can accumulate during training steps due to:
+                - Gradient computation artifacts
+                - Intermediate tensors in loss computation  
+                - Python object references not being freed
+                - PyTorch's autograd graph caching
+                """
+                # Only cleanup every N steps to avoid performance impact
+                if state.global_step - self.last_cleanup_step >= self.cleanup_every_n_steps:
+                    # Force zero gradients to break any lingering references
+                    model = kwargs.get('model')
+                    if model is not None and hasattr(model, 'zero_grad'):
+                        model.zero_grad(set_to_none=True)  # set_to_none frees memory
+                    
+                    # Garbage collection
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    self.last_cleanup_step = state.global_step
+            
+            def on_evaluate(self, args, state, control, **kwargs):
+                """Clean up memory after each evaluation.
+                
+                During validation, PyTorch accumulates various buffers and Python objects.
+                Explicitly triggering garbage collection helps release this memory.
+                """
+                # Force garbage collection to clean up accumulated objects
+                gc.collect()
+                if torch.cuda.is_available():
+                    # Clear GPU cache (though leak is in system RAM, this helps overall)
+                    torch.cuda.empty_cache()
         
         # For vision models, keep data as list - don't convert to Dataset
         # The UnslothVisionDataCollator expects PIL Images which don't survive PyArrow serialization
@@ -775,14 +853,24 @@ class VisionLanguageTrainer:
                 verbose=selective_loss_verbose
             )
         else:
-            from unsloth.trainer import UnslothVisionDataCollator
+            # Use standard Unsloth collator (images stay in RAM for efficiency)
             data_collator = UnslothVisionDataCollator(self.model, self.processor)
+
         
         # Ensure model and tokenizer are loaded
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer not loaded. Call load_model() first.")
+        
+        # Add memory cleanup callback to default callbacks
+        # AGGRESSIVE CLEANUP: Run every 10 steps during training to prevent accumulation
+        memory_callback = MemoryCleanupCallback(cleanup_every_n_steps=10)
+        all_callbacks = [memory_callback]
+        if callbacks:
+            all_callbacks.extend(callbacks)
+        
+        console.print("[yellow]💡 Memory cleanup enabled: GC every 10 steps + after each evaluation[/yellow]")
             
         trainer = SFTTrainer(
             model=self.model,
@@ -791,7 +879,7 @@ class VisionLanguageTrainer:
             train_dataset=train_dataset,  # type: ignore
             eval_dataset=eval_dataset,  # type: ignore
             data_collator=data_collator,
-            callbacks=callbacks if callbacks else [],
+            callbacks=all_callbacks,
         )
 
         console.print("[cyan]Training in progress...[/cyan]")
