@@ -434,6 +434,9 @@ class ModelTrainer:
             eval_steps=eval_steps_value if eval_dataset else None,
             load_best_model_at_end=final_load_best,
             metric_for_best_model=final_metric,
+            # IMPORTANT: Only train on responses/outputs, not inputs/instructions
+            # This masks the input tokens so the model only learns to generate responses
+            completion_only_loss=True,
         )
 
         # Ensure model is loaded

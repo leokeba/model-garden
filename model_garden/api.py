@@ -33,7 +33,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from transformers import TrainerCallback
+# IMPORTANT: Don't import transformers here - it initializes tokenizers which causes
+# fork warnings when using background tasks. Import lazily in functions that need it.
+# from transformers import TrainerCallback  # REMOVED - now lazy-loaded
 
 # Memory management utilities
 from model_garden.memory_management import cleanup_training_resources
@@ -323,171 +325,189 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-class ProgressCallback(TrainerCallback):
-    """Custom callback to send training progress via WebSocket."""
+def create_progress_callback(job_id: str, manager: ConnectionManager):
+    """Factory function to create a ProgressCallback.
     
-    def __init__(self, job_id: str, manager: ConnectionManager):
-        self.job_id = job_id
-        self.manager = manager
-        self.training_metrics = []  # Store metrics history
-        self.validation_metrics = []
-        # Optional threading.Event that can be set to request cancellation
-        self.cancellation_event = None
+    This is defined as a factory to avoid importing TrainerCallback at module level,
+    which would initialize tokenizers and cause fork warnings.
     
-    def on_step_end(self, args, state, control, **kwargs):
-        """Called at the end of each training step."""
-        # If cancellation_event is set, stop training
-        try:
-            if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
-                if self.cancellation_event.is_set():
-                    print(f"✋ Cancellation requested for job {self.job_id} - stopping training")
-                    raise KeyboardInterrupt()
-        except Exception:
-            pass
-        if state.global_step > 0:
-            # Calculate progress
-            if state.max_steps > 0:
-                total_steps = state.max_steps
-            else:
-                # Estimate total steps from num_train_epochs
-                # Use getattr to safely access train_dataloader if available
-                train_dataloader = getattr(state, 'train_dataloader', None)
-                if train_dataloader and hasattr(train_dataloader, '__len__'):
-                    total_steps = len(train_dataloader) * args.num_train_epochs
+    Args:
+        job_id: Training job ID
+        manager: WebSocket connection manager
+        
+    Returns:
+        ProgressCallback instance
+    """
+    from transformers import TrainerCallback
+    
+    class ProgressCallback(TrainerCallback):
+        """Custom callback to send training progress via WebSocket."""
+        
+        def __init__(self, job_id: str, manager: ConnectionManager):
+            self.job_id = job_id
+            self.manager = manager
+            self.training_metrics = []  # Store metrics history
+            self.validation_metrics = []
+            # Optional threading.Event that can be set to request cancellation
+            self.cancellation_event = None
+        
+        def on_step_end(self, args, state, control, **kwargs):
+            """Called at the end of each training step."""
+            # If cancellation_event is set, stop training
+            try:
+                if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
+                    if self.cancellation_event.is_set():
+                        print(f"✋ Cancellation requested for job {self.job_id} - stopping training")
+                        raise KeyboardInterrupt()
+            except Exception:
+                pass
+            if state.global_step > 0:
+                # Calculate progress
+                if state.max_steps > 0:
+                    total_steps = state.max_steps
                 else:
-                    # Fallback: use a reasonable estimate
-                    total_steps = 100 * args.num_train_epochs
-            
-            current_epoch = state.epoch if hasattr(state, 'epoch') else 0
-            
-            # Update job progress
-            if self.job_id in training_jobs:
-                training_jobs[self.job_id]["progress"] = {
-                    "current_step": state.global_step,
-                    "total_steps": total_steps,
-                    "epoch": int(current_epoch) if current_epoch else 0
-                }
-                training_jobs[self.job_id]["current_step"] = state.global_step
-                training_jobs[self.job_id]["total_steps"] = total_steps
-                training_jobs[self.job_id]["current_epoch"] = int(current_epoch) if current_epoch else 0
-            
-            # Send WebSocket update
-            asyncio.run(self.manager.send_update(self.job_id, {
-                "type": "progress",
-                "job_id": self.job_id,
-                "progress": {
-                    "current_step": state.global_step,
-                    "total_steps": total_steps,
-                    "epoch": int(current_epoch) if current_epoch else 0
-                },
-                "timestamp": datetime.utcnow().isoformat() + "Z"
-            }))
-    
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        """Called when logging occurs."""
-        # Also check cancellation here in case cancellation happens between steps
-        try:
-            if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
-                if self.cancellation_event.is_set():
-                    print(f"✋ Cancellation requested for job {self.job_id} during logging - stopping training")
-                    raise KeyboardInterrupt()
-        except Exception:
-            pass
-        
-        # Check for early stopping request (graceful stop)
-        try:
-            early_stop_map = globals().get("early_stop_requests", {})
-            if early_stop_map.get(self.job_id, False):
-                print(f"🛑 Early stopping requested for job {self.job_id} - will stop gracefully")
-                control.should_training_stop = True
-                # Clear the flag
-                del early_stop_map[self.job_id]
-        except Exception:
-            pass
-        
-        if logs:
-            # Extract metrics from logs
-            current_step = state.global_step
-            timestamp = datetime.utcnow().isoformat() + "Z"
-            
-            # Separate training and evaluation logs
-            is_eval = any(k.startswith('eval_') for k in logs.keys())
-            
-            if is_eval:
-                # Validation metrics
-                eval_loss = logs.get('eval_loss')
-                metric_point = {
-                    "step": current_step,
-                    "loss": eval_loss,
-                    "timestamp": timestamp,
-                }
+                    # Estimate total steps from num_train_epochs
+                    # Use getattr to safely access train_dataloader if available
+                    train_dataloader = getattr(state, 'train_dataloader', None)
+                    if train_dataloader and hasattr(train_dataloader, '__len__'):
+                        total_steps = len(train_dataloader) * args.num_train_epochs
+                    else:
+                        # Fallback: use a reasonable estimate
+                        total_steps = 100 * args.num_train_epochs
                 
-                # Add any additional eval metrics
-                for key, value in logs.items():
-                    if key.startswith('eval_') and key != 'eval_loss':
-                        metric_name = key.replace('eval_', '')
-                        metric_point[metric_name] = value
+                current_epoch = state.epoch if hasattr(state, 'epoch') else 0
                 
-                self.validation_metrics.append(metric_point)
-                
-                # Update job metrics
+                # Update job progress
                 if self.job_id in training_jobs:
-                    if "metrics" not in training_jobs[self.job_id]:
-                        training_jobs[self.job_id]["metrics"] = {}
-                    training_jobs[self.job_id]["metrics"]["validation"] = self.validation_metrics
+                    training_jobs[self.job_id]["progress"] = {
+                        "current_step": state.global_step,
+                        "total_steps": total_steps,
+                        "epoch": int(current_epoch) if current_epoch else 0
+                    }
+                    training_jobs[self.job_id]["current_step"] = state.global_step
+                    training_jobs[self.job_id]["total_steps"] = total_steps
+                    training_jobs[self.job_id]["current_epoch"] = int(current_epoch) if current_epoch else 0
                 
-                # Send metrics via WebSocket
+                # Send WebSocket update
                 asyncio.run(self.manager.send_update(self.job_id, {
-                    "type": "validation_metrics",
+                    "type": "progress",
                     "job_id": self.job_id,
-                    "metrics": metric_point,
-                    "timestamp": timestamp
+                    "progress": {
+                        "current_step": state.global_step,
+                        "total_steps": total_steps,
+                        "epoch": int(current_epoch) if current_epoch else 0
+                    },
+                    "timestamp": datetime.utcnow().isoformat() + "Z"
                 }))
-            else:
-                # Training metrics
-                train_loss = logs.get('loss')
-                learning_rate = logs.get('learning_rate')
+        
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            """Called when logging occurs."""
+            # Also check cancellation here in case cancellation happens between steps
+            try:
+                if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
+                    if self.cancellation_event.is_set():
+                        print(f"✋ Cancellation requested for job {self.job_id} during logging - stopping training")
+                        raise KeyboardInterrupt()
+            except Exception:
+                pass
+            
+            # Check for early stopping request (graceful stop)
+            try:
+                early_stop_map = globals().get("early_stop_requests", {})
+                if early_stop_map.get(self.job_id, False):
+                    print(f"🛑 Early stopping requested for job {self.job_id} - will stop gracefully")
+                    control.should_training_stop = True
+                    # Clear the flag
+                    del early_stop_map[self.job_id]
+            except Exception:
+                pass
+            
+            if logs:
+                # Extract metrics from logs
+                current_step = state.global_step
+                timestamp = datetime.utcnow().isoformat() + "Z"
                 
-                if train_loss is not None:
+                # Separate training and evaluation logs
+                is_eval = any(k.startswith('eval_') for k in logs.keys())
+                
+                if is_eval:
+                    # Validation metrics
+                    eval_loss = logs.get('eval_loss')
                     metric_point = {
                         "step": current_step,
-                        "loss": train_loss,
-                        "learning_rate": learning_rate,
+                        "loss": eval_loss,
                         "timestamp": timestamp,
                     }
                     
-                    # Add any additional metrics
+                    # Add any additional eval metrics
                     for key, value in logs.items():
-                        if key not in ['loss', 'learning_rate', 'epoch']:
-                            metric_point[key] = value
+                        if key.startswith('eval_') and key != 'eval_loss':
+                            metric_name = key.replace('eval_', '')
+                            metric_point[metric_name] = value
                     
-                    self.training_metrics.append(metric_point)
+                    self.validation_metrics.append(metric_point)
                     
                     # Update job metrics
                     if self.job_id in training_jobs:
                         if "metrics" not in training_jobs[self.job_id]:
                             training_jobs[self.job_id]["metrics"] = {}
-                        training_jobs[self.job_id]["metrics"]["training"] = self.training_metrics
+                        training_jobs[self.job_id]["metrics"]["validation"] = self.validation_metrics
                     
                     # Send metrics via WebSocket
                     asyncio.run(self.manager.send_update(self.job_id, {
-                        "type": "training_metrics",
+                        "type": "validation_metrics",
                         "job_id": self.job_id,
                         "metrics": metric_point,
                         "timestamp": timestamp
                     }))
-            
-            # Send formatted log message
-            log_message = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" 
-                                       for k, v in logs.items() if k != "epoch"])
-            
-            # Send log via WebSocket
-            asyncio.run(self.manager.send_update(self.job_id, {
-                "type": "log",
-                "job_id": self.job_id,
-                "message": log_message,
-                "timestamp": timestamp
-            }))
+                else:
+                    # Training metrics
+                    train_loss = logs.get('loss')
+                    learning_rate = logs.get('learning_rate')
+                    
+                    if train_loss is not None:
+                        metric_point = {
+                            "step": current_step,
+                            "loss": train_loss,
+                            "learning_rate": learning_rate,
+                            "timestamp": timestamp,
+                        }
+                        
+                        # Add any additional metrics
+                        for key, value in logs.items():
+                            if key not in ['loss', 'learning_rate', 'epoch']:
+                                metric_point[key] = value
+                        
+                        self.training_metrics.append(metric_point)
+                        
+                        # Update job metrics
+                        if self.job_id in training_jobs:
+                            if "metrics" not in training_jobs[self.job_id]:
+                                training_jobs[self.job_id]["metrics"] = {}
+                            training_jobs[self.job_id]["metrics"]["training"] = self.training_metrics
+                        
+                        # Send metrics via WebSocket
+                        asyncio.run(self.manager.send_update(self.job_id, {
+                            "type": "training_metrics",
+                            "job_id": self.job_id,
+                            "metrics": metric_point,
+                            "timestamp": timestamp
+                        }))
+                
+                # Send formatted log message
+                log_message = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" 
+                                           for k, v in logs.items() if k != "epoch"])
+                
+                # Send log via WebSocket
+                asyncio.run(self.manager.send_update(self.job_id, {
+                    "type": "log",
+                    "job_id": self.job_id,
+                    "message": log_message,
+                    "timestamp": timestamp
+                }))
+    
+    # Return instance of the callback
+    return ProgressCallback(job_id, manager)
 
 
 async def run_model_loading(
@@ -657,7 +677,7 @@ def run_training_job(job_id: str):
             
             # Train with progress callback and optional early stopping
             hyperparams = job["hyperparameters"]
-            progress_callback = ProgressCallback(job_id, manager)
+            progress_callback = create_progress_callback(job_id, manager)
             # Attach cancellation event so callback/trainer can stop gracefully
             progress_callback.cancellation_event = globals().get("cancellation_events", {}).get(job_id)
             
@@ -795,7 +815,7 @@ def run_training_job(job_id: str):
             
             # Train with progress callback and optional early stopping
             hyperparams = job["hyperparameters"]
-            progress_callback = ProgressCallback(job_id, manager)
+            progress_callback = create_progress_callback(job_id, manager)
             
             # Build callbacks list
             from typing import List as TypingList

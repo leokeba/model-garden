@@ -780,6 +780,9 @@ class VisionLanguageTrainer:
             "remove_unused_columns": False,
             "dataset_text_field": "",
             "dataset_kwargs": {"skip_prepare_dataset": True},
+            # IMPORTANT: Only train on responses/outputs, not inputs/instructions
+            # This masks the input tokens so the model only learns to generate responses
+            "completion_only_loss": True,
         }
         
         # Add evaluation settings if validation dataset provided
