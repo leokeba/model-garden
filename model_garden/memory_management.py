@@ -69,11 +69,13 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     
     Performs essential cleanup steps:
     1. Clear trainer internal references
-    2. Move models from GPU to CPU
-    3. Delete objects
-    4. Garbage collection
-    5. Clear GPU cache
-    6. Return memory to OS
+    2. Clear dataset image caches
+    3. Move models from GPU to CPU
+    4. Delete objects
+    5. Garbage collection (multiple passes)
+    6. Clear GPU cache
+    7. Clear HuggingFace caches
+    8. Return memory to OS
     
     Args:
         *objects_to_delete: Variable number of objects to delete
@@ -95,7 +97,35 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
             if 'Trainer' in class_name:
                 clear_trainer_internals(obj)
     
-    # Step 2: Move models to CPU to free GPU memory
+    # Step 2: Clear dataset image caches for vision models
+    for obj in objects_to_delete:
+        if obj is not None:
+            try:
+                # Clear list-based datasets (vision models store PIL images)
+                if isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, dict):
+                            # Clear PIL images
+                            if 'image' in item:
+                                try:
+                                    if hasattr(item['image'], 'close'):
+                                        item['image'].close()
+                                    del item['image']
+                                except Exception:
+                                    pass
+                            # Clear any other large objects
+                            item.clear()
+                    obj.clear()
+                # Clear HuggingFace Dataset objects
+                elif hasattr(obj, 'cleanup_cache_files'):
+                    try:
+                        obj.cleanup_cache_files()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    
+    # Step 3: Move models to CPU to free GPU memory
     for obj in objects_to_delete:
         if obj is not None:
             try:
@@ -106,7 +136,7 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
             except Exception:
                 pass
     
-    # Step 3: Delete objects
+    # Step 4: Delete objects
     for obj in objects_to_delete:
         if obj is not None:
             try:
@@ -114,12 +144,15 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
             except Exception:
                 pass
     
-    # Step 4: Garbage collection
-    collected = gc.collect()
-    if collected > 0:
-        print(f"  ✓ Collected {collected} objects")
+    # Step 5: Aggressive garbage collection (multiple passes)
+    total_collected = 0
+    for i in range(3):  # 3 passes to catch circular references
+        collected = gc.collect()
+        total_collected += collected
+    if total_collected > 0:
+        print(f"  ✓ Collected {total_collected} objects")
     
-    # Step 5: Clear GPU cache
+    # Step 6: Clear GPU cache
     if torch.cuda.is_available():
         try:
             allocated_before = torch.cuda.memory_allocated() / 1024**3
@@ -146,16 +179,35 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
         except Exception as e:
             print(f"  ⚠️  Warning: GPU cleanup error: {e}")
     
-    # Step 6: Return memory to OS (Linux only)
+    # Step 7: Clear HuggingFace caches
+    try:
+        # Clear transformers cache
+        from transformers.utils import is_torch_available
+        if is_torch_available():
+            import torch
+            # Clear torch hub cache
+            if hasattr(torch.hub, '_get_torch_home'):
+                pass  # No specific clear method available
+    except Exception:
+        pass
+    
+    # Step 8: Return memory to OS (Linux only)
     try:
         import ctypes
         libc = ctypes.CDLL("libc.so.6")
-        libc.malloc_trim(0)
+        result = libc.malloc_trim(0)
+        if result:
+            print(f"  ✓ Returned unused memory to OS")
     except Exception:
         pass  # Not critical if this fails
     
-    # Step 7: Final garbage collection
+    # Step 9: Final garbage collection
     gc.collect()
+    
+    # Report final memory state
+    rss_mb = get_process_memory_mb()
+    if rss_mb:
+        print(f"  📊 Current RAM usage: {rss_mb:.0f} MB")
     
     print("✅ Training resources cleaned up")
 

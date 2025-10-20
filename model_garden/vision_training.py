@@ -865,6 +865,19 @@ class VisionLanguageTrainer:
                     )
             except Exception as e:
                 console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
+        
+        # CRITICAL: Explicitly clear dataset references from trainer to enable garbage collection
+        # Vision models keep PIL images in RAM which can accumulate across multiple training runs
+        console.print("[cyan]🧹 Clearing dataset references from trainer...[/cyan]")
+        try:
+            if hasattr(trainer, 'train_dataset'):
+                trainer.train_dataset = None
+            if hasattr(trainer, 'eval_dataset'):
+                trainer.eval_dataset = None
+            if hasattr(trainer, 'data_collator'):
+                trainer.data_collator = None
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Warning: Failed to clear trainer datasets: {e}[/yellow]")
 
     def _clean_merged_config(self, output_dir: str) -> None:
         """Remove quantization_config from merged model config for vLLM compatibility.

@@ -735,6 +735,17 @@ def run_training_job(job_id: str):
             save_method = job.get("save_method", "merged_16bit")
             trainer.save_model(job["output_dir"], save_method=save_method)
             
+            # CRITICAL: Clear trainer's dataset references BEFORE cleanup
+            # to break circular references and enable garbage collection
+            try:
+                val_dataset = None  # Clear local reference
+                if hasattr(trainer, 'train_dataset'):
+                    trainer.train_dataset = None
+                if hasattr(trainer, 'eval_dataset'):
+                    trainer.eval_dataset = None
+            except Exception:
+                pass
+            
             # Aggressively free memory after training completes
             cleanup_training_resources(
                 trainer.model,
@@ -866,6 +877,18 @@ def run_training_job(job_id: str):
             save_method = hyperparams.get("save_method", "merged_16bit")
             if save_method != "lora":
                 trainer.save_model(job["output_dir"], save_method=save_method)
+        
+            # CRITICAL: Clear trainer's dataset references BEFORE cleanup
+            # to break circular references and enable garbage collection
+            try:
+                val_dataset = None  # Clear local reference
+                train_dataset = None  # Clear local reference
+                if hasattr(trainer, 'train_dataset'):
+                    trainer.train_dataset = None
+                if hasattr(trainer, 'eval_dataset'):
+                    trainer.eval_dataset = None
+            except Exception:
+                pass
         
             # Aggressively free memory after training completes
             cleanup_training_resources(
