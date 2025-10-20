@@ -49,6 +49,7 @@ class ModelTrainer:
         base_model: str,
         max_seq_length: int = 2048,
         load_in_4bit: bool = True,
+        load_in_8bit: bool = False,
         dtype: Optional[str] = None,
     ):
         """Initialize the trainer.
@@ -56,19 +57,38 @@ class ModelTrainer:
         Args:
             base_model: HuggingFace model identifier or local path
             max_seq_length: Maximum sequence length
-            load_in_4bit: Whether to load model in 4-bit quantization
-            dtype: Data type (None for auto-detection)
+            load_in_4bit: Whether to load model in 4-bit quantization (memory efficient, ~95% quality)
+            load_in_8bit: Whether to load model in 8-bit quantization (balanced, ~98% quality, 2x memory vs 4-bit)
+            dtype: Data type (None for auto-detection, used for 16-bit precision when both quantizations are False)
+        
+        Note on quantization priority:
+            - If load_in_8bit=True: Uses 8-bit quantization (overrides load_in_4bit)
+            - If load_in_4bit=True and load_in_8bit=False: Uses 4-bit quantization
+            - If both False: Uses 16-bit precision (full quality, 4x memory vs 4-bit)
         """
         self.base_model = base_model
         self.max_seq_length = max_seq_length
-        self.load_in_4bit = load_in_4bit
+        self.load_in_8bit = load_in_8bit
+        self.load_in_4bit = load_in_4bit and not load_in_8bit  # 8-bit takes priority
         self.dtype = dtype
         self.model = None
         self.tokenizer = None
 
     def load_model(self) -> None:
-        """Load the base model with Unsloth optimizations."""
+        """Load the base model with Unsloth optimizations.
+        
+        Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
+        """
+        # Determine precision for logging
+        if self.load_in_8bit:
+            precision = "8-bit (balanced quality/memory)"
+        elif self.load_in_4bit:
+            precision = "4-bit (memory efficient)"
+        else:
+            precision = "16-bit (full quality)"
+        
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
+        console.print(f"[cyan]Precision: {precision}[/cyan]")
 
         with Progress(
             SpinnerColumn(),
@@ -80,11 +100,14 @@ class ModelTrainer:
             # Get HuggingFace token from environment for private models
             hf_token = os.getenv('HF_TOKEN')
             
+            # Unsloth supports both 4-bit and 8-bit quantization
+            # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
             self.model, self.tokenizer = FastLanguageModel.from_pretrained(
                 model_name=self.base_model,
                 max_seq_length=self.max_seq_length,
                 dtype=self.dtype,
                 load_in_4bit=self.load_in_4bit,
+                load_in_8bit=self.load_in_8bit,  # Add 8-bit support
                 token=hf_token,
             )
 
@@ -99,7 +122,7 @@ class ModelTrainer:
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
-        use_gradient_checkpointing: str = "unsloth",
+        use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
         loftq_config: Optional[dict] = None,
     ) -> None:
@@ -113,7 +136,10 @@ class ModelTrainer:
             use_rslora: Whether to use rank-stabilized LoRA (better for high ranks)
             lora_bias: How to handle bias ("none", "all", "lora_only")
             task_type: Type of task ("CAUSAL_LM", "SEQ_2_SEQ_LM", etc.)
-            use_gradient_checkpointing: Gradient checkpointing mode ("unsloth", True, False)
+            use_gradient_checkpointing: Gradient checkpointing mode:
+                - "unsloth": Most memory efficient (30% less VRAM), minor quality loss
+                - True: Standard gradient checkpointing, better quality
+                - False: No gradient checkpointing, best quality but most memory
             random_state: Random seed for reproducibility
             loftq_config: LoftQ quantization config (None to disable)
         """
@@ -137,7 +163,7 @@ class ModelTrainer:
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             bias=lora_bias,
-            use_gradient_checkpointing=use_gradient_checkpointing,
+            use_gradient_checkpointing=use_gradient_checkpointing,  # type: ignore
             random_state=random_state,
             use_rslora=use_rslora,
             loftq_config=loftq_config,

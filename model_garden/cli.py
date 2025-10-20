@@ -188,6 +188,38 @@ def main() -> None:
     is_flag=True,
     help="Load dataset from HuggingFace Hub instead of local file",
 )
+@click.option(
+    "--use-gradient-checkpointing",
+    type=click.Choice(["unsloth", "true", "false"]),
+    default="unsloth",
+    help="Gradient checkpointing mode: 'unsloth' (most memory efficient), 'true' (better quality), 'false' (best quality, most memory)",
+)
+@click.option(
+    "--load-in-16bit",
+    is_flag=True,
+    help="Load model in 16-bit precision instead of 4-bit (better quality, 4x more memory)",
+)
+@click.option(
+    "--load-in-8bit",
+    is_flag=True,
+    help="Load model in 8-bit precision instead of 4-bit (balanced quality/memory)",
+)
+@click.option(
+    "--use-rslora",
+    is_flag=True,
+    help="Use rank-stabilized LoRA (recommended for high ranks >= 32)",
+)
+@click.option(
+    "--optim",
+    type=click.Choice(["adamw_8bit", "adamw_torch", "adamw_torch_fused", "adafactor"]),
+    default="adamw_8bit",
+    help="Optimizer: 'adamw_8bit' (memory efficient), 'adamw_torch' (better quality), 'adamw_torch_fused' (best quality/speed)",
+)
+@click.option(
+    "--quality-mode",
+    is_flag=True,
+    help="Enable quality-optimized settings (16-bit precision, standard gradient checkpointing, better optimizer)",
+)
 def train(
     base_model: str,
     dataset: str,
@@ -218,17 +250,33 @@ def train(
     eval_strategy: str,
     save_total_limit: int,
     from_hub: bool,
+    use_gradient_checkpointing: str,
+    load_in_16bit: bool,
+    load_in_8bit: bool,
+    use_rslora: bool,
+    optim: str,
+    quality_mode: bool,
 ) -> None:
     """Fine-tune a language model using Unsloth.
 
     Example:
 
         \b
-        # Train with local dataset
+        # Train with default (memory-optimized) settings
         uv run model-garden train \\
             --base-model unsloth/tinyllama-bnb-4bit \\
             --dataset ./data/train.jsonl \\
             --output-dir ./models/my-model \\
+            --epochs 3
+
+        \b
+        # Train with quality-optimized settings (uses more memory)
+        uv run model-garden train \\
+            --base-model unsloth/llama-3.1-8b \\
+            --dataset ./data/train.jsonl \\
+            --output-dir ./models/my-model \\
+            --quality-mode \\
+            --lora-r 64 \\
             --epochs 3
 
         \b
@@ -244,12 +292,40 @@ def train(
         from model_garden.training import ModelTrainer
         
         console.print("\n[bold cyan]🌱 Model Garden - Fine-tuning[/bold cyan]\n")
+        
+        # Apply quality mode overrides
+        if quality_mode:
+            console.print("[yellow]🎯 Quality mode enabled - using higher precision settings[/yellow]")
+            load_in_16bit = True
+            load_in_4bit = False
+            use_gradient_checkpointing = "true"
+            optim = "adamw_torch"
+            if lora_r >= 32:
+                use_rslora = True
+                console.print(f"[yellow]🎯 LoRA rank {lora_r} >= 32, enabling RSLoRA[/yellow]")
+            console.print(f"[yellow]⚠️  Warning: Quality mode uses ~4x more VRAM than default settings[/yellow]\n")
+        
+        # Convert gradient checkpointing string to appropriate value
+        if use_gradient_checkpointing == "unsloth":
+            gc_value = "unsloth"
+        elif use_gradient_checkpointing == "true":
+            gc_value = True
+        else:  # "false"
+            gc_value = False
+
+        # Determine quantization settings
+        if load_in_16bit and load_in_8bit:
+            console.print("[red]Error: Cannot use both --load-in-16bit and --load-in-8bit[/red]")
+            return
+        
+        load_in_4bit_final = not (load_in_16bit or load_in_8bit)
 
         # Initialize trainer
         trainer = ModelTrainer(
             base_model=base_model,
             max_seq_length=max_seq_length,
-            load_in_4bit=True,
+            load_in_4bit=load_in_4bit_final,
+            load_in_8bit=load_in_8bit,  # Add 8-bit support
         )
 
         # Load model
@@ -261,6 +337,8 @@ def train(
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             lora_bias=lora_bias,
+            use_gradient_checkpointing=gc_value,
+            use_rslora=use_rslora,
         )
 
         # Load dataset
@@ -288,6 +366,7 @@ def train(
             max_steps=max_steps,
             logging_steps=logging_steps,
             save_steps=save_steps,
+            optim=optim,
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler_type,
             max_grad_norm=max_grad_norm,
@@ -686,6 +765,38 @@ def serve(host: str, port: int, reload: bool) -> None:
     default=False,
     help="Print selective loss masking statistics during training",
 )
+@click.option(
+    "--quality-mode",
+    is_flag=True,
+    help="🏆 Enable quality-optimized settings (16-bit precision, better optimizer, standard gradient checkpointing, RSLoRA for high ranks). Uses ~4x more VRAM than default.",
+)
+@click.option(
+    "--load-in-16bit",
+    is_flag=True,
+    help="Load model in 16-bit precision (full quality, 4x more memory than 4-bit). Mutually exclusive with --load-in-8bit.",
+)
+@click.option(
+    "--load-in-8bit",
+    is_flag=True,
+    help="Load model in 8-bit precision (balanced quality/memory, 2x more memory than 4-bit). Mutually exclusive with --load-in-16bit.",
+)
+@click.option(
+    "--use-rslora",
+    is_flag=True,
+    help="Use rank-stabilized LoRA (recommended for LoRA rank >= 32)",
+)
+@click.option(
+    "--use-gradient-checkpointing",
+    type=click.Choice(["unsloth", "true", "false"]),
+    default="unsloth",
+    help="Gradient checkpointing mode: 'unsloth' (most memory efficient), 'true' (standard, better quality), 'false' (best quality, most memory)",
+)
+@click.option(
+    "--optim",
+    type=click.Choice(["adamw_8bit", "adamw_torch", "adamw_torch_fused", "adafactor"]),
+    default="adamw_8bit",
+    help="Optimizer: adamw_8bit (memory efficient), adamw_torch (better quality), adamw_torch_fused (best quality/speed), adafactor (memory efficient alternative)",
+)
 def train_vision(
     base_model: str,
     dataset: str,
@@ -720,6 +831,12 @@ def train_vision(
     selective_loss_schema_keys: Optional[str],
     selective_loss_masking_start_step: int,
     selective_loss_verbose: bool,
+    quality_mode: bool,
+    load_in_16bit: bool,
+    load_in_8bit: bool,
+    use_rslora: bool,
+    use_gradient_checkpointing: str,
+    optim: str,
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
 
@@ -763,11 +880,42 @@ def train_vision(
         
         console.print("[yellow]⚠️  Vision-language training is experimental[/yellow]\n")
 
+        # Apply quality mode overrides
+        if quality_mode:
+            console.print("[yellow]🎯 Quality mode enabled - applying optimizations:[/yellow]")
+            console.print("[yellow]  • 16-bit precision (full quality)[/yellow]")
+            console.print("[yellow]  • Standard gradient checkpointing[/yellow]")
+            console.print("[yellow]  • Better optimizer (adamw_torch)[/yellow]")
+            load_in_16bit = True
+            load_in_4bit = False
+            use_gradient_checkpointing = "true"
+            optim = "adamw_torch"
+            if lora_r >= 32:
+                use_rslora = True
+                console.print(f"[yellow]🎯 LoRA rank {lora_r} >= 32, enabling RSLoRA[/yellow]")
+            console.print(f"[yellow]⚠️  Warning: Quality mode uses ~4x more VRAM than default settings[/yellow]\n")
+        
+        # Convert gradient checkpointing string to appropriate value
+        if use_gradient_checkpointing == "unsloth":
+            gc_value = "unsloth"
+        elif use_gradient_checkpointing == "true":
+            gc_value = True
+        else:  # "false"
+            gc_value = False
+
+        # Determine quantization settings
+        if load_in_16bit and load_in_8bit:
+            console.print("[red]Error: Cannot use both --load-in-16bit and --load-in-8bit[/red]")
+            return
+        
+        load_in_4bit_final = not (load_in_16bit or load_in_8bit)
+
         # Initialize trainer
         trainer = VisionLanguageTrainer(
             base_model=base_model,
             max_seq_length=max_seq_length,
-            load_in_4bit=True,
+            load_in_4bit=load_in_4bit_final,
+            load_in_8bit=load_in_8bit,
         )
 
         # Load model
@@ -779,6 +927,8 @@ def train_vision(
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             lora_bias=lora_bias,
+            use_gradient_checkpointing=gc_value,
+            use_rslora=use_rslora,
         )
 
         # Load dataset (handles both local files and HuggingFace Hub)
@@ -811,6 +961,7 @@ def train_vision(
             max_steps=max_steps,
             logging_steps=logging_steps,
             save_steps=save_steps,
+            optim=optim,  # Add optimizer parameter
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler_type,
             max_grad_norm=max_grad_norm,

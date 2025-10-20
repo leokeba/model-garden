@@ -62,6 +62,7 @@ class VisionLanguageTrainer:
         base_model: str,
         max_seq_length: int = 2048,
         load_in_4bit: bool = True,
+        load_in_8bit: bool = False,
         dtype: Optional[str] = None,
     ):
         """Initialize the vision-language trainer.
@@ -69,12 +70,19 @@ class VisionLanguageTrainer:
         Args:
             base_model: HuggingFace model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
             max_seq_length: Maximum sequence length
-            load_in_4bit: Whether to load model in 4-bit quantization
-            dtype: Data type (None for auto-detection)
+            load_in_4bit: Whether to load model in 4-bit quantization (memory efficient, ~95% quality)
+            load_in_8bit: Whether to load model in 8-bit quantization (balanced, ~98% quality, 2x memory vs 4-bit)
+            dtype: Data type (None for auto-detection, used for 16-bit precision when both quantizations are False)
+        
+        Note on quantization priority:
+            - If load_in_8bit=True: Uses 8-bit quantization (overrides load_in_4bit)
+            - If load_in_4bit=True and load_in_8bit=False: Uses 4-bit quantization
+            - If both False: Uses 16-bit precision (full quality, 4x memory vs 4-bit)
         """
         self.base_model = base_model
         self.max_seq_length = max_seq_length
-        self.load_in_4bit = load_in_4bit
+        self.load_in_8bit = load_in_8bit
+        self.load_in_4bit = load_in_4bit and not load_in_8bit  # 8-bit takes priority
         self.dtype = dtype
         self.model = None
         self.tokenizer = None
@@ -87,8 +95,18 @@ class VisionLanguageTrainer:
         """Load the vision-language model.
         
         Note: Qwen2.5-VL requires special handling as it's a multimodal model.
+        Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
         """
+        # Determine precision for logging
+        if self.load_in_8bit:
+            precision = "8-bit (balanced quality/memory)"
+        elif self.load_in_4bit:
+            precision = "4-bit (memory efficient)"
+        else:
+            precision = "16-bit (full quality)"
+        
         console.print(f"[cyan]Loading vision-language model: {self.base_model}[/cyan]")
+        console.print(f"[cyan]Precision: {precision}[/cyan]")
         
         # Get HuggingFace token from environment for private models
         hf_token = os.getenv('HF_TOKEN')
@@ -102,11 +120,14 @@ class VisionLanguageTrainer:
                 progress.add_task(description="Loading model...", total=None)
                 
                 try:
+                    # Unsloth supports both 4-bit and 8-bit quantization
+                    # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
                     self.model, self.tokenizer = FastLanguageModel.from_pretrained(
                         model_name=self.base_model,
                         max_seq_length=self.max_seq_length,
                         dtype=self.dtype,
                         load_in_4bit=self.load_in_4bit,
+                        load_in_8bit=self.load_in_8bit,  # Add 8-bit support
                         token=hf_token,
                     )
                     # Load processor for vision models
@@ -123,10 +144,12 @@ class VisionLanguageTrainer:
                     self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
                     self.tokenizer = self.processor.tokenizer
                     
+                    # Transformers supports 4-bit and 8-bit via BitsAndBytes
                     self.model = AutoModelForVision2Seq.from_pretrained(
                         self.base_model,
                         device_map="auto",
                         load_in_4bit=self.load_in_4bit if self.load_in_4bit else None,
+                        load_in_8bit=self.load_in_8bit if self.load_in_8bit else None,
                         token=hf_token,
                     )
                     console.print("[green]✓[/green] Model loaded with transformers")
@@ -144,7 +167,7 @@ class VisionLanguageTrainer:
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
-        use_gradient_checkpointing: str = "unsloth",
+        use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
         loftq_config: Optional[dict] = None,
     ) -> None:
@@ -158,11 +181,21 @@ class VisionLanguageTrainer:
             use_rslora: Whether to use rank-stabilized LoRA (better for high ranks)
             lora_bias: How to handle bias ("none", "all", "lora_only")
             task_type: Type of task ("CAUSAL_LM", "SEQ_2_SEQ_LM", etc.)
-            use_gradient_checkpointing: Gradient checkpointing mode ("unsloth", True, False)
+            use_gradient_checkpointing: Gradient checkpointing mode:
+                - "unsloth": Most memory efficient (30% less VRAM), minor quality loss
+                - True: Standard gradient checkpointing, better quality
+                - False: No gradient checkpointing, best quality but most memory
             random_state: Random seed for reproducibility
             loftq_config: LoftQ quantization config (None to disable)
         """
         console.print("[cyan]Configuring LoRA adapters for vision-language model...[/cyan]")
+        
+        # Workaround: 8-bit quantization has compatibility issues with gradient checkpointing
+        # due to torch compile + bitsandbytes interactions. Disable gradient checkpointing for 8-bit.
+        if self.load_in_8bit and use_gradient_checkpointing not in [False, "false"]:
+            console.print("[yellow]⚠️  8-bit quantization detected - disabling gradient checkpointing to avoid compatibility issues[/yellow]")
+            console.print("[yellow]    (8-bit + gradient checkpointing causes torch compile errors)[/yellow]")
+            use_gradient_checkpointing = False
 
         try:
             if target_modules is None:
@@ -184,7 +217,7 @@ class VisionLanguageTrainer:
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
                 bias=lora_bias,
-                use_gradient_checkpointing=use_gradient_checkpointing,
+                use_gradient_checkpointing=use_gradient_checkpointing,  # type: ignore
                 random_state=random_state,
                 use_rslora=use_rslora,
                 loftq_config=loftq_config,
@@ -672,6 +705,13 @@ class VisionLanguageTrainer:
         final_metric = metric_for_best_model if eval_dataset is not None else None
 
         # Build training args - SFTConfig has different parameters than TrainingArguments
+        # Detect model's actual dtype to set precision correctly
+        import torch
+        model_dtype = None
+        if self.model is not None and hasattr(self.model, 'dtype'):
+            model_dtype = self.model.dtype
+        is_bfloat16_model = model_dtype == torch.bfloat16
+        
         training_args_dict = {
             "output_dir": output_dir,
             "per_device_train_batch_size": per_device_train_batch_size,
@@ -680,8 +720,10 @@ class VisionLanguageTrainer:
             "max_steps": max_steps if use_max_steps else -1,
             "num_train_epochs": 1.0 if use_max_steps else num_train_epochs,
             "learning_rate": learning_rate,
-            "fp16": not self.load_in_4bit,
-            "bf16": self.load_in_4bit,
+            # Precision settings: Match the model's actual dtype
+            # Quantized models (4-bit/8-bit) use bfloat16, but some 16-bit models also use bfloat16
+            "fp16": not (self.load_in_4bit or self.load_in_8bit or is_bfloat16_model),
+            "bf16": self.load_in_4bit or self.load_in_8bit or is_bfloat16_model,
             "logging_steps": logging_steps,
             "optim": optim,
             "weight_decay": weight_decay,

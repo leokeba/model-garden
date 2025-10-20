@@ -82,6 +82,10 @@ class TrainingJobRequest(BaseModel):
     early_stopping_enabled: bool = False  # Enable early stopping
     early_stopping_patience: int = 3  # Number of evals with no improvement before stopping
     early_stopping_threshold: float = 0.0  # Minimum improvement to count
+    # Quality settings
+    quality_mode: bool = False  # Enable quality-optimized settings (16-bit, better optimizer, etc.)
+    load_in_16bit: bool = False  # Load model in 16-bit precision (better quality, 4x more memory)
+    load_in_8bit: bool = False  # Load model in 8-bit precision (balanced quality/memory)
 
 
 class TrainingJobInfo(BaseModel):
@@ -573,6 +577,35 @@ def run_training_job(job_id: str):
         validation_from_hub = job.get("validation_from_hub", False)
         validation_dataset_path = job.get("validation_dataset_path")
         
+        # Handle quality mode settings
+        quality_mode = job.get("quality_mode", False)
+        load_in_16bit = job.get("load_in_16bit", False)
+        load_in_8bit = job.get("load_in_8bit", False)
+        
+        # Apply quality mode overrides
+        if quality_mode:
+            print("🎯 Quality mode enabled - using higher precision settings")
+            load_in_16bit = True
+            load_in_8bit = False
+            # Override lora_config gradient checkpointing if not explicitly set
+            lora_config = job.get("lora_config", {})
+            if "use_gradient_checkpointing" not in lora_config or lora_config["use_gradient_checkpointing"] == "unsloth":
+                lora_config["use_gradient_checkpointing"] = True
+            # Override optimizer if not explicitly set
+            hyperparams = job.get("hyperparameters", {})
+            if "optim" not in hyperparams or hyperparams["optim"] == "adamw_8bit":
+                hyperparams["optim"] = "adamw_torch"
+            # Enable RSLoRA for high ranks
+            if lora_config.get("r", 16) >= 32 and not lora_config.get("use_rslora"):
+                lora_config["use_rslora"] = True
+                print(f"🎯 LoRA rank {lora_config['r']} >= 32, enabling RSLoRA")
+            job["lora_config"] = lora_config
+            job["hyperparameters"] = hyperparams
+            print("⚠️  Warning: Quality mode uses ~4x more VRAM than default settings")
+        
+        # Determine quantization (after quality mode overrides)
+        load_in_4bit = not (load_in_16bit or load_in_8bit)
+        
         if is_vision:
             # Use VisionLanguageTrainer for vision models
             from model_garden.vision_training import VisionLanguageTrainer
@@ -582,7 +615,8 @@ def run_training_job(job_id: str):
             trainer = VisionLanguageTrainer(
                 base_model=job["base_model"],
                 max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
-                load_in_4bit=True,
+                load_in_4bit=load_in_4bit,
+                load_in_8bit=load_in_8bit,  # Add 8-bit support for vision models
             )
             
             # Load model
@@ -708,7 +742,8 @@ def run_training_job(job_id: str):
             trainer = ModelTrainer(
                 base_model=job["base_model"],
                 max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
-                load_in_4bit=True,
+                load_in_4bit=load_in_4bit,
+                load_in_8bit=load_in_8bit,  # Add 8-bit support for text models
             )
             
             # Load model
@@ -1454,6 +1489,10 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "selective_loss_schema_keys": job_request.selective_loss_schema_keys,
         "selective_loss_masking_start_step": job_request.selective_loss_masking_start_step,
         "selective_loss_verbose": job_request.selective_loss_verbose,
+        # Quality settings
+        "quality_mode": job_request.quality_mode,
+        "load_in_16bit": job_request.load_in_16bit,
+        "load_in_8bit": job_request.load_in_8bit,
     }
     
     training_jobs[job_id] = job_info
