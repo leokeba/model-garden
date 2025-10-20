@@ -121,10 +121,13 @@ pip install -e .
 uv run model-garden create-dataset --output ./data/sample.jsonl --num-examples 100
 
 # Fine-tune a small model (TinyLlama 1.1B)
+# Note: Models are stored in the models/ directory. You can use either:
+#   --output-dir my-model (recommended, simpler)
+#   --output-dir ./models/my-model (also works for backward compatibility)
 uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/sample.jsonl \
-  --output-dir ./models/my-model \
+  --output-dir my-model \
   --epochs 3 \
   --batch-size 2
 
@@ -132,7 +135,7 @@ uv run model-garden train \
 uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset yahma/alpaca-cleaned \
-  --output-dir ./models/alpaca-model \
+  --output-dir alpaca-model \
   --from-hub \
   --epochs 3
 
@@ -140,7 +143,8 @@ uv run model-garden train \
 uv run model-garden jobs status <job-id>
 
 # Generate text from your fine-tuned model
-uv run model-garden generate ./models/my-model \
+# When loading models, you can use just the model name
+uv run model-garden generate my-model \
   --prompt "Explain quantum computing in simple terms" \
   --max-tokens 256
 

@@ -219,7 +219,9 @@
   // Auto-update output directory when name changes
   $effect(() => {
     if (formData.name) {
-      formData.output_dir = `./models/${formData.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}`;
+      formData.output_dir = formData.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "-");
     }
   });
 
@@ -618,9 +620,13 @@
                 type="text"
                 id="output_dir"
                 bind:value={formData.output_dir}
-                placeholder="./models/my-model"
+                placeholder="my-model"
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
               />
+              <p class="mt-1 text-sm text-gray-500">
+                Model will be saved to models/{formData.output_dir ||
+                  "my-model"}
+              </p>
             </div>
           </div>
         </div>

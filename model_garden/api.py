@@ -238,6 +238,40 @@ def resolve_path(path_str: str, is_model_dir: bool = False) -> str:
         return str(resolved)
 
 
+def resolve_model_path(path_str: str) -> str:
+    """Resolve a model path, handling both simple names and paths.
+    
+    This function handles:
+    - Simple model names: "my-model" -> MODELS_DIR/my-model
+    - Paths with ./models/ prefix: "./models/my-model" -> MODELS_DIR/my-model
+    - Absolute paths: "/path/to/model" -> /path/to/model
+    - HuggingFace IDs: "org/model" -> org/model (unchanged)
+    
+    Args:
+        path_str: Model path or name
+        
+    Returns:
+        Resolved path string
+    """
+    # If it's an absolute path, return as-is
+    if Path(path_str).is_absolute():
+        return path_str
+    
+    # If it looks like a HuggingFace model ID (contains / but not at start), return as-is
+    if '/' in path_str and not path_str.startswith(('./', '../', '/')):
+        return path_str
+    
+    # Strip ./models/ or models/ prefix if present
+    cleaned_path = path_str
+    if cleaned_path.startswith('./models/'):
+        cleaned_path = cleaned_path[len('./models/'):]
+    elif cleaned_path.startswith('models/'):
+        cleaned_path = cleaned_path[len('models/'):]
+    
+    # Resolve relative to MODELS_DIR
+    return str((Path(MODELS_DIR) / cleaned_path).resolve())
+
+
 # WebSocket connection manager
 class ConnectionManager:
     """Manages WebSocket connections for real-time updates."""
@@ -1380,7 +1414,9 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     
     # Only resolve paths for local files, not HuggingFace Hub datasets
     dataset_path = job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
-    output_dir = resolve_path(job_request.output_dir, is_model_dir=True)
+    
+    # Resolve output directory for models
+    output_dir = resolve_model_path(job_request.output_dir)
     
     # Handle validation dataset path
     validation_dataset_path = None
@@ -1801,10 +1837,13 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
     
     queue = get_job_queue()
     
+    # Resolve model path (handles simple names, ./models/ prefix, and HF IDs)
+    model_path = resolve_model_path(request.model_path)
+    
     # Try to get model defaults from registry
     model_info = None
     try:
-        model_info = get_model(request.model_path)
+        model_info = get_model(model_path)
         if model_info:
             print(f"📋 Found model in registry: {model_info.name}")
     except Exception as e:
@@ -1864,12 +1903,12 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
             job_id=job_id,
             job_type=JobType.MODEL_LOADING,
             job_config={
-                "model_path": request.model_path,
-                "tensor_parallel_size": request.tensor_parallel_size,
-                "gpu_memory_utilization": request.gpu_memory_utilization,
-                "max_model_len": request.max_model_len,
-                "dtype": request.dtype,
-                "quantization": request.quantization,
+                "model_path": model_path,
+                "tensor_parallel_size": tensor_parallel_size,
+                "gpu_memory_utilization": gpu_memory_utilization,
+                "max_model_len": max_model_len,
+                "dtype": dtype,
+                "quantization": quantization,
             },
             priority=0
         )
@@ -1890,12 +1929,12 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
         job_id=job_id,
         job_type=JobType.MODEL_LOADING,
         job_config={
-            "model_path": request.model_path,
-            "tensor_parallel_size": request.tensor_parallel_size,
-            "gpu_memory_utilization": request.gpu_memory_utilization,
-            "max_model_len": request.max_model_len,
-            "dtype": request.dtype,
-            "quantization": request.quantization,
+            "model_path": model_path,
+            "tensor_parallel_size": tensor_parallel_size,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "max_model_len": max_model_len,
+            "dtype": dtype,
+            "quantization": quantization,
         },
         priority=0
     )
@@ -1904,12 +1943,12 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
     background_tasks.add_task(
         run_model_loading,
         job_id,
-        request.model_path,
-        request.tensor_parallel_size,
-        request.gpu_memory_utilization,
-        request.max_model_len,
-        request.dtype,
-        request.quantization
+        model_path,
+        tensor_parallel_size,
+        gpu_memory_utilization,
+        max_model_len,
+        dtype,
+        quantization
     )
     
     return APIResponse(

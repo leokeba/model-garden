@@ -997,8 +997,14 @@ class InferenceService:
 
     def get_model_info(self) -> Dict:
         """Get information about the loaded model."""
+        # For local models, return just the model name instead of full path
+        model_display_path = self.model_path
+        if Path(self.model_path).is_absolute():
+            # Extract just the model name from the path
+            model_display_path = Path(self.model_path).name
+        
         return {
-            "model_path": self.model_path,
+            "model_path": model_display_path,
             "is_loaded": self.is_loaded,
             "tensor_parallel_size": self.tensor_parallel_size,
             "gpu_memory_utilization": self.gpu_memory_utilization,

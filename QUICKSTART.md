@@ -28,13 +28,18 @@ uv run model-garden create-dataset --output ./data/sample.jsonl --num-examples 1
 We'll use TinyLlama (1.1B parameters) which is small enough to train on most GPUs:
 
 ```bash
+```bash
+# Fine-tune TinyLlama on a sample dataset
+# Models are saved to the models/ directory
+# You can specify just the model name (recommended) or use ./models/model-name
 uv run model-garden train \
   --base-model unsloth/tinyllama-bnb-4bit \
   --dataset ./data/sample.jsonl \
-  --output-dir ./models/my-first-model \
-  --epochs 1 \
+  --output-dir my-first-model \
+  --epochs 3 \
   --batch-size 2 \
-  --max-steps 50
+  --learning-rate 0.0002
+```
 ```
 
 This will:
@@ -46,7 +51,8 @@ This will:
 ### 3. Generate text
 
 ```bash
-uv run model-garden generate ./models/my-first-model \
+# You can use just the model name when loading
+uv run model-garden generate my-first-model \
   --prompt "Explain machine learning in simple terms" \
   --max-tokens 128
 ```
