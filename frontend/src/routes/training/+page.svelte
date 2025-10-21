@@ -13,8 +13,7 @@
     try {
       loading = true;
       const response = await api.getTrainingJobs();
-      // Reverse the order to show newest first
-      jobs = response.items.reverse();
+      jobs = response.items;
       error = "";
     } catch (err) {
       error =
@@ -27,8 +26,7 @@
   onMount(async () => {
     try {
       const response = await api.getTrainingJobs();
-      // Reverse the order to show newest first
-      jobs = response.items.reverse();
+      jobs = response.items;
     } catch (err) {
       error =
         err instanceof Error ? err.message : "Failed to load training jobs";
@@ -64,7 +62,7 @@
       await api.cancelTrainingJob(jobId);
       // Refresh the job list
       const response = await api.getTrainingJobs();
-      jobs = response.items.reverse();
+      jobs = response.items;
     } catch (err) {
       alert(
         "Failed to cancel job: " +
@@ -81,7 +79,7 @@
       await api.cancelTrainingJob(jobId); // DELETE endpoint is the same
       // Refresh the job list
       const response = await api.getTrainingJobs();
-      jobs = response.items.reverse();
+      jobs = response.items;
     } catch (err) {
       alert(
         "Failed to delete job: " +

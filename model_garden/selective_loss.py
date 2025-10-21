@@ -139,8 +139,62 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
     
     def __call__(self, features):
         """Process batch and apply selective loss masking."""
+        # Show initial batch info only once for debugging
+        if self.current_step == 0 and self.verbose:
+            console.print(f"[cyan]SelectiveLossVisionCollator processing batch[/cyan]")
+            if len(features) > 0 and 'messages' in features[0]:
+                msgs = features[0]['messages']
+                console.print(f"[cyan]  Messages format: {len(msgs)} messages[/cyan]")  # type: ignore[arg-type]
+        
         # First, use Unsloth's collator to handle vision data properly
         batch = super().__call__(features)
+        
+        # Show batch shape info only on first call
+        if self.current_step == 0 and self.verbose:
+            console.print(f"[cyan]After parent.__call__:[/cyan]")
+            if 'labels' in batch:
+                labels_sample = batch['labels'][0]
+                total = len(labels_sample)
+                masked = (labels_sample == -100).sum().item()
+                console.print(f"[cyan]  Labels: {total} tokens, {masked} masked, {total-masked} unmasked[/cyan]")
+            if 'input_ids' in batch:
+                console.print(f"[cyan]  Input IDs shape: {batch['input_ids'].shape}[/cyan]")
+        
+        # CRITICAL: Always check labels to diagnose NaN eval_loss
+        # This runs on EVERY call (training and eval) to catch the root cause
+        if "labels" in batch and len(batch["labels"]) > 0:
+            first_labels = batch["labels"][0]
+            total_tokens = len(first_labels)
+            masked_tokens = (first_labels == -100).sum().item()
+            unmasked_tokens = total_tokens - masked_tokens
+            
+            # Always warn if ALL tokens are masked (regardless of train/eval mode)
+            if unmasked_tokens == 0:
+                console.print(f"[red]❌ CRITICAL: ALL tokens masked in batch![/red]")
+                console.print(f"[red]   Total tokens: {total_tokens}, Step: {self.current_step}[/red]")
+                console.print(f"[red]   This will cause NaN loss![/red]")
+                
+                # Check if this is due to sequence truncation (common with vision models)
+                if "input_ids" in batch and len(batch["input_ids"]) > 0:
+                    try:
+                        input_ids = batch["input_ids"][0]
+                        # Quick check for truncation without excessive logging
+                        full_text = self.processor.tokenizer.decode(input_ids, skip_special_tokens=False)  # type: ignore[attr-defined]
+                        user_count = full_text.count("<|im_start|>user")
+                        assistant_count = full_text.count("<|im_start|>assistant")
+                        
+                        # CRITICAL WARNING: Check if assistant response was truncated
+                        if assistant_count == 0 and user_count > 0:
+                            console.print(f"[red]⚠️  SEQUENCE TRUNCATION DETECTED![/red]")
+                            console.print(f"[red]   Assistant response was CUT OFF by max_seq_length![/red]")
+                            console.print(f"[red]   Current sequence length: {len(input_ids)} tokens[/red]")
+                            console.print(f"[red]   → SOLUTION: Increase max_seq_length (currently at {len(input_ids)})[/red]")
+                            console.print(f"[red]   → For vision models with images, use 8192+ tokens[/red]")
+                        else:
+                            console.print(f"[red]   Markers found: user={user_count}, assistant={assistant_count}[/red]")
+                            console.print(f"[red]   Check train_on_responses_only configuration[/red]")
+                    except Exception as e:
+                        console.print(f"[red]   Could not analyze sequence: {e}[/red]")
         
         # Only increment step counter during training (not evaluation)
         # During eval, PyTorch uses torch.no_grad() context, so gradients are disabled
@@ -621,7 +675,10 @@ def create_selective_loss_collator(
     schema_keys: Optional[List[str]] = None,
     dataset = None,
     masking_start_step: int = 0,
-    verbose: bool = False
+    verbose: bool = False,
+    train_on_responses_only: bool = False,
+    instruction_part: Optional[str] = None,
+    response_part: Optional[str] = None
 ):
     """Create a SelectiveLossVisionCollator with preset masking levels.
     
@@ -637,6 +694,9 @@ def create_selective_loss_collator(
         dataset: Training dataset (required for auto-detection in aggressive mode)
         masking_start_step: Delay masking until this step (0 = immediate, >0 = learn structure first)
         verbose: Whether to print statistics
+        train_on_responses_only: Whether to mask prompts (train only on assistant responses)
+        instruction_part: Chat template marker for user messages (e.g., "<|im_start|>user")
+        response_part: Chat template marker for assistant messages (e.g., "<|im_start|>assistant")
         
     Returns:
         Configured SelectiveLossVisionCollator
@@ -658,11 +718,33 @@ def create_selective_loss_collator(
         ...     verbose=True
         ... )
     """
+    # Validate parameters
+    if train_on_responses_only:
+        if instruction_part is None or response_part is None:
+            raise ValueError(
+                "train_on_responses_only=True requires instruction_part and response_part. "
+                "For Qwen models, use: instruction_part='<|im_start|>user', response_part='<|im_start|>assistant'"
+            )
+    
     if mask_level == "none":
         # Return standard Unsloth collator
-        return UnslothVisionDataCollator(model, processor)
+        kwargs = {}
+        if train_on_responses_only:
+            kwargs["train_on_responses_only"] = True
+            kwargs["instruction_part"] = instruction_part
+            kwargs["response_part"] = response_part
+            kwargs["force_match"] = False  # CRITICAL: Don't mask everything if markers not found
+        
+        return UnslothVisionDataCollator(model, processor, **kwargs)
     
     elif mask_level == "conservative":
+        kwargs = {}
+        if train_on_responses_only:
+            kwargs["train_on_responses_only"] = True
+            kwargs["instruction_part"] = instruction_part
+            kwargs["response_part"] = response_part
+            kwargs["force_match"] = False  # CRITICAL: Don't mask everything if markers not found
+        
         return SelectiveLossVisionCollator(
             model=model,
             processor=processor,
@@ -671,12 +753,17 @@ def create_selective_loss_collator(
             mask_json_keywords=False,
             masking_start_step=masking_start_step,
             verbose=verbose,
-            train_on_responses_only=True,  # CRITICAL: Only compute loss on assistant responses
-            instruction_part="<|im_start|>user",  # Marker for user prompts
-            response_part="<|im_start|>assistant"  # Marker for assistant responses
+            **kwargs
         )
     
     elif mask_level == "moderate":
+        kwargs = {}
+        if train_on_responses_only:
+            kwargs["train_on_responses_only"] = True
+            kwargs["instruction_part"] = instruction_part
+            kwargs["response_part"] = response_part
+            kwargs["force_match"] = False  # CRITICAL: Don't mask everything if markers not found
+        
         return SelectiveLossVisionCollator(
             model=model,
             processor=processor,
@@ -685,9 +772,7 @@ def create_selective_loss_collator(
             mask_json_keywords=True,
             masking_start_step=masking_start_step,
             verbose=verbose,
-            train_on_responses_only=True,  # CRITICAL: Only compute loss on assistant responses
-            instruction_part="<|im_start|>user",  # Marker for user prompts
-            response_part="<|im_start|>assistant"  # Marker for assistant responses
+            **kwargs
         )
     
     elif mask_level == "aggressive":
@@ -709,6 +794,13 @@ def create_selective_loss_collator(
             )
             schema_keys = list(detected_keys)
         
+        kwargs = {}
+        if train_on_responses_only:
+            kwargs["train_on_responses_only"] = True
+            kwargs["instruction_part"] = instruction_part
+            kwargs["response_part"] = response_part
+            kwargs["force_match"] = False  # CRITICAL: Don't mask everything if markers not found
+        
         return SelectiveLossVisionCollator(
             model=model,
             processor=processor,
@@ -718,9 +810,7 @@ def create_selective_loss_collator(
             mask_json_keywords=True,
             masking_start_step=masking_start_step,
             verbose=verbose,
-            train_on_responses_only=True,  # CRITICAL: Only compute loss on assistant responses
-            instruction_part="<|im_start|>user",  # Marker for user prompts
-            response_part="<|im_start|>assistant"  # Marker for assistant responses
+            **kwargs
         )
     
     else:

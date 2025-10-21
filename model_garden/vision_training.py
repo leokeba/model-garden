@@ -78,18 +78,18 @@ class VisionLanguageTrainer:
     def __init__(
         self,
         base_model: str,
-        max_seq_length: int = 2048,
+        max_seq_length: int = 8192,  # Increased from 2048 to fit vision tokens + full responses
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[str] = None,
+        dtype: Optional[torch.dtype] = None,
     ):
         """Initialize the vision-language trainer.
 
         Args:
             base_model: HuggingFace model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
-            max_seq_length: Maximum sequence length
-            load_in_4bit: Whether to load model in 4-bit quantization (memory efficient, ~95% quality)
-            load_in_8bit: Whether to load model in 8-bit quantization (balanced, ~98% quality, 2x memory vs 4-bit)
+            max_seq_length: Maximum sequence length - default 8192 for vision models with large images
+            load_in_4bit: Whether to load model in 4-bit quantization (memory efficient, ~95 percent quality)
+            load_in_8bit: Whether to load model in 8-bit quantization (balanced, ~98 percent quality, 2x memory vs 4-bit)
             dtype: Data type (None for auto-detection, used for 16-bit precision when both quantizations are False)
         
         Note on quantization priority:
@@ -822,9 +822,9 @@ class VisionLanguageTrainer:
             "remove_unused_columns": False,
             "dataset_text_field": "",
             "dataset_kwargs": {"skip_prepare_dataset": True},
-            # IMPORTANT: Only train on responses/outputs, not inputs/instructions
-            # This masks the input tokens so the model only learns to generate responses
-            "completion_only_loss": True,
+            # NOTE: Prompt masking is handled by the data_collator (UnslothVisionDataCollator)
+            # with train_on_responses_only=True, not by TrainingArguments.
+            # See the collator initialization below for the actual masking configuration.
         }
         
         # Add evaluation settings if validation dataset provided
@@ -855,11 +855,28 @@ class VisionLanguageTrainer:
                 schema_keys=selective_loss_schema_keys,
                 dataset=train_dataset,  # Pass dataset for auto-detection
                 masking_start_step=selective_loss_masking_start_step,
-                verbose=selective_loss_verbose
+                verbose=selective_loss_verbose,
+                train_on_responses_only=True,  # Enable prompt masking
+                instruction_part="<|im_start|>user",  # Qwen chat markers
+                response_part="<|im_start|>assistant"
             )
         else:
-            # Use standard Unsloth collator (images stay in RAM for efficiency)
-            data_collator = UnslothVisionDataCollator(self.model, self.processor)
+            # Use standard Unsloth collator with prompt masking enabled
+            # For Qwen vision models, we need to explicitly set the chat markers since
+            # the tokenizer doesn't have _unsloth_input_part/_unsloth_output_part
+            #
+            # CRITICAL: force_match=False is essential for vision models!
+            # Vision tokens can interfere with marker detection. With force_match=True,
+            # if markers aren't found, ALL tokens get masked (causing NaN loss).
+            # With force_match=False, if markers aren't found, NO masking occurs (safer fallback).
+            data_collator = UnslothVisionDataCollator(
+                self.model, 
+                self.processor,
+                train_on_responses_only=True,
+                instruction_part="<|im_start|>user",
+                response_part="<|im_start|>assistant",
+                force_match=False  # Don't mask everything if markers not found
+            )
 
         
         # Ensure model and tokenizer are loaded
@@ -876,6 +893,13 @@ class VisionLanguageTrainer:
             all_callbacks.extend(callbacks)
 
         console.print("[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]")
+        
+        # CRITICAL: Warn about max_seq_length for vision models
+        console.print(f"[yellow]📏 Max sequence length: {self.max_seq_length} tokens[/yellow]")
+        if self.max_seq_length < 4096:
+            console.print(f"[red]⚠️  WARNING: max_seq_length ({self.max_seq_length}) may be too small for vision models![/red]")
+            console.print(f"[red]   Images can use 1500+ tokens, leaving little room for prompts/responses.[/red]")
+            console.print(f"[red]   If you see 'ALL tokens masked' errors, increase max_seq_length to 8192+[/red]")
             
         trainer = SFTTrainer(
             model=self.model,

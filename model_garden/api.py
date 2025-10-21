@@ -634,7 +634,7 @@ def run_training_job(job_id: str):
             
             trainer = VisionLanguageTrainer(
                 base_model=job["base_model"],
-                max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
+                max_seq_length=job["hyperparameters"].get("max_seq_length", 8192),  # Default 8192 for vision models
                 load_in_4bit=load_in_4bit,
                 load_in_8bit=load_in_8bit,  # Add 8-bit support for vision models
             )
@@ -1469,6 +1469,9 @@ async def list_training_jobs(
     
     if status:
         filtered_jobs = [j for j in filtered_jobs if j["status"] == status]
+    
+    # Sort by created_at in descending order (newest first)
+    filtered_jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     
     # Pagination
     total = len(filtered_jobs)
