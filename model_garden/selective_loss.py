@@ -189,9 +189,14 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 console.print(f"   Prompt tokens (masked to -100): {prompt_masked} ({prompt_masked/total_tokens*100:.1f}%)")
                 console.print(f"   Assistant tokens (not -100): {total_tokens - prompt_masked} ({(total_tokens - prompt_masked)/total_tokens*100:.1f}%)")
             
+            # Increment batch count (only during training) - do this BEFORE checking for logging
+            if is_training:
+                self.batch_count += 1
+            
             # Store original for logging only if needed
             original_labels = None
-            if self.verbose and is_training and self.batch_count % 10 == 0:
+            should_print_sample = self.verbose and is_training and self.batch_count % 10 == 0
+            if should_print_sample:
                 # Clone only when we need to print, and detach to avoid gradient tracking
                 original_labels = batch["labels"][0].clone().detach()
             
@@ -200,19 +205,17 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 batch.get("input_ids", None)
             )
             
-            # Increment batch count (only during training)
-            if is_training:
-                self.batch_count += 1
-            
             # Update statistics
             if self.verbose and is_training:
                 # MEMORY FIX: Calculate on-the-fly without storing tensors
                 newly_masked_count = (batch["labels"] == -100).sum().item() - original_masked_count
-                total = batch["labels"].numel()
-                self.total_tokens += total
+                # FIX: Only count assistant tokens (originally not -100) as the denominator
+                # We're measuring "what % of assistant tokens did we mask", not "what % of all tokens"
+                assistant_tokens_count = batch["labels"].numel() - original_masked_count
+                self.total_tokens += assistant_tokens_count
                 self.masked_tokens += newly_masked_count
                 
-                if self.batch_count % 10 == 0:  # Print every 10 batches
+                if should_print_sample:  # Print every 10 batches
                     mask_pct = (self.masked_tokens / self.total_tokens) * 100
                     console.print(
                         f"[dim]Batch {self.batch_count}: Masked {mask_pct:.1f}% of tokens "
