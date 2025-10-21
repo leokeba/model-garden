@@ -473,26 +473,33 @@ class VisionLanguageTrainer:
     def _convert_messages_to_simple_format(self, messages: List[Dict]) -> Dict[str, str]:
         """Convert OpenAI messages format to simple format.
         
-        Extracts the first image and text from user message, and assistant's response.
-        This ensures compatibility with UnslothVisionDataCollator.
+        Extracts the system message, first image and text from user message, and assistant's response.
+        This ensures compatibility with UnslothVisionDataCollator while preserving the original system prompt.
         
         Args:
             messages: List of OpenAI-style messages
             
         Returns:
-            Dict with 'text', 'image', and 'response' keys
+            Dict with 'text', 'image', 'response', and 'system' keys
         """
         result = {
             "text": "",
             "image": None,
-            "response": ""
+            "response": "",
+            "system": ""
         }
         
         for msg in messages:
             role = msg.get("role", "")
             content = msg.get("content", [])
             
-            if role == "user":
+            if role == "system":
+                # Extract system message
+                for item in content:
+                    if item.get("type") == "text" and not result["system"]:
+                        result["system"] = item.get("text", "")
+            
+            elif role == "user":
                 # Extract text and image from user message
                 for item in content:
                     item_type = item.get("type", "")
@@ -593,6 +600,9 @@ class VisionLanguageTrainer:
                 text = simple.get("text", "")
                 response = simple.get("response", "")
                 image_data = simple.get("image", "")
+                # Use the original system message from the dataset, fallback to default if none
+                original_system = simple.get("system", "")
+                effective_system_message = original_system if original_system else system_message
                 
                 # Load image (handles base64, file paths, etc.)
                 pil_image = self._load_image(image_data)
@@ -602,7 +612,7 @@ class VisionLanguageTrainer:
                     "messages": [
                         {
                             "role": "system",
-                            "content": [{"type": "text", "text": system_message}],
+                            "content": [{"type": "text", "text": effective_system_message}],
                         },
                         {
                             "role": "user",
