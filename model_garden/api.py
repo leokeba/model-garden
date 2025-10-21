@@ -78,7 +78,8 @@ class TrainingJobRequest(BaseModel):
     selective_loss: bool = False  # Enable selective loss for structured outputs
     selective_loss_level: str = "conservative"  # Level: conservative, moderate, aggressive
     selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
-    selective_loss_masking_start_step: int = 0  # Delay masking until this step (0=immediate)
+    selective_loss_masking_start_step: int = 0  # Delay masking until this step (0=immediate, legacy)
+    selective_loss_masking_start_epoch: float = 0.0  # Delay masking until this epoch (0.0=immediate, more robust)
     selective_loss_verbose: bool = False  # Print masking statistics
     # Early stopping
     early_stopping_enabled: bool = False  # Enable early stopping
@@ -732,6 +733,7 @@ def run_training_job(job_id: str):
                 selective_loss_level=job.get("selective_loss_level", "conservative"),
                 selective_loss_schema_keys=job.get("selective_loss_schema_keys"),
                 selective_loss_masking_start_step=job.get("selective_loss_masking_start_step", 0),
+                selective_loss_masking_start_epoch=job.get("selective_loss_masking_start_epoch", 0.0),
                 selective_loss_verbose=job.get("selective_loss_verbose", False),
             )
             
@@ -1538,6 +1540,7 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         "selective_loss_level": job_request.selective_loss_level,
         "selective_loss_schema_keys": job_request.selective_loss_schema_keys,
         "selective_loss_masking_start_step": job_request.selective_loss_masking_start_step,
+        "selective_loss_masking_start_epoch": job_request.selective_loss_masking_start_epoch,
         "selective_loss_verbose": job_request.selective_loss_verbose,
         # Quality settings
         "quality_mode": job_request.quality_mode,

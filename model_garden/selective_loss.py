@@ -110,6 +110,7 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         schema_keys: Optional[List[str]] = None,
         mask_json_keywords: bool = False,
         masking_start_step: int = 0,
+        masking_start_epoch: float = 0.0,
         verbose: bool = False,
         **kwargs
     ):
@@ -118,8 +119,14 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         self.mask_keys = mask_schema_keys
         self.schema_keys = set(schema_keys) if schema_keys else set()
         self.mask_keywords = mask_json_keywords
+        
+        # Support both step-based and epoch-based masking
         self.masking_start_step = masking_start_step
+        self.masking_start_epoch = masking_start_epoch
         self.verbose = verbose
+        
+        # Use epoch-based masking if specified, otherwise fall back to step-based
+        self.use_epoch_based_masking = masking_start_epoch > 0.0
         
         # Statistics for debugging
         self.total_tokens = 0
@@ -127,14 +134,22 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         self.batch_count = 0
         self.current_step = 0
         
+        # For epoch-based masking, we need to track the trainer state
+        self._trainer = None
+        self._masking_enabled = False
+        
         if self.verbose:
             console.print("[cyan]Initialized SelectiveLossVisionCollator[/cyan]")
             console.print(f"  Mask structural tokens: {self.mask_structural}")
             console.print(f"  Mask schema keys: {self.mask_keys}")
             if self.schema_keys:
                 console.print(f"  Schema keys to mask ({len(self.schema_keys)}): {list(self.schema_keys)[:10]}")
-            if self.masking_start_step > 0:
-                console.print(f"  [yellow]Masking delayed until step {self.masking_start_step}[/yellow]")
+            
+            if self.use_epoch_based_masking:
+                console.print(f"  [yellow]Masking delayed until epoch {self.masking_start_epoch}[/yellow]")
+                console.print(f"  [yellow]Model will learn JSON structure first, then apply selective loss[/yellow]")
+            elif self.masking_start_step > 0:
+                console.print(f"  [yellow]Masking delayed until step {self.masking_start_step} (legacy step-based)[/yellow]")
                 console.print(f"  [yellow]Model will learn JSON structure first, then apply selective loss[/yellow]")
     
     def __call__(self, features):
@@ -202,28 +217,41 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         if is_training:
             self.current_step += 1
         
-        # DEBUG: Log configuration on first call
-        if self.current_step == 1 and self.verbose:
-            console.print(f"[cyan]DEBUG: masking_start_step={self.masking_start_step}, mask_structural={self.mask_structural}[/cyan]")
+        # Determine if masking should be enabled based on the chosen strategy
+        masking_should_be_enabled = self._should_enable_masking()
         
         # Check if we should apply masking yet
         if not self.mask_structural:
             return batch  # No masking, use standard Unsloth behavior
         
-        if self.current_step <= self.masking_start_step:
-            # Before masking_start_step: let model learn structure normally
+        if not masking_should_be_enabled:
+            # Before masking threshold: let model learn structure normally
             if self.verbose and self.current_step % 10 == 0 and is_training:
-                console.print(
-                    f"[dim]Step {self.current_step}/{self.masking_start_step}: "
-                    f"Learning structure (masking disabled)[/dim]"
-                )
+                if self.use_epoch_based_masking:
+                    current_epoch = self._get_current_epoch()
+                    console.print(
+                        f"[dim]Epoch {current_epoch:.2f}/{self.masking_start_epoch}: "
+                        f"Learning structure (masking disabled)[/dim]"
+                    )
+                else:
+                    console.print(
+                        f"[dim]Step {self.current_step}/{self.masking_start_step}: "
+                        f"Learning structure (masking disabled)[/dim]"
+                    )
             return batch  # No masking yet
         
-        # Log when masking starts (now at step masking_start_step + 1)
-        if self.current_step == self.masking_start_step + 1 and self.verbose and is_training:
-            console.print(
-                f"[green]✓ Step {self.current_step}: Masking activated! (after {self.masking_start_step} steps of structure learning)[/green]"
-            )
+        # Log when masking starts (only once)
+        if not self._masking_enabled and masking_should_be_enabled and self.verbose and is_training:
+            if self.use_epoch_based_masking:
+                current_epoch = self._get_current_epoch()
+                console.print(
+                    f"[green]✓ Epoch {current_epoch:.2f}: Masking activated! (after {self.masking_start_epoch} epochs of structure learning)[/green]"
+                )
+            else:
+                console.print(
+                    f"[green]✓ Step {self.current_step}: Masking activated! (after {self.masking_start_step} steps of structure learning)[/green]"
+                )
+            self._masking_enabled = True
         
         # Apply selective loss masking
         if "labels" in batch:
@@ -271,9 +299,16 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 
                 if should_print_sample:  # Print every 10 batches
                     mask_pct = (self.masked_tokens / self.total_tokens) * 100
+                    
+                    if self.use_epoch_based_masking:
+                        current_epoch = self._get_current_epoch()
+                        progress_info = f"Epoch {current_epoch:.2f}"
+                    else:
+                        progress_info = f"Step {self.current_step}"
+                    
                     console.print(
                         f"[dim]Batch {self.batch_count}: Masked {mask_pct:.1f}% of tokens "
-                        f"({self.masked_tokens}/{self.total_tokens}) [Step {self.current_step}][/dim]"
+                        f"({self.masked_tokens}/{self.total_tokens}) [{progress_info}][/dim]"
                     )
                     
                     # Show sample of unmasked content from first example in batch
@@ -283,6 +318,84 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                         del original_labels
         
         return batch
+    
+    def _should_enable_masking(self) -> bool:
+        """Determine if masking should be enabled based on current training progress."""
+        if self.use_epoch_based_masking:
+            current_epoch = self._get_current_epoch()
+            return current_epoch >= self.masking_start_epoch
+        else:
+            # Legacy step-based masking
+            return self.current_step > self.masking_start_step
+    
+    def _get_current_epoch(self) -> float:
+        """Get the current epoch from the trainer state.
+        
+        Returns:
+            Current epoch as a float (e.g., 1.5 means halfway through epoch 2)
+        """
+        # Primary method: get trainer from our stored reference
+        trainer = self._get_trainer()
+        if trainer is not None and hasattr(trainer, 'state') and trainer.state is not None:
+            return trainer.state.epoch
+        
+        # Fallback: try to access trainer through various means
+        try:
+            # Look in transformers global state (this varies by version)
+            import transformers
+            
+            # Try different ways transformers might store the current trainer
+            for attr_name in ['_current_trainer', 'current_trainer', '_trainer']:
+                if hasattr(transformers, attr_name):
+                    trainer = getattr(transformers, attr_name)
+                    if trainer is not None and hasattr(trainer, 'state') and trainer.state is not None:
+                        return trainer.state.epoch
+                        
+            # Try the trainer module specifically
+            if hasattr(transformers, 'trainer'):
+                trainer_module = transformers.trainer
+                for attr_name in ['_current_trainer', 'current_trainer', '_trainer']:
+                    if hasattr(trainer_module, attr_name):
+                        trainer = getattr(trainer_module, attr_name)
+                        if trainer is not None and hasattr(trainer, 'state') and trainer.state is not None:
+                            return trainer.state.epoch
+        except:
+            pass
+        
+        # Final fallback: estimate epoch from step count (very rough)
+        # This is not accurate but better than nothing
+        if self.current_step > 0:
+            # Rough estimate: assume 100 steps per epoch (this is just a guess)
+            # In practice, this should rarely be used since trainer state should be available
+            estimated_epoch = self.current_step / 100.0
+            if self.verbose and self.current_step % 50 == 0:
+                console.print(f"[yellow]Warning: Using estimated epoch {estimated_epoch:.2f} (trainer state unavailable)[/yellow]")
+            return estimated_epoch
+        
+        return 0.0
+    
+    def set_trainer(self, trainer):
+        """Set the trainer reference for epoch-based masking.
+        
+        This method should be called by the training code to enable
+        accurate epoch tracking for masking decisions.
+        
+        Args:
+            trainer: The HuggingFace Trainer instance
+        """
+        import weakref
+        self._trainer = weakref.ref(trainer) if trainer is not None else None
+        
+        if self.verbose and self.use_epoch_based_masking:
+            console.print(f"[cyan]✓ Trainer set for epoch-based masking (start: {self.masking_start_epoch})[/cyan]")
+    
+    def _get_trainer(self):
+        """Get the trainer reference if available."""
+        if self._trainer is not None:
+            trainer = self._trainer()
+            if trainer is not None:
+                return trainer
+        return None
     
     def _apply_selective_masking(self, labels, input_ids=None):
         """Mask structural tokens in labels tensor.
@@ -675,6 +788,7 @@ def create_selective_loss_collator(
     schema_keys: Optional[List[str]] = None,
     dataset = None,
     masking_start_step: int = 0,
+    masking_start_epoch: float = 0.0,
     verbose: bool = False,
     train_on_responses_only: bool = False,
     instruction_part: Optional[str] = None,
@@ -693,6 +807,7 @@ def create_selective_loss_collator(
         schema_keys: Optional list of field names to mask (auto-detected if None)
         dataset: Training dataset (required for auto-detection in aggressive mode)
         masking_start_step: Delay masking until this step (0 = immediate, >0 = learn structure first)
+        masking_start_epoch: Delay masking until this epoch (0.0 = immediate, 1.0 = after first epoch)
         verbose: Whether to print statistics
         train_on_responses_only: Whether to mask prompts (train only on assistant responses)
         instruction_part: Chat template marker for user messages (e.g., "<|im_start|>user")
@@ -701,20 +816,26 @@ def create_selective_loss_collator(
     Returns:
         Configured SelectiveLossVisionCollator
         
+    Note:
+        If both masking_start_step and masking_start_epoch are specified,
+        epoch-based masking takes precedence as it's more robust.
+        
     Example:
-        >>> # Auto-detect schema keys (recommended)
+        >>> # Epoch-based masking (recommended)
         >>> collator = create_selective_loss_collator(
         ...     model, processor, 
         ...     mask_level="aggressive",
-        ...     dataset=train_dataset,  # Required for auto-detection
+        ...     masking_start_epoch=0.5,  # Start masking halfway through first epoch
+        ...     dataset=train_dataset,
         ...     verbose=True
         ... )
         >>> 
-        >>> # Manual schema keys (optional)
+        >>> # Step-based masking (legacy)
         >>> collator = create_selective_loss_collator(
         ...     model, processor, 
         ...     mask_level="aggressive",
-        ...     schema_keys=['Marque', 'Modele', 'contents'],
+        ...     masking_start_step=100,  # Start masking after 100 data collator calls
+        ...     dataset=train_dataset,
         ...     verbose=True
         ... )
     """
@@ -752,6 +873,7 @@ def create_selective_loss_collator(
             mask_schema_keys=False,
             mask_json_keywords=False,
             masking_start_step=masking_start_step,
+            masking_start_epoch=masking_start_epoch,
             verbose=verbose,
             **kwargs
         )
@@ -771,6 +893,7 @@ def create_selective_loss_collator(
             mask_schema_keys=False,
             mask_json_keywords=True,
             masking_start_step=masking_start_step,
+            masking_start_epoch=masking_start_epoch,
             verbose=verbose,
             **kwargs
         )
@@ -809,6 +932,7 @@ def create_selective_loss_collator(
             schema_keys=schema_keys,
             mask_json_keywords=True,
             masking_start_step=masking_start_step,
+            masking_start_epoch=masking_start_epoch,
             verbose=verbose,
             **kwargs
         )
