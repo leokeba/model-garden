@@ -24,9 +24,13 @@ os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
 # max_split_size_mb limits memory fragmentation, expandable_segments allows dynamic growth
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512,expandable_segments:True'
 
+# Disable Unsloth statistics collection to avoid thread safety issues
+# (stats collection uses signal.alarm which must be called from main thread)
+os.environ['UNSLOTH_DISABLE_STATISTICS'] = '1'
+
 # CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
 # This ensures Unsloth's PyTorch patches are applied correctly
-from unsloth import FastLanguageModel
+from unsloth import FastVisionModel  # FastVisionModel for vision-language models
 
 # Now import other ML libraries AFTER unsloth
 import torch
@@ -134,23 +138,27 @@ class VisionLanguageTrainer:
                 progress.add_task(description="Loading model...", total=None)
                 
                 try:
-                    # Unsloth supports both 4-bit and 8-bit quantization
+                    # Use FastVisionModel for vision-language models (optimized for VLMs)
+                    # Supports both 4-bit and 8-bit quantization
                     # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
-                    self.model, self.tokenizer = FastLanguageModel.from_pretrained(
+                    # IMPORTANT: FastVisionModel returns (model, tokenizer) tuple, NOT (model, processor)
+                    # We need to load the processor separately from transformers
+                    from transformers import AutoProcessor
+                    
+                    self.model, self.tokenizer = FastVisionModel.from_pretrained(
                         model_name=self.base_model,
                         max_seq_length=self.max_seq_length,
                         dtype=self.dtype,
                         load_in_4bit=self.load_in_4bit,
-                        load_in_8bit=self.load_in_8bit,  # Add 8-bit support
+                        load_in_8bit=self.load_in_8bit,
                         token=hf_token,
                     )
-                    # Load processor for vision models
-                    from transformers import AutoProcessor
+                    # Load processor separately (vision models need both tokenizer and processor)
                     self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
-                    # Use processor's tokenizer for vision models
-                    self.tokenizer = self.processor.tokenizer
-                    console.print("[green]✓[/green] Model loaded with Unsloth optimizations")
+                    console.print("[green]✓[/green] Model loaded with Unsloth FastVisionModel optimizations")
                 except Exception as unsloth_error:
+                    # Print the actual error for debugging
+                    console.print(f"[yellow]⚠️  FastVisionModel failed: {unsloth_error}[/yellow]")
                     # Fall back to transformers for vision models
                     console.print(f"[yellow]⚠️  Unsloth not supported, using transformers[/yellow]")
                     from transformers import AutoModelForVision2Seq, AutoProcessor
@@ -170,13 +178,20 @@ class VisionLanguageTrainer:
                         torch_dtype = None
                     
                     # Transformers supports 4-bit and 8-bit via BitsAndBytes
+                    # Build kwargs conditionally - only pass load_in_Xbit if True (not False or None)
+                    model_kwargs = {
+                        "device_map": "auto",
+                        "torch_dtype": torch_dtype,
+                        "token": hf_token,
+                    }
+                    if self.load_in_4bit:
+                        model_kwargs["load_in_4bit"] = True
+                    if self.load_in_8bit:
+                        model_kwargs["load_in_8bit"] = True
+                    
                     self.model = AutoModelForVision2Seq.from_pretrained(
                         self.base_model,
-                        device_map="auto",
-                        torch_dtype=torch_dtype,
-                        load_in_4bit=self.load_in_4bit if self.load_in_4bit else None,
-                        load_in_8bit=self.load_in_8bit if self.load_in_8bit else None,
-                        token=hf_token,
+                        **model_kwargs,
                     )
                     console.print("[green]✓[/green] Model loaded with transformers")
                     
@@ -196,8 +211,12 @@ class VisionLanguageTrainer:
         use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
         loftq_config: Optional[dict] = None,
+        finetune_vision_layers: bool = True,
+        finetune_language_layers: bool = True,
+        finetune_attention_modules: bool = True,
+        finetune_mlp_modules: bool = True,
     ) -> None:
-        """Prepare model for LoRA fine-tuning.
+        """Prepare model for LoRA fine-tuning with selective layer control.
 
         Args:
             r: LoRA rank (higher = more parameters, better quality but slower)
@@ -213,8 +232,24 @@ class VisionLanguageTrainer:
                 - False: No gradient checkpointing, best quality but most memory
             random_state: Random seed for reproducibility
             loftq_config: LoftQ quantization config (None to disable)
+            finetune_vision_layers: Whether to fine-tune vision encoder layers (for multimodal)
+            finetune_language_layers: Whether to fine-tune language model layers
+            finetune_attention_modules: Whether to fine-tune attention layers
+            finetune_mlp_modules: Whether to fine-tune MLP layers
         """
         console.print("[cyan]Configuring LoRA adapters for vision-language model...[/cyan]")
+        
+        # Log selective fine-tuning choices
+        layers_info = []
+        if finetune_vision_layers:
+            layers_info.append("vision")
+        if finetune_language_layers:
+            layers_info.append("language")
+        if finetune_attention_modules:
+            layers_info.append("attention")
+        if finetune_mlp_modules:
+            layers_info.append("MLP")
+        console.print(f"[cyan]Fine-tuning layers: {', '.join(layers_info) if layers_info else 'none'}[/cyan]")
         
         # Workaround: 8-bit quantization has compatibility issues with gradient checkpointing
         # due to torch compile + bitsandbytes interactions. Disable gradient checkpointing for 8-bit.
@@ -224,22 +259,16 @@ class VisionLanguageTrainer:
             use_gradient_checkpointing = False
 
         try:
-            if target_modules is None:
-                # Vision-language models often have different module names
-                target_modules = [
-                    "q_proj",
-                    "k_proj",
-                    "v_proj",
-                    "o_proj",
-                    "gate_proj",
-                    "up_proj",
-                    "down_proj",
-                ]
-
-            self.model = FastLanguageModel.get_peft_model(
+            # Use FastVisionModel.get_peft_model for selective layer fine-tuning
+            # This gives fine-grained control over which parts of the model to train
+            # NOTE: When using selective layer flags, don't pass target_modules - FastVisionModel handles it
+            self.model = FastVisionModel.get_peft_model(
                 self.model,
+                finetune_vision_layers=finetune_vision_layers,
+                finetune_language_layers=finetune_language_layers,
+                finetune_attention_modules=finetune_attention_modules,
+                finetune_mlp_modules=finetune_mlp_modules,
                 r=r,
-                target_modules=target_modules,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
                 bias=lora_bias,
@@ -248,11 +277,12 @@ class VisionLanguageTrainer:
                 use_rslora=use_rslora,
                 loftq_config=loftq_config,
             )
-            console.print("[green]✓[/green] LoRA adapters configured (Unsloth)")
+            console.print("[green]✓[/green] LoRA adapters configured with FastVisionModel")
             
-        except Exception:
-            # Fall back to PEFT for vision models
-            console.print("[yellow]Using PEFT for LoRA configuration[/yellow]")
+        except Exception as e:
+            # Fall back to PEFT for vision models (without selective layer control)
+            console.print(f"[yellow]⚠️  FastVisionModel.get_peft_model failed: {e}[/yellow]")
+            console.print("[yellow]Using PEFT for LoRA configuration (selective layer fine-tuning not available)[/yellow]")
             from peft import LoraConfig, get_peft_model
             
             if target_modules is None:
@@ -270,7 +300,7 @@ class VisionLanguageTrainer:
             if self.model is None:
                 raise RuntimeError("Model not loaded. Call load_model() first.")
             self.model = get_peft_model(self.model, peft_config)  # type: ignore
-            console.print("[green]✓[/green] LoRA adapters configured (PEFT)")
+            console.print("[green]✓[/green] LoRA adapters configured (PEFT fallback)")
 
     def load_dataset_from_file(self, dataset_path: str) -> Dataset:
         """Load multimodal dataset from a local file.
@@ -984,8 +1014,7 @@ class VisionLanguageTrainer:
             console.print("[cyan]Merging LoRA weights and saving in 16-bit...[/cyan]")
             console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
             try:
-                from unsloth import FastLanguageModel
-                # Merge and save using Unsloth
+                # Use FastVisionModel for vision-language model merging
                 # Clear GPU cache before merging to free up memory
                 import gc
                 import torch
@@ -1008,7 +1037,7 @@ class VisionLanguageTrainer:
                 console.print("[green]✓ Merged model saved in 16-bit precision[/green]")
                 
                 # Clean config for vLLM compatibility
-                self._clean_merged_config(output_dir)
+                # self._clean_merged_config(output_dir)
                 
                 # Aggressively free memory after successful merge
                 console.print("[cyan]🧹 Cleaning up memory after merge...[/cyan]")
@@ -1038,7 +1067,7 @@ class VisionLanguageTrainer:
                     console.print("[green]✓ Model merged and saved successfully (PEFT fallback)[/green]")
                     
                     # Clean config for vLLM compatibility
-                    self._clean_merged_config(output_dir)
+                    # self._clean_merged_config(output_dir)
                     
                     # Aggressively free memory after successful merge
                     console.print("[cyan]🧹 Cleaning up memory after merge...[/cyan]")
@@ -1063,7 +1092,7 @@ class VisionLanguageTrainer:
             console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
             console.print("[yellow]⚠️  Warning: 4-bit merge may reduce accuracy for GGUF conversion[/yellow]")
             try:
-                from unsloth import FastLanguageModel
+                # Use FastVisionModel for vision-language model merging
                 # Clear GPU cache before merging
                 import gc
                 import torch
@@ -1087,7 +1116,7 @@ class VisionLanguageTrainer:
                 console.print("[green]✓ Merged model saved in 4-bit precision[/green]")
                 
                 # Clean config for vLLM compatibility
-                self._clean_merged_config(output_dir)
+                # self._clean_merged_config(output_dir)
                 
                 # Aggressively free memory after successful merge
                 console.print("[cyan]🧹 Cleaning up memory after merge...[/cyan]")

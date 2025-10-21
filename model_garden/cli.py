@@ -797,6 +797,26 @@ def serve(host: str, port: int, reload: bool) -> None:
     default="adamw_8bit",
     help="Optimizer: adamw_8bit (memory efficient), adamw_torch (better quality), adamw_torch_fused (best quality/speed), adafactor (memory efficient alternative)",
 )
+@click.option(
+    "--finetune-vision-layers/--no-finetune-vision-layers",
+    default=True,
+    help="Fine-tune vision encoder layers (disable to freeze vision layers and only train language layers)",
+)
+@click.option(
+    "--finetune-language-layers/--no-finetune-language-layers",
+    default=True,
+    help="Fine-tune language model layers (disable to freeze language layers and only train vision layers)",
+)
+@click.option(
+    "--finetune-attention-modules/--no-finetune-attention-modules",
+    default=True,
+    help="Fine-tune attention layers (disable for faster training with slightly lower quality)",
+)
+@click.option(
+    "--finetune-mlp-modules/--no-finetune-mlp-modules",
+    default=True,
+    help="Fine-tune MLP layers (disable for faster training with slightly lower quality)",
+)
 def train_vision(
     base_model: str,
     dataset: str,
@@ -837,6 +857,10 @@ def train_vision(
     use_rslora: bool,
     use_gradient_checkpointing: str,
     optim: str,
+    finetune_vision_layers: bool,
+    finetune_language_layers: bool,
+    finetune_attention_modules: bool,
+    finetune_mlp_modules: bool,
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
 
@@ -921,7 +945,7 @@ def train_vision(
         # Load model
         trainer.load_model()
 
-        # Prepare for training with LoRA
+        # Prepare for training with LoRA and selective layer fine-tuning
         trainer.prepare_for_training(
             r=lora_r,
             lora_alpha=lora_alpha,
@@ -929,6 +953,10 @@ def train_vision(
             lora_bias=lora_bias,
             use_gradient_checkpointing=gc_value,
             use_rslora=use_rslora,
+            finetune_vision_layers=finetune_vision_layers,
+            finetune_language_layers=finetune_language_layers,
+            finetune_attention_modules=finetune_attention_modules,
+            finetune_mlp_modules=finetune_mlp_modules,
         )
 
         # Load dataset (handles both local files and HuggingFace Hub)

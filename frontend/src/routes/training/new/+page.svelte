@@ -52,6 +52,11 @@
       target_modules: null as string[] | null,
       task_type: "CAUSAL_LM",
       loftq_config: null as any,
+      // Vision-specific LoRA parameters (FastVisionModel)
+      finetune_vision_layers: true,
+      finetune_language_layers: true,
+      finetune_attention_modules: true,
+      finetune_mlp_modules: true,
     },
     from_hub: false,
     validation_from_hub: false,
@@ -1680,6 +1685,143 @@
                   </p>
                 </div>
               </div>
+
+              <!-- Vision-Specific Layer Fine-tuning (FastVisionModel) -->
+              {#if formData.model_type === "vision"}
+                <div
+                  class="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg"
+                >
+                  <h4
+                    class="text-md font-medium text-purple-900 mb-3 flex items-center gap-2"
+                  >
+                    🎨 Selective Layer Fine-tuning (Vision Models)
+                  </h4>
+                  <p class="text-sm text-purple-800 mb-4">
+                    Control which parts of the vision-language model to train.
+                    Disable layers you don't want to modify:
+                  </p>
+
+                  <div class="space-y-3">
+                    <div class="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="finetune_vision_layers"
+                        bind:checked={
+                          formData.lora_config.finetune_vision_layers
+                        }
+                        class="h-4 w-4 mt-0.5 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                      />
+                      <div class="flex-1">
+                        <label
+                          for="finetune_vision_layers"
+                          class="text-sm font-medium text-gray-700"
+                        >
+                          Fine-tune Vision Encoder Layers
+                        </label>
+                        <p class="text-xs text-gray-500 mt-0.5">
+                          Train the image processing layers. Disable to freeze
+                          vision encoder and only adapt language model.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="finetune_language_layers"
+                        bind:checked={
+                          formData.lora_config.finetune_language_layers
+                        }
+                        class="h-4 w-4 mt-0.5 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                      />
+                      <div class="flex-1">
+                        <label
+                          for="finetune_language_layers"
+                          class="text-sm font-medium text-gray-700"
+                        >
+                          Fine-tune Language Model Layers
+                        </label>
+                        <p class="text-xs text-gray-500 mt-0.5">
+                          Train the text generation layers. Disable to freeze
+                          language model and only adapt vision encoder.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="finetune_attention_modules"
+                        bind:checked={
+                          formData.lora_config.finetune_attention_modules
+                        }
+                        class="h-4 w-4 mt-0.5 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                      />
+                      <div class="flex-1">
+                        <label
+                          for="finetune_attention_modules"
+                          class="text-sm font-medium text-gray-700"
+                        >
+                          Fine-tune Attention Modules
+                        </label>
+                        <p class="text-xs text-gray-500 mt-0.5">
+                          Train attention layers (Q, K, V, O projections).
+                          Disable for faster training with slightly lower
+                          quality.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="finetune_mlp_modules"
+                        bind:checked={formData.lora_config.finetune_mlp_modules}
+                        class="h-4 w-4 mt-0.5 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                      />
+                      <div class="flex-1">
+                        <label
+                          for="finetune_mlp_modules"
+                          class="text-sm font-medium text-gray-700"
+                        >
+                          Fine-tune MLP Modules
+                        </label>
+                        <p class="text-xs text-gray-500 mt-0.5">
+                          Train feed-forward layers (gate, up, down
+                          projections). Disable for faster training with
+                          slightly lower quality.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    class="mt-4 p-3 bg-purple-100 border border-purple-300 rounded-lg"
+                  >
+                    <p class="text-xs text-purple-900 font-medium mb-2">
+                      💡 Common Configurations:
+                    </p>
+                    <ul class="text-xs text-purple-800 space-y-1">
+                      <li>
+                        <strong>All enabled (default):</strong> Full model fine-tuning
+                        - best quality, slowest
+                      </li>
+                      <li>
+                        <strong>Language only:</strong> Disable vision layers - adapt
+                        text generation while keeping vision frozen
+                      </li>
+                      <li>
+                        <strong>Vision only:</strong> Disable language layers - adapt
+                        image understanding while keeping language frozen
+                      </li>
+                      <li>
+                        <strong>Attention only:</strong> Disable MLPs - focus on
+                        cross-modal attention mechanisms
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              {/if}
 
               <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <h4 class="text-sm font-semibold text-blue-900 mb-2">

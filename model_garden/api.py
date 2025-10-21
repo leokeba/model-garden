@@ -642,7 +642,7 @@ def run_training_job(job_id: str):
             # Load model
             trainer.load_model()
             
-            # Prepare for training with LoRA
+            # Prepare for training with LoRA and selective layer fine-tuning
             lora_config = job["lora_config"]
             trainer.prepare_for_training(
                 r=lora_config.get("r", 16),
@@ -653,6 +653,10 @@ def run_training_job(job_id: str):
                 use_gradient_checkpointing=lora_config.get("use_gradient_checkpointing", "unsloth"),
                 random_state=lora_config.get("random_state", 42),
                 loftq_config=lora_config.get("loftq_config"),
+                finetune_vision_layers=lora_config.get("finetune_vision_layers", True),
+                finetune_language_layers=lora_config.get("finetune_language_layers", True),
+                finetune_attention_modules=lora_config.get("finetune_attention_modules", True),
+                finetune_mlp_modules=lora_config.get("finetune_mlp_modules", True),
             )
             
             # Load and format training dataset
@@ -740,9 +744,9 @@ def run_training_job(job_id: str):
             try:
                 val_dataset = None  # Clear local reference
                 if hasattr(trainer, 'train_dataset'):
-                    trainer.train_dataset = None
+                    setattr(trainer, 'train_dataset', None)
                 if hasattr(trainer, 'eval_dataset'):
-                    trainer.eval_dataset = None
+                    setattr(trainer, 'eval_dataset', None)
             except Exception:
                 pass
             
@@ -884,9 +888,9 @@ def run_training_job(job_id: str):
                 val_dataset = None  # Clear local reference
                 train_dataset = None  # Clear local reference
                 if hasattr(trainer, 'train_dataset'):
-                    trainer.train_dataset = None
+                    setattr(trainer, 'train_dataset', None)
                 if hasattr(trainer, 'eval_dataset'):
-                    trainer.eval_dataset = None
+                    setattr(trainer, 'eval_dataset', None)
             except Exception:
                 pass
         
