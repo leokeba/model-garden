@@ -182,7 +182,7 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     # Step 7: Clear HuggingFace caches
     try:
         # Clear transformers cache
-        from transformers.utils import is_torch_available
+        from transformers.utils.import_utils import is_torch_available
         if is_torch_available():
             import torch
             # Clear torch hub cache

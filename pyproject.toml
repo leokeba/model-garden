@@ -19,27 +19,27 @@ classifiers = [
 ]
 
 dependencies = [
-    "torch>=2.5.0",
-    "transformers>=4.40.0",
+    "torch>=2.8.0",
+    "transformers>=4.56.0",
     "datasets>=2.19.0",
-    "accelerate>=0.29.0",
+    "accelerate>=1.10.0",
     "bitsandbytes>=0.43.0",
     "peft>=0.10.0",
-    "trl>=0.8.6",
+    "trl>=0.23.0",
     "scikit-learn>=1.4.0",
     "matplotlib>=3.8.0",
-    "fastapi>=0.110.0",
-    "uvicorn[standard]>=0.29.0",
+    "fastapi>=0.119.0",
+    "uvicorn[standard]>=0.37.0",
     "sqlalchemy>=2.0.29",
     "python-multipart>=0.0.9",
-    "click>=8.1.7",
+    "click>=8.2.0",
     "rich>=13.7.1",
     "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
-    "xformers>=0.0.26",
-    "torchvision>=0.20.0",
+    "xformers>=0.0.32",
+    "torchvision>=0.23.0",
     "pillow>=10.0.0",
     "vllm>=0.6.0",
-    "openai>=1.0.0",
+    "openai>=2.3.0",
     "pynvml>=13.0.1",
     "python-dotenv>=1.1.1",
     "codecarbon>=2.4.0",
@@ -47,14 +47,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "ruff>=0.1.0",
-    "mypy>=1.7.0",
-    "pre-commit>=3.5.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.0",
 ]
 test = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "pytest-asyncio>=0.24.0",
 ]
 
 [project.scripts]

@@ -154,14 +154,26 @@ class VisionLanguageTrainer:
                     # Fall back to transformers for vision models
                     console.print(f"[yellow]⚠️  Unsloth not supported, using transformers[/yellow]")
                     from transformers import AutoModelForVision2Seq, AutoProcessor
+                    import torch
                     
                     self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
                     self.tokenizer = self.processor.tokenizer
+                    
+                    # Determine torch_dtype based on quantization settings
+                    # For 16-bit (no quantization), explicitly use bfloat16
+                    if not self.load_in_4bit and not self.load_in_8bit:
+                        # For 16-bit precision, explicitly use bfloat16 (Qwen2.5-VL's native precision)
+                        # Using None doesn't always work - model can load as float32 then convert
+                        torch_dtype = torch.bfloat16 if self.dtype is None else self.dtype
+                    else:
+                        # For quantized models, let BitsAndBytes handle dtype
+                        torch_dtype = None
                     
                     # Transformers supports 4-bit and 8-bit via BitsAndBytes
                     self.model = AutoModelForVision2Seq.from_pretrained(
                         self.base_model,
                         device_map="auto",
+                        torch_dtype=torch_dtype,
                         load_in_4bit=self.load_in_4bit if self.load_in_4bit else None,
                         load_in_8bit=self.load_in_8bit if self.load_in_8bit else None,
                         token=hf_token,

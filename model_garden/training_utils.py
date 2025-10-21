@@ -61,27 +61,70 @@ def detect_model_dtype(
         try:
             first_param = next(model.parameters())
             model_dtype = first_param.dtype
-            return model_dtype
+            # Skip meta device parameters (not yet initialized)
+            if first_param.device.type != 'meta':
+                return model_dtype
         except (StopIteration, AttributeError):
             pass
         
-        # Method 2: Check model.dtype attribute
+        # Method 2: For PEFT wrapped models, check the base model's parameters
+        # PEFT models have .base_model or .model attributes pointing to the wrapped model
+        if hasattr(model, 'base_model'):
+            try:
+                first_param = next(model.base_model.parameters())
+                model_dtype = first_param.dtype
+                # Skip meta device parameters (not yet initialized)
+                if first_param.device.type != 'meta':
+                    return model_dtype
+            except (StopIteration, AttributeError):
+                pass
+        
+        # Method 3: Check model.dtype attribute
         if hasattr(model, 'dtype'):
             model_dtype = model.dtype
             if model_dtype is not None:
                 return model_dtype
         
-        # Method 3: For wrapped models (PeftModel, etc), check the base model
+        # Method 4: For wrapped models (PeftModel, etc), check the base model
         if hasattr(model, 'model') and hasattr(model.model, 'dtype'):
             model_dtype = model.model.dtype
             if model_dtype is not None:
                 return model_dtype
         
-        # Method 4: Check config as last resort
-        if hasattr(model, 'config') and hasattr(model.config, 'torch_dtype'):
-            model_dtype = model.config.torch_dtype
+        # Method 5: Check base_model.dtype for PEFT models
+        if hasattr(model, 'base_model') and hasattr(model.base_model, 'dtype'):
+            model_dtype = model.base_model.dtype
             if model_dtype is not None:
                 return model_dtype
+        
+        # Method 6: Check config as last resort
+        if hasattr(model, 'config') and hasattr(model.config, 'torch_dtype'):
+            model_dtype = model.config.torch_dtype
+            if model_dtype is not None and model_dtype != torch.float32:
+                # Don't return float32 from config - it's often a default, not actual
+                return model_dtype
+        
+        # Method 7: For PEFT models, check base_model.config
+        if hasattr(model, 'base_model') and hasattr(model.base_model, 'config'):
+            if hasattr(model.base_model.config, 'torch_dtype'):
+                model_dtype = model.base_model.config.torch_dtype
+                if model_dtype is not None and model_dtype != torch.float32:
+                    return model_dtype
+    
+    # Method 8: Model-specific defaults for known architectures
+    # Some models (like Qwen2.5-VL) use bfloat16 by default
+    if hasattr(model, 'config') and hasattr(model.config, 'model_type'):
+        model_type = model.config.model_type
+        if model_type in ['qwen2_vl', 'qwen2_5_vl', 'qwen2_audio_vl']:
+            # Qwen2.5-VL series uses bfloat16 by default
+            return torch.bfloat16
+    
+    # Check base_model for PEFT wrapped models
+    if hasattr(model, 'base_model') and hasattr(model.base_model, 'config'):
+        if hasattr(model.base_model.config, 'model_type'):
+            model_type = model.base_model.config.model_type
+            if model_type in ['qwen2_vl', 'qwen2_5_vl', 'qwen2_audio_vl']:
+                return torch.bfloat16
     
     # Default to float32 if we couldn't detect anything
     # This is a safe fallback that won't cause precision mismatches
