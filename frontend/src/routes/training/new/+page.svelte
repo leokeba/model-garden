@@ -64,7 +64,6 @@
     selective_loss: false,
     selective_loss_level: "conservative",
     selective_loss_schema_keys: "",
-    selective_loss_masking_start_step: 0,
     selective_loss_masking_start_epoch: 0.0,
     selective_loss_verbose: false,
     early_stopping_enabled: false,
@@ -285,8 +284,6 @@
         selective_loss: formData.selective_loss,
         selective_loss_level: formData.selective_loss_level,
         selective_loss_schema_keys: schema_keys_array,
-        selective_loss_masking_start_step:
-          formData.selective_loss_masking_start_step,
         selective_loss_masking_start_epoch:
           formData.selective_loss_masking_start_epoch,
         selective_loss_verbose: formData.selective_loss_verbose,
@@ -2140,53 +2137,6 @@
 
                   <div>
                     <label
-                      for="selective_loss_masking_start_step"
-                      class="block text-sm font-medium text-gray-700 mb-2"
-                    >
-                      Masking Start Step (Legacy): {formData.selective_loss_masking_start_step}
-                    </label>
-                    <input
-                      type="range"
-                      id="selective_loss_masking_start_step"
-                      bind:value={formData.selective_loss_masking_start_step}
-                      min="0"
-                      max="500"
-                      step="10"
-                      class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                    />
-                    <div
-                      class="flex justify-between text-xs text-gray-500 mt-1"
-                    >
-                      <span>0 (Immediate)</span>
-                      <span>100</span>
-                      <span>200</span>
-                      <span>500 steps</span>
-                    </div>
-                    <div class="mt-2 p-3 bg-blue-50 rounded-lg">
-                      <p class="text-xs text-blue-700">
-                        <strong>💡 Legacy Method:</strong> Step-based delay
-                        depends on batch configuration. For more predictable
-                        results, use epoch-based delay above. Setting this to
-                        50-200 lets the model learn JSON structure first before
-                        applying selective masking. This can prevent
-                        degeneration issues with aggressive masking.
-                        {#if formData.selective_loss_masking_start_step === 0}
-                          <br /><em
-                            >Currently: Masking starts immediately (traditional
-                            approach)</em
-                          >
-                        {:else}
-                          <br /><em
-                            >Currently: Model learns structure for {formData.selective_loss_masking_start_step}
-                            steps, then masking begins</em
-                          >
-                        {/if}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label
                       for="selective_loss_masking_start_epoch"
                       class="block text-sm font-medium text-gray-700 mb-2"
                     >
@@ -2197,7 +2147,7 @@
                       id="selective_loss_masking_start_epoch"
                       bind:value={formData.selective_loss_masking_start_epoch}
                       min="0"
-                      max="2"
+                      max={formData.hyperparameters.num_epochs}
                       step="0.1"
                       class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-500"
                     />
@@ -2205,15 +2155,21 @@
                       class="flex justify-between text-xs text-gray-500 mt-1"
                     >
                       <span>0.0 (Immediate)</span>
-                      <span>0.5</span>
-                      <span>1.0</span>
-                      <span>2.0 epochs</span>
+                      {#if formData.hyperparameters.num_epochs > 1}
+                        <span
+                          >{(formData.hyperparameters.num_epochs / 2).toFixed(
+                            1,
+                          )}</span
+                        >
+                      {/if}
+                      <span>{formData.hyperparameters.num_epochs}.0 epochs</span
+                      >
                     </div>
                     <div class="mt-2 p-3 bg-green-50 rounded-lg">
                       <p class="text-xs text-green-700">
-                        <strong>🎯 Recommended:</strong> Epoch-based masking is
-                        more robust than step-based as it's not affected by
-                        batch size or gradient accumulation changes.
+                        <strong>🎯 Epoch-based masking:</strong>
+                        Start masking at a specific epoch to let the model learn
+                        structure first.
                         {#if formData.selective_loss_masking_start_epoch === 0.0}
                           <br /><em>Currently: Masking starts immediately</em>
                         {:else}
@@ -2221,10 +2177,6 @@
                             >Currently: Model learns structure for {formData.selective_loss_masking_start_epoch}
                             epochs, then masking begins</em
                           >
-                        {/if}
-                        {#if formData.selective_loss_masking_start_epoch > 0.0 && formData.selective_loss_masking_start_step > 0}
-                          <br /><strong class="text-amber-600">Note:</strong> Both
-                          epoch and step delays are set. Epoch-based will take precedence.
                         {/if}
                       </p>
                     </div>

@@ -755,16 +755,10 @@ def serve(host: str, port: int, reload: bool) -> None:
     help="Comma-separated schema keys to mask (for aggressive mode, e.g., 'Marque,Modele,contents')",
 )
 @click.option(
-    "--selective-loss-masking-start-step",
-    type=int,
-    default=0,
-    help="Delay masking until this step (0=immediate, 100=learn structure first for 100 steps). Legacy option - prefer --selective-loss-masking-start-epoch.",
-)
-@click.option(
     "--selective-loss-masking-start-epoch",
     type=float,
     default=0.0,
-    help="Delay masking until this epoch (0.0=immediate, 0.5=halfway through first epoch, 1.0=after first epoch). More robust than step-based masking.",
+    help="Delay masking until this epoch (0.0=immediate, 0.5=halfway through first epoch, 1.0=after first epoch).",
 )
 @click.option(
     "--selective-loss-verbose/--no-selective-loss-verbose",
@@ -855,7 +849,6 @@ def train_vision(
     selective_loss: bool,
     selective_loss_level: str,
     selective_loss_schema_keys: Optional[str],
-    selective_loss_masking_start_step: int,
     selective_loss_masking_start_epoch: float,
     selective_loss_verbose: bool,
     quality_mode: bool,
@@ -1009,7 +1002,6 @@ def train_vision(
             selective_loss=selective_loss,
             selective_loss_level=selective_loss_level,
             selective_loss_schema_keys=schema_keys_list,
-            selective_loss_masking_start_step=selective_loss_masking_start_step,
             selective_loss_masking_start_epoch=selective_loss_masking_start_epoch,
             selective_loss_verbose=selective_loss_verbose,
         )

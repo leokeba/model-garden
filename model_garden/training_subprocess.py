@@ -122,7 +122,7 @@ def run_training_in_subprocess(job_config: Dict) -> Dict:
                 selective_loss=job_config.get("selective_loss", False),
                 selective_loss_level=job_config.get("selective_loss_level", "conservative"),
                 selective_loss_schema_keys=job_config.get("selective_loss_schema_keys"),
-                selective_loss_masking_start_step=job_config.get("selective_loss_masking_start_step", 0),
+                selective_loss_masking_start_epoch=job_config.get("selective_loss_masking_start_epoch", 0.0),
                 selective_loss_verbose=job_config.get("selective_loss_verbose", False),
             )
             
