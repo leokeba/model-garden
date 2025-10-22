@@ -1086,19 +1086,38 @@ async def lifespan(app: FastAPI):
             from model_garden.inference import InferenceService, set_inference_service
             
             # Get optional config from environment
+            base_model = os.getenv("MODEL_GARDEN_BASE_MODEL")
             tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
             gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.0"))  # Default to auto
             quantization = os.getenv("MODEL_GARDEN_QUANTIZATION", "auto")  # Default to auto-detection
             max_model_len_str = os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")
             max_model_len = int(max_model_len_str) if max_model_len_str else None
+            dtype = os.getenv("MODEL_GARDEN_DTYPE", "auto")
+            
+            # LoRA parameters
+            enable_lora = os.getenv("MODEL_GARDEN_ENABLE_LORA", "true").lower() == "true"
+            max_loras = int(os.getenv("MODEL_GARDEN_MAX_LORAS", "1"))
+            max_lora_rank = int(os.getenv("MODEL_GARDEN_MAX_LORA_RANK", "64"))
             
             inference_service = InferenceService(
                 model_path=autoload_model,
                 tensor_parallel_size=tensor_parallel_size,
                 gpu_memory_utilization=gpu_memory_utilization,
                 quantization=quantization,
-                max_model_len=max_model_len
+                max_model_len=max_model_len,
+                dtype=dtype,
+                enable_lora=enable_lora,
+                max_loras=max_loras,
+                max_lora_rank=max_lora_rank
             )
+            
+            # If base_model is explicitly provided, override auto-detection
+            if base_model:
+                print(f"  Using explicit base model: {base_model}")
+                inference_service.base_model_path = base_model
+                inference_service.is_adapter = True
+                inference_service.adapter_path = autoload_model
+            
             await inference_service.load_model()
             set_inference_service(inference_service)  # Register globally
             print(f"✅ Inference model loaded: {autoload_model}")

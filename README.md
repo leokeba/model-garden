@@ -36,6 +36,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - **High-throughput serving** powered by vLLM
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI client
 - **🎯 Structured Outputs** - Generate JSON that strictly follows schemas
+- **🔧 LoRA Adapter Loading** - Load adapters directly from HuggingFace Hub ([guide](./LORA_ADAPTER_LOADING.md))
 - **Streaming support** for real-time responses
 - **PagedAttention** for optimized memory usage
 - **Continuous batching** for better GPU utilization
@@ -189,6 +190,10 @@ Serve your fine-tuned models with high-throughput inference:
 # Start an inference server
 uv run model-garden serve-model --model-path ./models/my-model
 
+# 🔧 NEW: Load LoRA adapters directly from HuggingFace Hub
+uv run model-garden serve-model \
+  --model-path Barth371/Qwen2.5-VL-72B-Instruct-bnb-4bit-2025-10-21_16-26_batch_size_4_cmr-block-2_adapters_4bit
+
 # One-off text generation
 uv run model-garden inference-generate \
   --model-path ./models/my-model \
@@ -210,11 +215,14 @@ uv run model-garden serve-model \
 ```
 
 **Key features:**
+- 🔧 **LoRA adapter loading** - Load adapters directly from HuggingFace Hub without merging
 - OpenAI-compatible API (use OpenAI Python client!)
 - Streaming responses for real-time output
 - Multi-GPU tensor parallelism
 - Quantization support (AWQ, GPTQ, FP8)
 - Interactive CLI chat interface
+
+📖 **LoRA Adapter Guide**: [Loading LoRA Adapters](./LORA_ADAPTER_LOADING.md)
 
 **Use with OpenAI Python client:**
 ```python

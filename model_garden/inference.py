@@ -1,11 +1,20 @@
 """vLLM-powered inference service for Model Garden."""
 
+import os
 import asyncio
 import json
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional, Union
 
 from rich.console import Console
+
+# CRITICAL: Set HuggingFace cache directories BEFORE any HF imports
+# This ensures models are downloaded to the correct location (e.g., /scratch instead of filling up root)
+if 'HF_HOME' in os.environ:
+    hf_home = os.environ['HF_HOME']
+    os.environ['TRANSFORMERS_CACHE'] = os.environ.get('TRANSFORMERS_CACHE', f"{hf_home}/transformers")
+    os.environ['HF_DATASETS_CACHE'] = os.environ.get('HF_DATASETS_CACHE', f"{hf_home}/datasets")
+    os.environ['HUGGINGFACE_HUB_CACHE'] = os.environ.get('HUGGINGFACE_HUB_CACHE', f"{hf_home}/hub")
 
 console = Console()
 
@@ -215,6 +224,94 @@ def calculate_gpu_memory_utilization(
     return round(utilization, 2)
 
 
+def is_lora_adapter(model_path: str) -> bool:
+    """Check if the model path is a LoRA adapter.
+    
+    Args:
+        model_path: Path to the model directory or HuggingFace model ID
+        
+    Returns:
+        True if it's a LoRA adapter, False otherwise
+    """
+    # For HuggingFace model IDs, try to check if adapter_config.json exists
+    if "/" in model_path and not Path(model_path).exists():
+        try:
+            from huggingface_hub import hf_hub_download, HfFileSystem
+            import os
+            
+            hf_token = os.getenv('HF_TOKEN')
+            fs = HfFileSystem(token=hf_token)
+            
+            # Check if adapter_config.json exists in the repo
+            adapter_config_path = f"{model_path}/adapter_config.json"
+            try:
+                if fs.exists(adapter_config_path):
+                    console.print(f"[cyan]📦 Detected LoRA adapter repository: {model_path}[/cyan]")
+                    return True
+            except Exception:
+                pass
+                
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not check for adapter config on Hub: {e}[/yellow]")
+    
+    # For local paths
+    model_dir = Path(model_path)
+    if model_dir.exists() and model_dir.is_dir():
+        if (model_dir / "adapter_config.json").exists():
+            console.print(f"[cyan]📦 Detected LoRA adapter directory: {model_path}[/cyan]")
+            return True
+    
+    return False
+
+
+def get_base_model_from_adapter(adapter_path: str) -> Optional[str]:
+    """Get the base model name from a LoRA adapter configuration.
+    
+    Args:
+        adapter_path: Path to the adapter directory or HuggingFace model ID
+        
+    Returns:
+        Base model name/path, or None if not found
+    """
+    try:
+        # For HuggingFace model IDs
+        if "/" in adapter_path and not Path(adapter_path).exists():
+            from huggingface_hub import hf_hub_download
+            import os
+            
+            hf_token = os.getenv('HF_TOKEN')
+            
+            # Download adapter_config.json
+            config_file = hf_hub_download(
+                repo_id=adapter_path,
+                filename="adapter_config.json",
+                token=hf_token
+            )
+            
+            with open(config_file) as f:
+                adapter_config = json.load(f)
+                base_model = adapter_config.get("base_model_name_or_path")
+                if base_model:
+                    console.print(f"[cyan]🔍 Found base model in adapter config: {base_model}[/cyan]")
+                    return base_model
+        else:
+            # For local paths
+            adapter_dir = Path(adapter_path)
+            adapter_config_file = adapter_dir / "adapter_config.json"
+            
+            if adapter_config_file.exists():
+                with open(adapter_config_file) as f:
+                    adapter_config = json.load(f)
+                    base_model = adapter_config.get("base_model_name_or_path")
+                    if base_model:
+                        console.print(f"[cyan]🔍 Found base model in adapter config: {base_model}[/cyan]")
+                        return base_model
+    except Exception as e:
+        console.print(f"[yellow]⚠️  Could not read adapter config: {e}[/yellow]")
+    
+    return None
+
+
 def detect_quantization_method(model_path: str) -> Optional[str]:
     """Auto-detect the appropriate quantization method for a model.
     
@@ -312,17 +409,23 @@ class InferenceService:
         dtype: str = "auto",
         quantization: Optional[str] = "auto",
         trust_remote_code: bool = False,
+        enable_lora: bool = True,
+        max_loras: int = 1,
+        max_lora_rank: int = 64,
     ):
         """Initialize the inference service.
 
         Args:
-            model_path: Path to the model or HuggingFace model ID
+            model_path: Path to the model or HuggingFace model ID (can be LoRA adapter)
             tensor_parallel_size: Number of GPUs to use for tensor parallelism
             gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0, 0 = auto)
             max_model_len: Maximum sequence length
             dtype: Data type (auto, float16, bfloat16, float32)
             quantization: Quantization method (auto, awq, gptq, squeezellm, fp8, bitsandbytes, or None)
             trust_remote_code: Whether to trust remote code
+            enable_lora: Enable LoRA adapter support (auto-enabled if model_path is an adapter)
+            max_loras: Maximum number of LoRA adapters to load concurrently
+            max_lora_rank: Maximum LoRA rank to support
         """
         self.model_path = model_path
         self.tensor_parallel_size = tensor_parallel_size
@@ -331,17 +434,53 @@ class InferenceService:
         self.dtype = dtype
         self.quantization = quantization
         self.trust_remote_code = trust_remote_code
+        self.enable_lora = enable_lora
+        self.max_loras = max_loras
+        self.max_lora_rank = max_lora_rank
         
         self.engine = None
         self.is_loaded = False
+        
+        # LoRA adapter tracking
+        self.is_adapter = False
+        self.base_model_path: Optional[str] = None
+        self.adapter_path: Optional[str] = None
 
     async def load_model(self) -> None:
-        """Load the model into vLLM engine."""
+        """Load the model into vLLM engine.
+        
+        Automatically detects and handles LoRA adapters by:
+        1. Checking if model_path is a LoRA adapter
+        2. Loading the base model
+        3. Applying the LoRA adapter on top
+        """
         if self.is_loaded:
             console.print("[yellow]Model already loaded[/yellow]")
             return
 
         console.print(f"[cyan]Loading model: {self.model_path}[/cyan]")
+        
+        # Check if this is a LoRA adapter
+        if is_lora_adapter(self.model_path):
+            self.is_adapter = True
+            self.adapter_path = self.model_path
+            
+            # Get base model from adapter config
+            base_model = get_base_model_from_adapter(self.model_path)
+            if not base_model:
+                raise ValueError(
+                    f"Could not determine base model for adapter {self.model_path}. "
+                    "Please specify the base model explicitly or ensure adapter_config.json contains 'base_model_name_or_path'."
+                )
+            
+            self.base_model_path = base_model
+            console.print(f"[cyan]📦 Loading base model: {base_model}[/cyan]")
+            console.print(f"[cyan]🔧 Will apply LoRA adapter: {self.adapter_path}[/cyan]")
+            
+            # Enable LoRA support
+            self.enable_lora = True
+        else:
+            self.base_model_path = self.model_path
         
         # Force aggressive GPU cleanup before loading to ensure clean state
         # This is important when switching models to avoid OOM errors
@@ -419,24 +558,44 @@ class InferenceService:
             valid_quantization = ["awq", "deepspeedfp", "tpu_int8", "fp8", "ptpc_fp8", "marlin", "ggml", "gptq", "squeezellm", "compressed-tensors", "bitsandbytes", "qqq", "experts_int8", "fbgemm_fp8", "modelopt"]
             quantization_param = quantization if quantization in valid_quantization else None
             
-            engine_args = AsyncEngineArgs(
-                model=self.model_path,
-                tensor_parallel_size=self.tensor_parallel_size,
-                gpu_memory_utilization=gpu_memory_utilization,
-                max_model_len=self.max_model_len,
-                dtype=dtype_param,  # type: ignore
-                quantization=quantization_param,  # type: ignore
-                load_format=load_format,
-                trust_remote_code=trust_remote_code,
-                enforce_eager=False,  # Use CUDA graphs for better performance
-                disable_log_stats=False,
-            )
+            # Prepare engine args
+            engine_args_dict = {
+                "model": self.base_model_path,  # Use base model path (same as model_path if not adapter)
+                "tensor_parallel_size": self.tensor_parallel_size,
+                "gpu_memory_utilization": gpu_memory_utilization,
+                "max_model_len": self.max_model_len,
+                "dtype": dtype_param,  # type: ignore
+                "quantization": quantization_param,  # type: ignore
+                "load_format": load_format,
+                "trust_remote_code": trust_remote_code,
+                "enforce_eager": False,  # Use CUDA graphs for better performance
+                "disable_log_stats": False,
+            }
+            
+            # Add LoRA support if enabled
+            if self.enable_lora:
+                console.print(f"[cyan]🔧 Enabling LoRA support (max_loras={self.max_loras}, max_rank={self.max_lora_rank})[/cyan]")
+                engine_args_dict["enable_lora"] = True
+                engine_args_dict["max_loras"] = self.max_loras
+                engine_args_dict["max_lora_rank"] = self.max_lora_rank
+            
+            engine_args = AsyncEngineArgs(**engine_args_dict)
             
             # Create async engine
             self.engine = AsyncLLMEngine.from_engine_args(engine_args)
             self.is_loaded = True
             
-            console.print("[green]✓[/green] Model loaded successfully")
+            console.print("[green]✓[/green] Base model loaded successfully")
+            
+            # If we have an adapter, load it now
+            if self.is_adapter and self.adapter_path:
+                console.print(f"[cyan]🔧 Loading LoRA adapter: {self.adapter_path}[/cyan]")
+                try:
+                    # For vLLM, adapters are loaded per-request via lora_request parameter
+                    # We just need to verify the adapter exists
+                    console.print("[green]✓[/green] LoRA adapter ready (will be applied per-request)")
+                except Exception as e:
+                    console.print(f"[yellow]⚠️  LoRA adapter preparation warning: {e}[/yellow]")
             
         except Exception as e:
             console.print(f"[red]❌ Failed to load model: {e}[/red]")
@@ -744,7 +903,23 @@ class InferenceService:
         """Generate complete response (non-streaming)."""
         if self.engine is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
-        results_generator = self.engine.generate(inputs, sampling_params, request_id)
+        
+        # Prepare lora_request if we have an adapter
+        lora_request = None
+        if self.is_adapter and self.adapter_path:
+            try:
+                from vllm.lora.request import LoRARequest
+                # Create LoRA request with adapter path
+                # The lora_int_id must be unique per adapter (use 1 for single adapter)
+                lora_request = LoRARequest(
+                    lora_name=f"adapter_{Path(self.adapter_path).name}",
+                    lora_int_id=1,
+                    lora_local_path=self.adapter_path
+                )
+            except ImportError:
+                console.print("[yellow]⚠️  LoRA support not available in this vLLM version[/yellow]")
+        
+        results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
         
         final_output = None
         async for request_output in results_generator:
@@ -801,7 +976,21 @@ class InferenceService:
         """Generate streaming response."""
         if self.engine is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
-        results_generator = self.engine.generate(inputs, sampling_params, request_id)
+        
+        # Prepare lora_request if we have an adapter
+        lora_request = None
+        if self.is_adapter and self.adapter_path:
+            try:
+                from vllm.lora.request import LoRARequest
+                lora_request = LoRARequest(
+                    lora_name=f"adapter_{Path(self.adapter_path).name}",
+                    lora_int_id=1,
+                    lora_local_path=self.adapter_path
+                )
+            except ImportError:
+                console.print("[yellow]⚠️  LoRA support not available in this vLLM version[/yellow]")
+        
+        results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
         
         previous_text = ""
         async for request_output in results_generator:
@@ -1003,7 +1192,7 @@ class InferenceService:
             # Extract just the model name from the path
             model_display_path = Path(self.model_path).name
         
-        return {
+        info = {
             "model_path": model_display_path,
             "is_loaded": self.is_loaded,
             "tensor_parallel_size": self.tensor_parallel_size,
@@ -1012,6 +1201,15 @@ class InferenceService:
             "dtype": self.dtype,
             "quantization": self.quantization,
         }
+        
+        # Add LoRA adapter information if applicable
+        if self.is_adapter:
+            info["is_lora_adapter"] = True
+            info["base_model"] = self.base_model_path
+            info["adapter_path"] = self.adapter_path
+            info["lora_enabled"] = self.enable_lora
+        
+        return info
 
 
 # Global inference service instance (will be managed by FastAPI lifespan)

@@ -1064,7 +1064,8 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
 
 
 @main.command(name="serve-model")
-@click.option("--model-path", required=True, help="Path to the model to serve")
+@click.option("--model-path", required=True, help="Path to the model to serve (can be a LoRA adapter)")
+@click.option("--base-model", default=None, help="Base model path (only needed if adapter_config.json is missing)")
 @click.option("--port", default=8000, help="Port to run the inference server on")
 @click.option("--host", default="0.0.0.0", help="Host to bind the server to")
 @click.option("--tensor-parallel-size", default=None, type=int, help="Number of GPUs to use for tensor parallelism (default: from registry or 1)")
@@ -1072,34 +1073,45 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
 @click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default=None, help="Quantization method (default: from registry or auto)")
 @click.option("--max-model-len", type=int, default=None, help="Maximum sequence length (default: from registry)")
 @click.option("--dtype", type=click.Choice(["auto", "float16", "bfloat16", "float32"]), default=None, help="Data type (default: from registry or auto)")
-def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len, dtype):
+@click.option("--enable-lora/--no-enable-lora", default=True, help="Enable LoRA adapter support")
+@click.option("--max-loras", default=1, type=int, help="Maximum number of LoRA adapters to load concurrently")
+@click.option("--max-lora-rank", default=64, type=int, help="Maximum LoRA rank to support")
+def serve_model(model_path, base_model, port, host, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len, dtype, enable_lora, max_loras, max_lora_rank):
     """
     Start an inference server with vLLM for high-throughput model serving.
     
     This command loads a model using vLLM and starts a FastAPI server
     with OpenAI-compatible endpoints for text generation and chat completions.
     
+    Supports loading LoRA adapters directly from local paths or HuggingFace Hub.
+    The adapter's base model is automatically detected from adapter_config.json.
+    
     Parameters not specified will use defaults from the model registry if available.
     
     Examples:
     
         \b
-        # Serve a model on default port 8000 (uses registry defaults)
+        # Serve a merged model on default port 8000
         uv run model-garden serve-model --model-path ./models/my-model
         
         \b
-        # Serve with custom port and GPU settings
+        # Serve a LoRA adapter from HuggingFace Hub
+        uv run model-garden serve-model \\
+            --model-path Barth371/Qwen2.5-VL-72B-Instruct-bnb-4bit-2025-10-21_16-26_batch_size_4_cmr-block-2_adapters_4bit
+        
+        \b
+        # Serve a local LoRA adapter with explicit base model
+        uv run model-garden serve-model \\
+            --model-path ./models/my-adapter \\
+            --base-model Qwen/Qwen2.5-VL-72B-Instruct-bnb-4bit
+        
+        \b
+        # Serve with custom GPU settings
         uv run model-garden serve-model \\
             --model-path ./models/my-model \\
             --port 8080 \\
             --tensor-parallel-size 2 \\
             --gpu-memory-utilization 0.8
-        
-        \b
-        # Serve with quantization
-        uv run model-garden serve-model \\
-            --model-path ./models/my-model \\
-            --quantization awq
     """
     try:
         import os
@@ -1157,6 +1169,8 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
         # This ensures the model is loaded in the same process as the API
         os.environ["MODEL_GARDEN_AUTOLOAD_MODEL"] = model_path
         
+        if base_model:
+            os.environ["MODEL_GARDEN_BASE_MODEL"] = base_model
         if tensor_parallel_size > 1:
             os.environ["MODEL_GARDEN_TENSOR_PARALLEL_SIZE"] = str(tensor_parallel_size)
         # Always set GPU memory utilization
@@ -1167,6 +1181,11 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
             os.environ["MODEL_GARDEN_MAX_MODEL_LEN"] = str(max_model_len)
         if dtype:
             os.environ["MODEL_GARDEN_DTYPE"] = dtype
+        
+        # LoRA parameters
+        os.environ["MODEL_GARDEN_ENABLE_LORA"] = str(enable_lora).lower()
+        os.environ["MODEL_GARDEN_MAX_LORAS"] = str(max_loras)
+        os.environ["MODEL_GARDEN_MAX_LORA_RANK"] = str(max_lora_rank)
         
         console.print(f"\n[cyan]Starting server on[/cyan] http://{host}:{port}")
         console.print(f"[cyan]API docs available at[/cyan] http://{host}:{port}/docs\n")
@@ -1192,7 +1211,8 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
 
 
 @main.command(name="inference-generate")
-@click.option("--model-path", required=True, help="Path to the model to use")
+@click.option("--model-path", required=True, help="Path to the model to use (can be a LoRA adapter)")
+@click.option("--base-model", default=None, help="Base model path (only needed if adapter_config.json is missing)")
 @click.option("--prompt", required=True, help="Prompt for text generation")
 @click.option("--max-tokens", default=256, help="Maximum number of tokens to generate")
 @click.option("--temperature", default=0.7, type=float, help="Sampling temperature")
@@ -1203,38 +1223,41 @@ def serve_model(model_path, port, host, tensor_parallel_size, gpu_memory_utiliza
 @click.option("--quantization", type=click.Choice(["auto", "awq", "gptq", "squeezellm", "fp8", "bitsandbytes"]), default=None, help="Quantization method (default: from registry or auto)")
 @click.option("--max-model-len", type=int, default=None, help="Maximum sequence length (default: from registry)")
 @click.option("--dtype", type=click.Choice(["auto", "float16", "bfloat16", "float32"]), default=None, help="Data type (default: from registry or auto)")
-def inference_generate(model_path, prompt, max_tokens, temperature, top_p, stream, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len, dtype):
+@click.option("--enable-lora/--no-enable-lora", default=True, help="Enable LoRA adapter support")
+@click.option("--max-loras", default=1, type=int, help="Maximum number of LoRA adapters")
+@click.option("--max-lora-rank", default=64, type=int, help="Maximum LoRA rank")
+def inference_generate(model_path, base_model, prompt, max_tokens, temperature, top_p, stream, tensor_parallel_size, gpu_memory_utilization, quantization, max_model_len, dtype, enable_lora, max_loras, max_lora_rank):
     """
     Generate text using vLLM inference engine (one-off generation).
     
     This command loads a model, generates a response, and exits.
     For persistent serving, use the 'serve-model' command instead.
     
+    Supports loading LoRA adapters directly from local paths or HuggingFace Hub.
+    
     Parameters not specified will use defaults from the model registry if available.
     
     Examples:
     
         \b
-        # Generate text with default settings (uses registry defaults)
+        # Generate with a merged model
         uv run model-garden inference-generate \\
             --model-path ./models/my-model \\
             --prompt "Once upon a time"
         
         \b
-        # Generate with custom parameters
+        # Generate with a LoRA adapter from HuggingFace Hub
+        uv run model-garden inference-generate \\
+            --model-path Barth371/Qwen2.5-VL-72B-Instruct-bnb-4bit-2025-10-21_16-26_batch_size_4_cmr-block-2_adapters_4bit \\
+            --prompt "Extract information from this document"
+        
+        \b
+        # Generate with streaming output
         uv run model-garden inference-generate \\
             --model-path ./models/my-model \\
             --prompt "Explain quantum computing" \\
             --max-tokens 512 \\
-            --temperature 0.8 \\
             --stream
-        
-        \b
-        # Generate with quantization
-        uv run model-garden inference-generate \\
-            --model-path ./models/my-model \\
-            --prompt "Write a poem" \\
-            --quantization awq
     """
     try:
         from model_garden.inference import InferenceService
@@ -1283,8 +1306,18 @@ def inference_generate(model_path, prompt, max_tokens, temperature, top_p, strea
             gpu_memory_utilization=gpu_memory_utilization,
             max_model_len=max_model_len,
             dtype=dtype,
-            quantization=quantization
+            quantization=quantization,
+            enable_lora=enable_lora,
+            max_loras=max_loras,
+            max_lora_rank=max_lora_rank
         )
+        
+        # If base_model is explicitly provided, override the auto-detection
+        if base_model:
+            console.print(f"[cyan]Using explicit base model: {base_model}[/cyan]")
+            service.base_model_path = base_model
+            service.is_adapter = True
+            service.adapter_path = model_path
         
         async def generate():
             # Load model
