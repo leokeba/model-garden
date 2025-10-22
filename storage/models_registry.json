@@ -1,7 +1,7 @@
 {
   "$schema": "./models_registry.schema.json",
   "version": "1.0.0",
-  "last_updated": "2025-10-18T00:00:00Z",
+  "last_updated": "2025-10-22T22:05:19Z",
   "categories": {
     "text-llm": {
       "name": "Text-Only Language Models",
@@ -729,6 +729,86 @@
         "huggingface": "https://huggingface.co/unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit",
         "docs": null
       }
+    },
+    "unsloth/Qwen2.5-VL-72B-Instruct-bnb-4bit": {
+      "id": "unsloth/Qwen2.5-VL-72B-Instruct-bnb-4bit",
+      "name": "Qwen2.5-VL 72B (4-bit)",
+      "category": "vision-vlm",
+      "provider": "unsloth",
+      "base_architecture": "qwen-vl",
+      "parameters": "72B",
+      "description": "Largest vision-language model with 4-bit quantization for single H100 GPU",
+      "tags": [
+        "vision",
+        "multimodal",
+        "quantized",
+        "large",
+        "advanced"
+      ],
+      "status": "stable",
+      "quantization": {
+        "method": "4bit",
+        "type": "bitsandbytes"
+      },
+      "requirements": {
+        "min_vram_gb": 40,
+        "recommended_vram_gb": 80,
+        "min_ram_gb": 64,
+        "cuda_compute_capability": "8.0"
+      },
+      "capabilities": {
+        "training": true,
+        "inference": true,
+        "vision": true,
+        "structured_outputs": true,
+        "streaming": true,
+        "function_calling": false
+      },
+      "training_defaults": {
+        "hyperparameters": {
+          "learning_rate": 1e-05,
+          "num_epochs": 3,
+          "batch_size": 1,
+          "gradient_accumulation_steps": 16,
+          "warmup_steps": 20,
+          "max_seq_length": 2048,
+          "optim": "adamw_8bit",
+          "lr_scheduler_type": "cosine"
+        },
+        "lora_config": {
+          "r": 32,
+          "lora_alpha": 32,
+          "lora_dropout": 0.05,
+          "target_modules": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj"
+          ],
+          "use_rslora": true
+        },
+        "selective_loss": {
+          "supported": true,
+          "default_level": "conservative",
+          "recommended": true
+        }
+      },
+      "inference_defaults": {
+        "max_model_len": 2048,
+        "dtype": "auto",
+        "gpu_memory_utilization": 0.9,
+        "quantization": null,
+        "tensor_parallel_size": 1
+      },
+      "urls": {
+        "huggingface": "https://huggingface.co/unsloth/Qwen2.5-VL-72B-Instruct-bnb-4bit",
+        "docs": "https://qwenlm.github.io/blog/qwen2-vl/"
+      },
+      "notes": [
+        "Requires frozen versions: transformers==4.56.2, unsloth==2025.10.8, bitsandbytes==0.48.1",
+        "Successfully tested on H100 80GB GPU with full model loading",
+        "4-bit quantization reduces memory from 144GB to ~40GB"
+      ]
     }
   }
 }
