@@ -1477,6 +1477,209 @@ async def delete_model(model_id: str):
     )
 
 
+@app.post("/api/v1/models/{model_id}/upload-to-hub")
+async def upload_model_to_hub(
+    model_id: str,
+    request: dict,
+):
+    """Upload a model to HuggingFace Hub.
+    
+    Args:
+        model_id: The ID of the model to upload
+        request: JSON body containing:
+            - repo_id: HuggingFace repository ID (username/repo-name)
+            - private: Whether the repository should be private (default: False)
+            - commit_message: Optional commit message (default: "Upload model from Model Garden")
+            - repo_description: Optional repository description
+    
+    Returns:
+        Success response with repository URL
+    """
+    if model_id not in models_storage:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model {model_id} not found"
+        )
+    
+    model_data = models_storage[model_id]
+    model_path = Path(model_data["path"])
+    
+    if not model_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model directory not found: {model_path}"
+        )
+    
+    # Extract request parameters
+    repo_id = request.get("repo_id")
+    if not repo_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="repo_id is required"
+        )
+    
+    # Validate repo_id format (should be username/repo-name)
+    if "/" not in repo_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="repo_id must be in the format 'username/repo-name'"
+        )
+    
+    private = request.get("private", False)
+    commit_message = request.get("commit_message", "Upload model from Model Garden")
+    repo_description = request.get("repo_description", f"Model fine-tuned with Model Garden. Base model: {model_data.get('base_model', 'unknown')}")
+    
+    try:
+        from huggingface_hub import HfApi, create_repo, upload_folder
+        import os
+        
+        # Get HuggingFace token
+        hf_token = os.getenv("HF_TOKEN")
+        if not hf_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="HF_TOKEN environment variable not set. Please configure your HuggingFace token."
+            )
+        
+        api = HfApi(token=hf_token)
+        
+        # Create the repository if it doesn't exist
+        print(f"Creating repository: {repo_id} (private={private})")
+        try:
+            create_repo(
+                repo_id=repo_id,
+                token=hf_token,
+                private=private,
+                exist_ok=True,
+                repo_type="model"
+            )
+            
+            # Update repo description if provided
+            if repo_description:
+                api.update_repo_visibility(
+                    repo_id=repo_id,
+                    private=private,
+                    token=hf_token
+                )
+        except Exception as e:
+            print(f"Repository creation note: {e}")
+        
+        # Upload the entire model directory
+        print(f"Uploading model from {model_path} to {repo_id}...")
+        url = upload_folder(
+            folder_path=str(model_path),
+            repo_id=repo_id,
+            token=hf_token,
+            commit_message=commit_message,
+            repo_type="model"
+        )
+        
+        print(f"✓ Model uploaded successfully to {url}")
+        
+        # Create a README if it doesn't exist
+        readme_path = model_path / "README.md"
+        if not readme_path.exists():
+            try:
+                readme_content = f"""---
+license: apache-2.0
+base_model: {model_data.get('base_model', 'unknown')}
+tags:
+  - model-garden
+  - fine-tuned
+  - {model_data.get('model_type', 'language-model')}
+---
+
+# {model_data.get('name', model_id)}
+
+{repo_description}
+
+## Model Details
+
+- **Base Model**: {model_data.get('base_model', 'unknown')}
+- **Fine-tuned with**: [Model Garden](https://github.com/leokeba/model-garden)
+- **Training Date**: {model_data.get('created_at', 'unknown')}
+- **Model Type**: {model_data.get('model_type', 'unknown')}
+
+## Usage
+
+### With Model Garden
+
+```bash
+# Serve the model
+uv run model-garden serve-model --model-path {repo_id}
+
+# Generate text
+uv run model-garden inference-generate \\
+    --model-path {repo_id} \\
+    --prompt "Your prompt here"
+```
+
+### With Transformers
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained("{repo_id}")
+tokenizer = AutoTokenizer.from_pretrained("{repo_id}")
+
+# Generate text
+inputs = tokenizer("Your prompt here", return_tensors="pt")
+outputs = model.generate(**inputs)
+print(tokenizer.decode(outputs[0]))
+```
+
+## Training Details
+
+This model was fine-tuned using Model Garden with the following configuration:
+
+- **Dataset**: {model_data.get('training_dataset', 'custom')}
+- **Training Steps**: {model_data.get('training_steps', 'unknown')}
+- **LoRA Rank**: {model_data.get('lora_rank', 'unknown')}
+
+## Carbon Footprint
+
+Training emissions: {model_data.get('carbon_emissions_g', 'unknown')} gCO2eq
+
+---
+
+*Generated with [Model Garden](https://github.com/leokeba/model-garden)*
+"""
+                # Upload README
+                api.upload_file(
+                    path_or_fileobj=readme_content.encode(),
+                    path_in_repo="README.md",
+                    repo_id=repo_id,
+                    token=hf_token,
+                    commit_message="Add model card"
+                )
+                print("✓ README.md created and uploaded")
+            except Exception as e:
+                print(f"Warning: Could not create README: {e}")
+        
+        # Update model storage with Hub URL
+        models_storage[model_id]["hub_url"] = f"https://huggingface.co/{repo_id}"
+        models_storage[model_id]["hub_repo_id"] = repo_id
+        storage_manager.save_models(models_storage)
+        
+        return {
+            "success": True,
+            "message": f"Model uploaded successfully to HuggingFace Hub",
+            "repo_id": repo_id,
+            "url": f"https://huggingface.co/{repo_id}",
+            "commit_url": url
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload model: {str(e)}"
+        )
+
+
 # Training endpoints
 @app.get("/api/v1/training/jobs", response_model=PaginatedResponse)
 async def list_training_jobs(

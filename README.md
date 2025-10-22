@@ -37,6 +37,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - **OpenAI-compatible API** - Drop-in replacement for OpenAI client
 - **🎯 Structured Outputs** - Generate JSON that strictly follows schemas
 - **🔧 LoRA Adapter Loading** - Load adapters directly from HuggingFace Hub ([guide](./LORA_ADAPTER_LOADING.md))
+- **🤗 Model Upload** - Publish models to HuggingFace Hub with one click ([guide](./HUGGINGFACE_MODEL_UPLOAD.md))
 - **Streaming support** for real-time responses
 - **PagedAttention** for optimized memory usage
 - **Continuous batching** for better GPU utilization

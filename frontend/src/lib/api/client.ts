@@ -271,6 +271,21 @@ class APIClient {
     return this.request(`/models/${id}`, { method: 'DELETE' });
   }
 
+  async uploadModelToHub(
+    modelId: string,
+    params: {
+      repo_id: string;
+      private?: boolean;
+      commit_message?: string;
+      repo_description?: string;
+    }
+  ): Promise<{ success: boolean; message: string; repo_id: string; url: string; commit_url: string }> {
+    return this.request(`/models/${modelId}/upload-to-hub`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
   async generateText(modelName: string, params: {
     prompt: string;
     max_length?: number;
