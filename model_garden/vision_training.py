@@ -78,7 +78,7 @@ class VisionLanguageTrainer:
     def __init__(
         self,
         base_model: str,
-        max_seq_length: int = 8192,  # Increased from 2048 to fit vision tokens + full responses
+        max_seq_length: int = 16384,  # Increased from 2048 to fit vision tokens + full responses
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
         dtype: Optional[torch.dtype] = None,
@@ -87,7 +87,7 @@ class VisionLanguageTrainer:
 
         Args:
             base_model: HuggingFace model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
-            max_seq_length: Maximum sequence length - default 8192 for vision models with large images
+            max_seq_length: Maximum sequence length - default 16384 for vision models with large images
             load_in_4bit: Whether to load model in 4-bit quantization (memory efficient, ~95 percent quality)
             load_in_8bit: Whether to load model in 8-bit quantization (balanced, ~98 percent quality, 2x memory vs 4-bit)
             dtype: Data type (None for auto-detection, used for 16-bit precision when both quantizations are False)
@@ -914,7 +914,7 @@ class VisionLanguageTrainer:
         if self.max_seq_length < 4096:
             console.print(f"[red]⚠️  WARNING: max_seq_length ({self.max_seq_length}) may be too small for vision models![/red]")
             console.print(f"[red]   Images can use 1500+ tokens, leaving little room for prompts/responses.[/red]")
-            console.print(f"[red]   If you see 'ALL tokens masked' errors, increase max_seq_length to 8192+[/red]")
+            console.print(f"[red]   If you see 'ALL tokens masked' errors, increase max_seq_length to 16384+[/red]")
             
         trainer = SFTTrainer(
             model=self.model,

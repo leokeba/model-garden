@@ -635,7 +635,7 @@ def run_training_job(job_id: str):
             
             trainer = VisionLanguageTrainer(
                 base_model=job["base_model"],
-                max_seq_length=job["hyperparameters"].get("max_seq_length", 8192),  # Default 8192 for vision models
+                max_seq_length=job["hyperparameters"].get("max_seq_length", 16384),  # Default 16384 for vision models
                 load_in_4bit=load_in_4bit,
                 load_in_8bit=load_in_8bit,  # Add 8-bit support for vision models
             )

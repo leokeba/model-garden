@@ -500,7 +500,6 @@
         "max_model_len": 8192,
         "dtype": "auto",
         "gpu_memory_utilization": 0.0,
-        "quantization": "fp8",
         "tensor_parallel_size": 1
       },
       "urls": {
