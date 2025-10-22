@@ -20,7 +20,6 @@ classifiers = [
 
 dependencies = [
     "torch>=2.8.0",
-    "transformers>=4.56.0",
     "datasets>=2.19.0",
     "accelerate>=1.10.0",
     "bitsandbytes>=0.43.0",
@@ -34,7 +33,6 @@ dependencies = [
     "python-multipart>=0.0.9",
     "click>=8.2.0",
     "rich>=13.7.1",
-    "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git",
     "xformers>=0.0.32",
     "torchvision>=0.23.0",
     "pillow>=10.0.0",
@@ -43,6 +41,8 @@ dependencies = [
     "pynvml>=13.0.1",
     "python-dotenv>=1.1.1",
     "codecarbon>=2.4.0",
+    "unsloth>=2025.10.8",
+    "transformers>=4.57.1"
 ]
 
 [project.optional-dependencies]
@@ -114,4 +114,9 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--showlocals",
+]
+
+[tool.uv]
+override-dependencies = [
+    "transformers>=4.57.1",
 ]

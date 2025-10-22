@@ -163,23 +163,14 @@
 
               <!-- Actions -->
               <div class="space-y-2 pt-2 border-t">
-                <div class="flex gap-2">
-                  <Button
-                    href={`/models/load?model=${encodeURIComponent(model.path)}`}
-                    variant="primary"
-                    size="sm"
-                    fullWidth
-                  >
-                    🔌 Load
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    href={`/inference?model=${model.id}`}
-                  >
-                    Generate
-                  </Button>
-                </div>
+                <Button
+                  href={`/models/load?model=${encodeURIComponent(model.path)}`}
+                  variant="primary"
+                  size="sm"
+                  fullWidth
+                >
+                  🔌 Load for Inference
+                </Button>
                 <div class="flex gap-2">
                   <Button
                     variant="secondary"

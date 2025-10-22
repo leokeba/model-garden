@@ -958,11 +958,11 @@ class VisionLanguageTrainer:
         console.print("[cyan]🧹 Clearing dataset references from trainer...[/cyan]")
         try:
             if hasattr(trainer, 'train_dataset'):
-                trainer.train_dataset = None
+                trainer.train_dataset = None  # type: ignore
             if hasattr(trainer, 'eval_dataset'):
-                trainer.eval_dataset = None
+                trainer.eval_dataset = None  # type: ignore
             if hasattr(trainer, 'data_collator'):
-                trainer.data_collator = None
+                trainer.data_collator = None  # type: ignore
         except Exception as e:
             console.print(f"[yellow]⚠️  Warning: Failed to clear trainer datasets: {e}[/yellow]")
 
