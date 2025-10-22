@@ -1,0 +1,23 @@
+{
+    // TypeScript settings
+    "typescript.preferences.rootScope": "workspace",
+    "typescript.preferences.includePackageJsonAutoImports": "on",
+    "typescript.workspaceSymbols.scope": "allOpenProjects",
+    // Svelte settings
+    "svelte.enable-ts-plugin": true,
+    // File associations
+    "files.associations": {
+        "*.svelte": "svelte"
+    },
+    // Python settings
+    "python.defaultInterpreterPath": "./venv/bin/python",
+    "python.analysis.extraPaths": [
+        "./model_garden"
+    ],
+    // Editor settings
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll": "explicit",
+        "source.organizeImports": "explicit"
+    }
+}

@@ -1,0 +1,69 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Watch Model Garden Logs",
+            "type": "shell",
+            "command": "sudo journalctl -u model-garden.service -f --no-pager --all",
+            "problemMatcher": [],
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        },
+        {
+            "label": "Watch Model Garden Logs (Last 100)",
+            "type": "shell",
+            "command": "sudo journalctl -u model-garden.service -f -n 100 --no-pager --all",
+            "problemMatcher": [],
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "Watch Model Garden Logs (Filtered)",
+            "type": "shell",
+            "command": "sudo journalctl -u model-garden.service -f --no-pager | grep --line-buffered -E 'Step|epoch|loss|eval|CRITICAL|ERROR|WARNING|🔍|❌|✓|🚀'",
+            "problemMatcher": [],
+            "isBackground": true,
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true
+            }
+        },
+        {
+            "label": "View Recent Logs",
+            "type": "shell",
+            "command": "sudo journalctl -u model-garden.service -n 500 --no-pager",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true
+            }
+        },
+        {
+            "label": "Restart Model Garden Service",
+            "type": "shell",
+            "command": "sudo systemctl restart model-garden.service && echo 'Service restarted successfully'",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "focus": true
+            }
+        }
+    ]
+}

@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Model Garden API",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/model_garden/cli.py",
+            "args": [
+                "serve"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
