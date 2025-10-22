@@ -21,6 +21,12 @@ interface Model {
     size: number;
     modified: string;
   }>;
+  // File existence check (added by backend)
+  file_exists?: boolean;
+  file_count?: number;
+  // HuggingFace Hub info (if uploaded)
+  hub_url?: string;
+  hub_repo_id?: string;
 }
 
 interface TrainingJob {

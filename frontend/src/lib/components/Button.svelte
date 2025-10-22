@@ -9,6 +9,7 @@
     type?: "button" | "submit" | "reset";
     onclick?: () => void;
     class?: string;
+    title?: string;
     children?: any;
   }
 
@@ -22,6 +23,7 @@
     type = "button",
     onclick,
     class: className = "",
+    title,
     children,
   }: Props = $props();
 </script>
@@ -29,6 +31,7 @@
 {#if href}
   <a
     {href}
+    {title}
     class="btn btn-{variant} btn-{size} {className}"
     class:w-full={fullWidth}
     class:opacity-50={disabled}
@@ -44,6 +47,7 @@
 {:else}
   <button
     {type}
+    {title}
     class="btn btn-{variant} btn-{size} {className}"
     class:w-full={fullWidth}
     {disabled}

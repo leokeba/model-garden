@@ -148,9 +148,15 @@
                   </div>
                 </div>
                 <div>
-                  <div class="text-xs text-gray-500">Created</div>
+                  <div class="text-xs text-gray-500">Files</div>
                   <div class="font-medium">
-                    {formatDate(model.created_at)}
+                    {#if model.file_exists}
+                      <span class="text-green-600"
+                        >✓ {model.file_count || 0}</span
+                      >
+                    {:else}
+                      <span class="text-red-600">✗ Missing</span>
+                    {/if}
                   </div>
                 </div>
               </div>
@@ -180,6 +186,10 @@
                     size="sm"
                     fullWidth
                     onclick={() => handleUploadClick(model)}
+                    disabled={!model.file_exists}
+                    title={!model.file_exists
+                      ? "Model files not found on disk"
+                      : "Upload model to HuggingFace Hub"}
                   >
                     🤗 Upload to Hub
                   </Button>

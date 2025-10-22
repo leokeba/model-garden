@@ -1418,6 +1418,21 @@ async def list_models(
     # Filter models
     filtered_models = list(models_storage.values())
     
+    # Add file_exists flag to each model
+    for model in filtered_models:
+        model_path = Path(model.get("path", ""))
+        model["file_exists"] = model_path.exists() if model_path else False
+        
+        # Add file count if directory exists
+        if model["file_exists"]:
+            try:
+                files = list(model_path.glob("**/*"))
+                model["file_count"] = len([f for f in files if f.is_file()])
+            except Exception:
+                model["file_count"] = 0
+        else:
+            model["file_count"] = 0
+    
     if status:
         filtered_models = [m for m in filtered_models if m["status"] == status]
     
@@ -1505,9 +1520,28 @@ async def upload_model_to_hub(
     model_path = Path(model_data["path"])
     
     if not model_path.exists():
+        # Check if it's a training job that hasn't saved the model yet
+        training_job_id = model_data.get("training_job_id")
+        training_status = "unknown"
+        if training_job_id and training_job_id in training_jobs_storage:
+            training_status = training_jobs_storage[training_job_id].get("status", "unknown")
+        
+        error_detail = {
+            "error": "Model directory not found",
+            "model_id": model_id,
+            "expected_path": str(model_path),
+            "training_status": training_status,
+            "suggestions": [
+                "The model may not have been saved to disk yet",
+                "Check if the training job completed successfully",
+                f"Expected path: {model_path}",
+                "Try listing models to see which ones have files available"
+            ]
+        }
+        
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model directory not found: {model_path}"
+            detail=f"Model directory not found: {model_path}. Training status: {training_status}. The model files may not have been saved to disk."
         )
     
     # Extract request parameters
