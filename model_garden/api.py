@@ -1523,8 +1523,8 @@ async def upload_model_to_hub(
         # Check if it's a training job that hasn't saved the model yet
         training_job_id = model_data.get("training_job_id")
         training_status = "unknown"
-        if training_job_id and training_job_id in training_jobs_storage:
-            training_status = training_jobs_storage[training_job_id].get("status", "unknown")
+        if training_job_id and training_job_id in training_jobs:
+            training_status = training_jobs[training_job_id].get("status", "unknown")
         
         error_detail = {
             "error": "Model directory not found",
