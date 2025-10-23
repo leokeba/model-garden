@@ -312,6 +312,77 @@ def get_base_model_from_adapter(adapter_path: str) -> Optional[str]:
     return None
 
 
+def is_vision_model(model_path: str) -> bool:
+    """Check if a model is a vision-language model.
+    
+    Checks for various indicators:
+    - "VL" or "vision" in the model name
+    - Presence of processor_config.json (vision models use processors)
+    - Vision-specific config fields
+    
+    Args:
+        model_path: Path to the model directory or HuggingFace model ID
+        
+    Returns:
+        True if it's a vision model, False otherwise
+    """
+    # Check model name for vision indicators
+    model_name_lower = model_path.lower()
+    if "vl" in model_name_lower or "vision" in model_name_lower:
+        return True
+    
+    # For local models, check for processor_config.json
+    model_dir = Path(model_path)
+    if model_dir.exists() and model_dir.is_dir():
+        # Check for processor config (vision models use processors, not just tokenizers)
+        if (model_dir / "processor_config.json").exists():
+            console.print(f"[cyan]🔍 Detected vision model (found processor_config.json)[/cyan]")
+            return True
+        
+        # Check config.json for vision-specific fields
+        config_file = model_dir / "config.json"
+        if config_file.exists():
+            try:
+                with open(config_file) as f:
+                    config = json.load(f)
+                    # Check for vision-specific architecture types
+                    model_type = config.get("model_type", "")
+                    architectures = config.get("architectures", [])
+                    
+                    vision_indicators = ["vision", "vl", "vlm", "multimodal", "qwen2_vl"]
+                    
+                    if any(indicator in model_type.lower() for indicator in vision_indicators):
+                        return True
+                    
+                    if any(any(indicator in arch.lower() for indicator in vision_indicators) 
+                           for arch in architectures):
+                        return True
+                    
+                    # Check for vision_config or visual_config keys
+                    if "vision_config" in config or "visual_config" in config:
+                        return True
+            except Exception:
+                pass
+    
+    # For HuggingFace model IDs, check if processor_config.json exists
+    if "/" in model_path and not Path(model_path).exists():
+        try:
+            from huggingface_hub import HfFileSystem
+            
+            hf_token = os.getenv('HF_TOKEN')
+            fs = HfFileSystem(token=hf_token)
+            
+            # Check if processor_config.json exists
+            processor_config_path = f"{model_path}/processor_config.json"
+            if fs.exists(processor_config_path):
+                console.print(f"[cyan]🔍 Detected vision model on Hub (found processor_config.json)[/cyan]")
+                return True
+        except Exception:
+            pass
+    
+    return False
+
+
 def detect_quantization_method(model_path: str) -> Optional[str]:
     """Auto-detect the appropriate quantization method for a model.
     
@@ -445,14 +516,18 @@ class InferenceService:
         self.is_adapter = False
         self.base_model_path: Optional[str] = None
         self.adapter_path: Optional[str] = None
+        
+        # Vision model tracking
+        self.is_vision_lora_adapter = False
+        self.merged_vision_model_path: Optional[str] = None  # Temp merged model path
 
     async def load_model(self) -> None:
         """Load the model into vLLM engine.
         
         Automatically detects and handles LoRA adapters by:
         1. Checking if model_path is a LoRA adapter
-        2. Loading the base model
-        3. Applying the LoRA adapter on top
+        2. For text models: Loading the base model and applying LoRA on top
+        3. For vision models: Merging the LoRA with base model first (vLLM doesn't support vision LoRAs)
         """
         if self.is_loaded:
             console.print("[yellow]Model already loaded[/yellow]")
@@ -474,11 +549,81 @@ class InferenceService:
                 )
             
             self.base_model_path = base_model
-            console.print(f"[cyan]📦 Loading base model: {base_model}[/cyan]")
-            console.print(f"[cyan]🔧 Will apply LoRA adapter: {self.adapter_path}[/cyan]")
             
-            # Enable LoRA support
-            self.enable_lora = True
+            # Check if this is a vision model adapter
+            # We check both the adapter path itself and the base model
+            adapter_is_vision = is_vision_model(self.adapter_path)
+            base_is_vision = is_vision_model(base_model)
+            
+            if adapter_is_vision or base_is_vision:
+                console.print("[yellow]⚠️  Detected vision-language model adapter[/yellow]")
+                console.print("[yellow]   vLLM doesn't support LoRA on vision models - merging adapter with base model first[/yellow]")
+                
+                self.is_vision_lora_adapter = True
+                
+                # Create temporary directory for merged model in HF_HOME (not /tmp/)
+                # This avoids filling up the main drive
+                import time
+                hf_home = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
+                temp_base = Path(hf_home) / 'temp_merges'
+                temp_base.mkdir(parents=True, exist_ok=True)
+                
+                temp_dir = temp_base / f"model-garden-merged-{int(time.time())}"
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                self.merged_vision_model_path = str(temp_dir)
+                
+                console.print(f"[cyan]🔧 Merging vision LoRA adapter...[/cyan]")
+                console.print(f"[cyan]   Adapter: {self.adapter_path}[/cyan]")
+                console.print(f"[cyan]   Base model: {base_model}[/cyan]")
+                console.print(f"[cyan]   Output: {self.merged_vision_model_path}[/cyan]")
+                
+                try:
+                    # Import the merge function from vision_training
+                    from model_garden.vision_training import merge_vision_lora_adapter
+                    
+                    # Merge the adapter - this will save the merged model to temp directory
+                    merged_path = merge_vision_lora_adapter(
+                        adapter_path=self.adapter_path,
+                        output_dir=self.merged_vision_model_path,
+                        base_model=base_model,
+                        load_in_4bit=True,  # Use 4-bit for memory efficiency during merge
+                    )
+                    
+                    console.print(f"[green]✓ Vision LoRA merged successfully[/green]")
+                    
+                    # Verify that the merge actually produced a valid model directory
+                    merged_config = Path(merged_path) / "config.json"
+                    if not merged_config.exists():
+                        raise FileNotFoundError(
+                            f"Merge completed but config.json not found in {merged_path}. "
+                            "The merge may have failed silently."
+                        )
+                    
+                    # Update model_path to point to merged model
+                    self.base_model_path = merged_path
+                    
+                    # Disable LoRA support since we've merged
+                    self.enable_lora = False
+                    console.print("[cyan]📦 Loading merged vision model into vLLM...[/cyan]")
+                    
+                except Exception as e:
+                    console.print(f"[red]❌ Failed to merge vision LoRA adapter: {e}[/red]")
+                    import traceback
+                    console.print(f"[red]Full error:[/red]")
+                    console.print(traceback.format_exc())
+                    # Clean up temp directory on failure
+                    if self.merged_vision_model_path and Path(self.merged_vision_model_path).exists():
+                        import shutil
+                        shutil.rmtree(self.merged_vision_model_path, ignore_errors=True)
+                    self.merged_vision_model_path = None
+                    raise
+            else:
+                # Text model adapter - can use vLLM's LoRA support
+                console.print(f"[cyan]📦 Loading base model: {base_model}[/cyan]")
+                console.print(f"[cyan]🔧 Will apply LoRA adapter: {self.adapter_path}[/cyan]")
+                
+                # Enable LoRA support
+                self.enable_lora = True
         else:
             self.base_model_path = self.model_path
         
@@ -628,6 +773,17 @@ class InferenceService:
                 console.print("[green]✓[/green] GPU cache cleared")
         except Exception as e:
             console.print(f"[yellow]⚠️  Could not clear GPU cache: {e}[/yellow]")
+        
+        # Clean up temporary merged vision model if it exists
+        if self.merged_vision_model_path and Path(self.merged_vision_model_path).exists():
+            console.print(f"[cyan]🧹 Cleaning up temporary merged model: {self.merged_vision_model_path}[/cyan]")
+            try:
+                import shutil
+                shutil.rmtree(self.merged_vision_model_path, ignore_errors=True)
+                console.print("[green]✓[/green] Temporary merged model deleted")
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Could not delete temporary model: {e}[/yellow]")
+            self.merged_vision_model_path = None
         
         self.is_loaded = False
         console.print("[green]✓[/green] Model unloaded successfully")
@@ -904,9 +1060,9 @@ class InferenceService:
         if self.engine is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        # Prepare lora_request if we have an adapter
+        # Prepare lora_request if we have an adapter (only for text models, not vision)
         lora_request = None
-        if self.is_adapter and self.adapter_path:
+        if self.is_adapter and self.adapter_path and not self.is_vision_lora_adapter:
             try:
                 from vllm.lora.request import LoRARequest
                 # Create LoRA request with adapter path
@@ -977,9 +1133,9 @@ class InferenceService:
         if self.engine is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        # Prepare lora_request if we have an adapter
+        # Prepare lora_request if we have an adapter (only for text models, not vision)
         lora_request = None
-        if self.is_adapter and self.adapter_path:
+        if self.is_adapter and self.adapter_path and not self.is_vision_lora_adapter:
             try:
                 from vllm.lora.request import LoRARequest
                 lora_request = LoRARequest(
@@ -1208,6 +1364,12 @@ class InferenceService:
             info["base_model"] = self.base_model_path
             info["adapter_path"] = self.adapter_path
             info["lora_enabled"] = self.enable_lora
+            
+            # Add vision-specific info
+            if self.is_vision_lora_adapter:
+                info["is_vision_adapter"] = True
+                info["merged_automatically"] = True
+                info["note"] = "Vision LoRA was automatically merged (vLLM doesn't support LoRA on vision models)"
         
         return info
 

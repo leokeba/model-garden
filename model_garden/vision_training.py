@@ -1186,6 +1186,211 @@ class VisionLanguageTrainer:
         console.print("[bold green]✓ Model saved successfully![/bold green]")
 
 
+def merge_vision_lora_adapter(
+    adapter_path: str,
+    output_dir: str,
+    base_model: Optional[str] = None,
+    max_seq_length: int = 16384,
+    load_in_4bit: bool = True,
+) -> str:
+    """Merge a vision LoRA adapter with its base model for inference.
+    
+    This function is specifically for preparing vision-language model adapters for vLLM inference,
+    which doesn't support LoRA adapters on vision models. The adapter is loaded, merged with its
+    base model, and saved as a complete model.
+    
+    Uses the standard transformers + PEFT approach for maximum compatibility.
+    
+    Args:
+        adapter_path: Path to the LoRA adapter directory or HuggingFace model ID
+        output_dir: Directory to save the merged model
+        base_model: Optional base model path (auto-detected from adapter_config.json if not provided)
+        max_seq_length: Maximum sequence length (unused, kept for API compatibility)
+        load_in_4bit: Load base model in 4-bit for merging (reduces memory usage)
+        
+    Returns:
+        Path to the merged model directory
+        
+    Raises:
+        FileNotFoundError: If adapter or base model not found
+        ValueError: If adapter_config.json doesn't contain base model info
+    """
+    console.print("[bold cyan]Merging vision LoRA adapter for inference...[/bold cyan]")
+    console.print(f"[cyan]Adapter: {adapter_path}[/cyan]")
+    
+    # Check if adapter exists (local path)
+    adapter_dir = Path(adapter_path)
+    is_local = adapter_dir.exists()
+    
+    # Get base model from adapter config if not provided
+    if base_model is None:
+        console.print("[cyan]🔍 Detecting base model from adapter_config.json...[/cyan]")
+        
+        try:
+            if is_local:
+                adapter_config_file = adapter_dir / "adapter_config.json"
+                if not adapter_config_file.exists():
+                    raise FileNotFoundError(f"adapter_config.json not found in {adapter_path}")
+                
+                with open(adapter_config_file) as f:
+                    adapter_config = json.load(f)
+                    base_model = adapter_config.get("base_model_name_or_path")
+            else:
+                # HuggingFace model ID
+                from huggingface_hub import hf_hub_download
+                hf_token = os.getenv('HF_TOKEN')
+                
+                config_file = hf_hub_download(
+                    repo_id=adapter_path,
+                    filename="adapter_config.json",
+                    token=hf_token
+                )
+                
+                with open(config_file) as f:
+                    adapter_config = json.load(f)
+                    base_model = adapter_config.get("base_model_name_or_path")
+            
+            if not base_model:
+                raise ValueError(
+                    f"Could not find base_model_name_or_path in adapter_config.json. "
+                    f"Please specify base_model explicitly."
+                )
+            
+            console.print(f"[green]✓ Found base model: {base_model}[/green]")
+        except Exception as e:
+            console.print(f"[red]❌ Failed to detect base model: {e}[/red]")
+            raise
+    
+    console.print(f"[cyan]Base model: {base_model}[/cyan]")
+    console.print(f"[cyan]Output: {output_dir}[/cyan]")
+    
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Load base model and adapter
+        console.print("[cyan]Loading base model...[/cyan]")
+        hf_token = os.getenv('HF_TOKEN')
+        
+        # Use transformers AutoModelForVision2Seq instead of FastVisionModel for merging
+        # This is more reliable for vision-language models
+        from transformers import AutoModelForVision2Seq, AutoProcessor
+        from peft import PeftModel
+        from huggingface_hub import snapshot_download
+        import shutil
+        
+        console.print(f"[cyan]Using transformers AutoModelForVision2Seq for reliable merging[/cyan]")
+        
+        # Load base model with transformers
+        base_torch_dtype = torch.bfloat16 if not load_in_4bit else None
+        
+        base_model_obj = AutoModelForVision2Seq.from_pretrained(
+            base_model,
+            torch_dtype=base_torch_dtype,
+            load_in_4bit=load_in_4bit,
+            device_map="auto",
+            token=hf_token,
+        )
+        
+        console.print("[green]✓ Base model loaded[/green]")
+        console.print(f"[cyan]Loading LoRA adapter from {adapter_path}...[/cyan]")
+        
+        # Load LoRA adapter with PEFT
+        from typing import Any
+        peft_model: Any = PeftModel.from_pretrained(base_model_obj, adapter_path, token=hf_token)
+        
+        console.print("[green]✓ LoRA adapter loaded[/green]")
+        
+        # Merge and save
+        console.print(f"[cyan]Merging adapter into base model...[/cyan]")
+        
+        # Clear GPU cache before merging
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Merge the adapter
+        merged_model: Any = peft_model.merge_and_unload()
+        console.print("[green]✓ Merge complete![/green]")
+        
+        # Save merged model
+        console.print(f"[cyan]Saving merged model to {output_dir}...[/cyan]")
+        merged_model.save_pretrained(output_dir)
+        console.print("[green]✓ Model saved[/green]")
+        
+        # Save tokenizer (from base model)
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(base_model, token=hf_token)
+        tokenizer.save_pretrained(output_dir)
+        console.print("[green]✓ Tokenizer saved[/green]")
+        
+        # Copy vision processor configuration files from base model
+        console.print("[cyan]Copying vision processor configuration files...[/cyan]")
+        base_model_dir = snapshot_download(base_model, token=hf_token)
+        
+        files_to_copy = [
+            "preprocessor_config.json",
+            "processor_config.json",
+            "video_preprocessor_config.json",  # For video support
+        ]
+        
+        for file in files_to_copy:
+            src = os.path.join(base_model_dir, file)
+            if os.path.exists(src):
+                shutil.copy(src, output_dir)
+                console.print(f"[green]  ✓ Copied {file}[/green]")
+        
+        # Copy image_processor directory if it exists
+        image_processor_dir = os.path.join(base_model_dir, "image_processor")
+        if os.path.exists(image_processor_dir):
+            shutil.copytree(
+                image_processor_dir,
+                os.path.join(output_dir, "image_processor"),
+                dirs_exist_ok=True
+            )
+            console.print("[green]  ✓ Copied image_processor directory[/green]")
+        
+        console.print("[green]✓ Processor configuration files copied[/green]")
+        
+        # Validate that the merge actually produced a valid model
+        config_file = Path(output_dir) / "config.json"
+        if not config_file.exists():
+            raise FileNotFoundError(
+                f"Model merge completed but config.json not found in {output_dir}. "
+                "The merge may have failed to save model files."
+            )
+        
+        # Check for model weight files
+        has_weights = (
+            list(Path(output_dir).glob("*.safetensors")) or
+            list(Path(output_dir).glob("*.bin")) or
+            list(Path(output_dir).glob("model-*.safetensors"))
+        )
+        if not has_weights:
+            raise FileNotFoundError(
+                f"Model merge completed but no weight files (.safetensors or .bin) found in {output_dir}. "
+                "The model may not have been saved properly."
+            )
+        
+        console.print(f"[green]✓ Validation passed: Found config.json and {len(has_weights)} weight file(s)[/green]")
+        
+        # Clean up memory
+        console.print("[cyan]🧹 Cleaning up memory...[/cyan]")
+        del peft_model
+        del merged_model
+        del base_model_obj
+        del tokenizer
+        _cleanup_memory_after_merge()
+        
+        console.print("[bold green]✨ Vision LoRA adapter merged successfully![/bold green]")
+        return str(output_path.absolute())
+        
+    except Exception as e:
+        console.print(f"[red]❌ Failed to merge adapter: {e}[/red]")
+        raise
+
+
 def create_vision_sample_dataset(output_path: str, num_examples: int = 10) -> None:
     """Create a sample vision-language dataset for testing.
 
