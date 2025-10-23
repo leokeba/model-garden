@@ -115,6 +115,24 @@ class TrainingJobInfo(BaseModel):
     current_epoch: Optional[int] = None
     save_method: Optional[str] = "merged_16bit"
     metrics: Optional[Dict] = None  # Training and validation metrics history
+    # Selective loss settings
+    selective_loss: Optional[bool] = False
+    selective_loss_level: Optional[str] = "conservative"
+    selective_loss_schema_keys: Optional[List[str]] = None
+    selective_loss_masking_start_epoch: Optional[float] = 0.0
+    selective_loss_verbose: Optional[bool] = False
+    # Quality settings
+    quality_mode: Optional[bool] = False
+    load_in_16bit: Optional[bool] = False
+    load_in_8bit: Optional[bool] = False
+    # Early stopping settings
+    early_stopping_enabled: Optional[bool] = False
+    early_stopping_patience: Optional[int] = 3
+    early_stopping_threshold: Optional[float] = 0.0
+    # Rerun metadata
+    rerun_from: Optional[str] = None
+    rerun_from_name: Optional[str] = None
+    queue_position: Optional[int] = None
 
 
 class APIResponse(BaseModel):
@@ -217,11 +235,77 @@ class StorageManager:
 storage_manager = StorageManager(PROJECT_ROOT / "storage")
 
 # Global variables for managing state (loaded from disk)
+# Note: We store plain dicts for now but convert to Pydantic models on access
+# This allows for easier JSON serialization while maintaining type safety at API boundaries
 training_jobs: Dict[str, Dict] = storage_manager.load_training_jobs()
 models_storage: Dict[str, Dict] = storage_manager.load_models()
 
 print(f"📊 Loaded {len(training_jobs)} training jobs from storage")
 print(f"📊 Loaded {len(models_storage)} models from storage")
+
+
+def create_training_job_record(
+    job_id: str,
+    job_request: TrainingJobRequest,
+    dataset_path: str,
+    validation_dataset_path: Optional[str],
+    output_dir: str,
+) -> TrainingJobInfo:
+    """Create a properly typed TrainingJobInfo record from a request.
+    
+    This function ensures all fields are present and properly typed,
+    providing compile-time type safety when using static analyzers.
+    
+    Args:
+        job_id: Unique job identifier
+        job_request: The incoming training request
+        dataset_path: Resolved dataset path
+        validation_dataset_path: Resolved validation dataset path (if any)
+        output_dir: Resolved output directory
+        
+    Returns:
+        A validated TrainingJobInfo instance
+    """
+    return TrainingJobInfo(
+        id=job_id,
+        name=job_request.name,
+        status="queued",
+        base_model=job_request.base_model,
+        dataset_path=dataset_path,
+        validation_dataset_path=validation_dataset_path,
+        output_dir=output_dir,
+        created_at=datetime.utcnow().isoformat() + "Z",
+        started_at=None,
+        completed_at=None,
+        progress={"current_step": 0, "total_steps": 0, "epoch": 0},
+        error_message=None,
+        hyperparameters=job_request.hyperparameters or {},
+        lora_config=job_request.lora_config or {},
+        from_hub=job_request.from_hub,
+        validation_from_hub=job_request.validation_from_hub,
+        is_vision=job_request.is_vision,
+        model_type=job_request.model_type or ("vision" if job_request.is_vision else "text"),
+        save_method=job_request.save_method,
+        metrics={"training": [], "validation": []},
+        # Selective loss settings
+        selective_loss=job_request.selective_loss,
+        selective_loss_level=job_request.selective_loss_level,
+        selective_loss_schema_keys=job_request.selective_loss_schema_keys,
+        selective_loss_masking_start_epoch=job_request.selective_loss_masking_start_epoch,
+        selective_loss_verbose=job_request.selective_loss_verbose,
+        # Quality settings
+        quality_mode=job_request.quality_mode,
+        load_in_16bit=job_request.load_in_16bit,
+        load_in_8bit=job_request.load_in_8bit,
+        # Early stopping settings
+        early_stopping_enabled=job_request.early_stopping_enabled,
+        early_stopping_patience=job_request.early_stopping_patience,
+        early_stopping_threshold=job_request.early_stopping_threshold,
+        # Rerun metadata - not set for new jobs
+        rerun_from=None,
+        rerun_from_name=None,
+        queue_position=None,
+    )
 
 
 def resolve_path(path_str: str, is_model_dir: bool = False) -> str:
@@ -1768,38 +1852,19 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
             else resolve_path(job_request.validation_dataset_path)
         )
     
-    # Create job record
-    job_info = {
-        "id": job_id,
-        "name": job_request.name,
-        "status": "queued",
-        "base_model": job_request.base_model,
-        "dataset_path": dataset_path,
-        "validation_dataset_path": validation_dataset_path,
-        "output_dir": output_dir,
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "started_at": None,
-        "completed_at": None,
-        "progress": {"current_step": 0, "total_steps": 0, "epoch": 0},
-        "error_message": None,
-        "hyperparameters": job_request.hyperparameters or {},
-        "lora_config": job_request.lora_config or {},
-        "from_hub": job_request.from_hub,
-        "validation_from_hub": job_request.validation_from_hub,
-        "is_vision": job_request.is_vision or False,
-        "model_type": job_request.model_type or ("vision" if job_request.is_vision else "text"),
-        "save_method": job_request.save_method,
-        "metrics": {"training": [], "validation": []},  # Initialize metrics storage
-        "selective_loss": job_request.selective_loss,
-        "selective_loss_level": job_request.selective_loss_level,
-        "selective_loss_schema_keys": job_request.selective_loss_schema_keys,
-        "selective_loss_masking_start_epoch": job_request.selective_loss_masking_start_epoch,
-        "selective_loss_verbose": job_request.selective_loss_verbose,
-        # Quality settings
-        "quality_mode": job_request.quality_mode,
-        "load_in_16bit": job_request.load_in_16bit,
-        "load_in_8bit": job_request.load_in_8bit,
-    }
+    # Create job record using type-safe helper function
+    # This ensures all fields are present and validated at creation time
+    job_info_model = create_training_job_record(
+        job_id=job_id,
+        job_request=job_request,
+        dataset_path=dataset_path,
+        validation_dataset_path=validation_dataset_path,
+        output_dir=output_dir,
+    )
+    
+    # Convert to dict for storage (JSON serialization)
+    # Using model_dump() ensures we get all fields, including defaults
+    job_info = job_info_model.model_dump(mode='json', exclude_none=False)
     
     training_jobs[job_id] = job_info
     
@@ -1963,6 +2028,115 @@ async def request_early_stop(job_id: str):
             success=False,
             message=f"Failed to request early stopping: {str(e)}"
         )
+
+
+@app.post("/api/v1/training/jobs/{job_id}/rerun", response_model=APIResponse)
+async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
+    """Rerun a past training job with the same configuration.
+    
+    This creates a new training job with the same parameters as the original job.
+    Useful for retrying failed jobs or retraining with the same settings.
+    """
+    if job_id not in training_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training job {job_id} not found"
+        )
+    
+    original_job = training_jobs[job_id]
+    
+    # Only allow rerunning completed, failed, or cancelled jobs
+    if original_job["status"] in ["running", "queued"]:
+        return APIResponse(
+            success=False,
+            message=f"Cannot rerun a job that is currently {original_job['status']}. Cancel it first."
+        )
+    
+    import uuid
+    new_job_id = str(uuid.uuid4())
+    
+    # Clone all relevant configuration from the original job
+    # Create a new job with a timestamp suffix to distinguish it
+    from datetime import datetime as dt
+    timestamp_suffix = dt.utcnow().strftime("%Y%m%d_%H%M%S")
+    new_job_name = f"{original_job['name']}_rerun_{timestamp_suffix}"
+    
+    # Resolve output directory with new name
+    original_output = Path(original_job["output_dir"])
+    new_output_dir = str(original_output.parent / new_job_name)
+    
+    # Create new job record with cloned configuration
+    new_job = {
+        "id": new_job_id,
+        "name": new_job_name,
+        "status": "queued",
+        "base_model": original_job["base_model"],
+        "dataset_path": original_job["dataset_path"],
+        "validation_dataset_path": original_job.get("validation_dataset_path"),
+        "output_dir": new_output_dir,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "started_at": None,
+        "completed_at": None,
+        "progress": {"current_step": 0, "total_steps": 0, "epoch": 0},
+        "error_message": None,
+        "hyperparameters": original_job.get("hyperparameters", {}).copy(),
+        "lora_config": original_job.get("lora_config", {}).copy(),
+        "from_hub": original_job.get("from_hub", False),
+        "validation_from_hub": original_job.get("validation_from_hub", False),
+        "is_vision": original_job.get("is_vision", False),
+        "model_type": original_job.get("model_type", "text"),
+        "save_method": original_job.get("save_method", "merged_16bit"),
+        "metrics": {"training": [], "validation": []},
+        # Clone selective loss settings
+        "selective_loss": original_job.get("selective_loss", False),
+        "selective_loss_level": original_job.get("selective_loss_level", "conservative"),
+        "selective_loss_schema_keys": original_job.get("selective_loss_schema_keys"),
+        "selective_loss_masking_start_epoch": original_job.get("selective_loss_masking_start_epoch", 0.0),
+        "selective_loss_verbose": original_job.get("selective_loss_verbose", False),
+        # Clone quality settings
+        "quality_mode": original_job.get("quality_mode", False),
+        "load_in_16bit": original_job.get("load_in_16bit", False),
+        "load_in_8bit": original_job.get("load_in_8bit", False),
+        # Clone early stopping settings
+        "early_stopping_enabled": original_job.get("early_stopping_enabled", False),
+        "early_stopping_patience": original_job.get("early_stopping_patience", 3),
+        "early_stopping_threshold": original_job.get("early_stopping_threshold", 0.0),
+        # Add metadata about the original job
+        "rerun_from": job_id,
+        "rerun_from_name": original_job["name"],
+    }
+    
+    training_jobs[new_job_id] = new_job
+    
+    # Persist to disk
+    storage_manager.save_training_jobs(training_jobs)
+    
+    # Add to job queue
+    queue = get_job_queue()
+    await queue.add_job(
+        job_id=new_job_id,
+        job_type="training",
+        job_config=new_job,
+        priority=0
+    )
+    
+    # Get queue position
+    position = await queue.get_queue_position(new_job_id)
+    position_msg = f" (position in queue: {position})" if position and position > 1 else ""
+    
+    # Start training job in background
+    background_tasks.add_task(run_training_job, new_job_id)
+    
+    return APIResponse(
+        success=True,
+        data={
+            "job_id": new_job_id,
+            "original_job_id": job_id,
+            "queue_position": position,
+            "name": new_job_name
+        },
+        message=f"Training job rerun created and queued for execution{position_msg}"
+    )
 
 
 @app.get("/api/v1/training/queue", response_model=APIResponse)

@@ -8,6 +8,7 @@
   let jobs: TrainingJob[] = $state([]);
   let loading = $state(true);
   let error = $state("");
+  let rerunningJobId: string | null = $state(null);
 
   async function loadJobs() {
     try {
@@ -85,6 +86,31 @@
         "Failed to delete job: " +
           (err instanceof Error ? err.message : "Unknown error"),
       );
+    }
+  }
+
+  async function handleRerun(jobId: string, jobName: string) {
+    const confirmMessage = `Rerun training job "${jobName}"?\n\nThis will create a new training job with the same configuration.`;
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      rerunningJobId = jobId;
+      const response = await api.rerunTrainingJob(jobId);
+
+      if (response.success && response.data) {
+        // Navigate to the new job
+        const newJobId = response.data.job_id;
+        window.location.href = `/training/${newJobId}`;
+      } else {
+        alert("Failed to rerun job: " + (response.message || "Unknown error"));
+      }
+    } catch (err) {
+      alert(
+        "Failed to rerun job: " +
+          (err instanceof Error ? err.message : "Unknown error"),
+      );
+    } finally {
+      rerunningJobId = null;
     }
   }
 </script>
@@ -218,6 +244,15 @@
                     Cancel
                   </Button>
                 {:else}
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onclick={() => handleRerun(job.id, job.name)}
+                    loading={rerunningJobId === job.id}
+                    disabled={rerunningJobId === job.id}
+                  >
+                    {rerunningJobId === job.id ? "Starting..." : "🔄 Rerun"}
+                  </Button>
                   <Button
                     variant="danger"
                     size="sm"

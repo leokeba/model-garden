@@ -23,6 +23,7 @@
   let showAdvancedSettings = $state(false);
   let cancelling = $state(false);
   let stoppingEarly = $state(false);
+  let rerunning = $state(false);
 
   // Carbon emissions data
   let carbonData = $state<any>(null);
@@ -305,6 +306,31 @@
         err instanceof Error ? err.message : "Failed to request early stopping";
     } finally {
       stoppingEarly = false;
+    }
+  }
+
+  async function rerunJob() {
+    if (!jobId || !job) return;
+
+    const confirmMessage = `Rerun training job "${job.config?.name || job.name}"?\n\nThis will create a new training job with the same configuration.\nThe original job will remain unchanged.`;
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      rerunning = true;
+      const response = await api.rerunTrainingJob(jobId);
+
+      if (response.success && response.data) {
+        // Navigate to the new job
+        const newJobId = response.data.job_id;
+        window.location.href = `/training/${newJobId}`;
+      } else {
+        error = response.message || "Failed to rerun training job";
+      }
+    } catch (err) {
+      error =
+        err instanceof Error ? err.message : "Failed to rerun training job";
+    } finally {
+      rerunning = false;
     }
   }
 
@@ -714,6 +740,77 @@
                   <dt class="block text-gray-700 font-medium">Save Method</dt>
                   <dd>{job.save_method || "merged_16bit"}</dd>
                 </div>
+
+                <div>
+                  <dt class="block text-gray-700 font-medium">Quality Mode</dt>
+                  <dd>
+                    {#if job.quality_mode}
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                      >
+                        ✓ Enabled (16-bit)
+                      </span>
+                    {:else if job.load_in_16bit}
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                      >
+                        16-bit Precision
+                      </span>
+                    {:else if job.load_in_8bit}
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800"
+                      >
+                        8-bit Precision
+                      </span>
+                    {:else}
+                      <span class="text-gray-500">4-bit (Default)</span>
+                    {/if}
+                  </dd>
+                </div>
+
+                {#if job.early_stopping_enabled}
+                  <div>
+                    <dt class="block text-gray-700 font-medium">
+                      Early Stopping
+                    </dt>
+                    <dd>
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800"
+                      >
+                        ✓ Enabled (patience: {job.early_stopping_patience || 3})
+                      </span>
+                    </dd>
+                  </div>
+                {/if}
+
+                {#if job.selective_loss}
+                  <div>
+                    <dt class="block text-gray-700 font-medium">
+                      Selective Loss
+                    </dt>
+                    <dd>
+                      <span
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800"
+                      >
+                        ✓ {job.selective_loss_level || "conservative"}
+                      </span>
+                    </dd>
+                  </div>
+                {/if}
+
+                {#if job.rerun_from}
+                  <div>
+                    <dt class="block text-gray-700 font-medium">Rerun From</dt>
+                    <dd>
+                      <a
+                        href="/training/{job.rerun_from}"
+                        class="text-primary-600 hover:text-primary-800 underline"
+                      >
+                        {job.rerun_from_name || job.rerun_from}
+                      </a>
+                    </dd>
+                  </div>
+                {/if}
               </div>
 
               <!-- Hyperparameters -->
@@ -871,7 +968,7 @@
               {/if}
 
               <!-- Advanced Settings (Collapsible) -->
-              {#if job.hyperparameters && (job.hyperparameters.adam_beta1 !== undefined || job.hyperparameters.dataloader_num_workers !== undefined || job.hyperparameters.metric_for_best_model !== undefined)}
+              {#if job.hyperparameters && (job.hyperparameters.adam_beta1 !== undefined || job.hyperparameters.dataloader_num_workers !== undefined || job.hyperparameters.metric_for_best_model !== undefined || job.early_stopping_enabled || job.selective_loss)}
                 <div class="border-t pt-4">
                   <button
                     class="flex items-center justify-between w-full text-left"
@@ -1023,6 +1120,88 @@
                                 <dt class="text-gray-600">Random Seed</dt>
                                 <dd class="text-gray-900">
                                   {job.lora_config.random_state}
+                                </dd>
+                              </div>
+                            {/if}
+                          </div>
+                        </div>
+                      {/if}
+
+                      <!-- Early Stopping Settings -->
+                      {#if job.early_stopping_enabled}
+                        <div>
+                          <h5 class="text-sm font-medium text-gray-800 mb-2">
+                            Early Stopping
+                          </h5>
+                          <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                            <div>
+                              <dt class="text-gray-600">Enabled</dt>
+                              <dd class="text-gray-900">Yes</dd>
+                            </div>
+                            <div>
+                              <dt class="text-gray-600">Patience</dt>
+                              <dd class="text-gray-900">
+                                {job.early_stopping_patience || 3} evaluations
+                              </dd>
+                            </div>
+                            {#if job.early_stopping_threshold !== undefined}
+                              <div>
+                                <dt class="text-gray-600">Threshold</dt>
+                                <dd class="text-gray-900">
+                                  {job.early_stopping_threshold}
+                                </dd>
+                              </div>
+                            {/if}
+                          </div>
+                        </div>
+                      {/if}
+
+                      <!-- Selective Loss Settings -->
+                      {#if job.selective_loss}
+                        <div>
+                          <h5 class="text-sm font-medium text-gray-800 mb-2">
+                            Selective Loss (Structured Outputs)
+                          </h5>
+                          <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                            <div>
+                              <dt class="text-gray-600">Enabled</dt>
+                              <dd class="text-gray-900">Yes</dd>
+                            </div>
+                            <div>
+                              <dt class="text-gray-600">Level</dt>
+                              <dd class="text-gray-900">
+                                {job.selective_loss_level || "conservative"}
+                              </dd>
+                            </div>
+                            {#if job.selective_loss_masking_start_epoch !== undefined}
+                              <div>
+                                <dt class="text-gray-600">
+                                  Masking Start Epoch
+                                </dt>
+                                <dd class="text-gray-900">
+                                  {job.selective_loss_masking_start_epoch}
+                                </dd>
+                              </div>
+                            {/if}
+                            {#if job.selective_loss_verbose !== undefined}
+                              <div>
+                                <dt class="text-gray-600">Verbose Logging</dt>
+                                <dd class="text-gray-900">
+                                  {job.selective_loss_verbose
+                                    ? "Enabled"
+                                    : "Disabled"}
+                                </dd>
+                              </div>
+                            {/if}
+                            {#if job.selective_loss_schema_keys && job.selective_loss_schema_keys.length > 0}
+                              <div class="col-span-2">
+                                <dt class="text-gray-600">
+                                  Schema Keys to Mask
+                                </dt>
+                                <dd class="text-gray-900 text-xs">
+                                  {Array.isArray(job.selective_loss_schema_keys)
+                                    ? job.selective_loss_schema_keys.join(", ")
+                                    : job.selective_loss_schema_keys}
                                 </dd>
                               </div>
                             {/if}
@@ -1201,6 +1380,18 @@
                     disabled={cancelling}
                   >
                     {cancelling ? "Cancelling..." : "Cancel Training"}
+                  </Button>
+                {/if}
+
+                {#if job.status === "completed" || job.status === "failed" || job.status === "cancelled"}
+                  <Button
+                    variant="primary"
+                    fullWidth
+                    onclick={rerunJob}
+                    loading={rerunning}
+                    disabled={rerunning}
+                  >
+                    {rerunning ? "Starting Rerun..." : "🔄 Rerun Training"}
                   </Button>
                 {/if}
 

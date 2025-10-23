@@ -54,6 +54,23 @@ interface TrainingJob {
   lora_config?: any;
   model_type?: string;
   save_method?: string;
+  // Quality settings
+  quality_mode?: boolean;
+  load_in_16bit?: boolean;
+  load_in_8bit?: boolean;
+  // Early stopping
+  early_stopping_enabled?: boolean;
+  early_stopping_patience?: number;
+  early_stopping_threshold?: number;
+  // Selective loss
+  selective_loss?: boolean;
+  selective_loss_level?: string;
+  selective_loss_schema_keys?: string[];
+  selective_loss_masking_start_epoch?: number;
+  selective_loss_verbose?: boolean;
+  // Rerun metadata
+  rerun_from?: string;
+  rerun_from_name?: string;
   config?: {
     name: string;
     base_model: string;
@@ -324,6 +341,12 @@ class APIClient {
   async cancelTrainingJob(id: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/training/jobs/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async rerunTrainingJob(id: string): Promise<{ success: boolean; data: { job_id: string; original_job_id: string; queue_position: number | null; name: string }; message: string }> {
+    return this.request(`/training/jobs/${id}/rerun`, {
+      method: 'POST',
     });
   }
 
