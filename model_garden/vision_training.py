@@ -799,7 +799,10 @@ class VisionLanguageTrainer:
         selective_loss: bool = False,
         selective_loss_level: str = "conservative",
         selective_loss_schema_keys: Optional[List[str]] = None,
+        selective_loss_masking_strategy: str = "epoch_based",
         selective_loss_masking_start_epoch: float = 0.0,
+        selective_loss_mask_every_n_steps: int = 100,
+        selective_loss_mask_for_n_steps: int = 50,
         selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
@@ -834,7 +837,10 @@ class VisionLanguageTrainer:
             selective_loss: Enable selective loss masking for structured outputs
             selective_loss_level: Masking level ('conservative', 'moderate', 'aggressive')
             selective_loss_schema_keys: Schema keys to mask in aggressive mode
-            selective_loss_masking_start_epoch: Delay masking until this epoch (0.0=immediate, 0.5=halfway through first epoch)
+            selective_loss_masking_strategy: Masking strategy ('epoch_based' or 'alternating')
+            selective_loss_masking_start_epoch: [epoch_based] Delay masking until this epoch
+            selective_loss_mask_every_n_steps: [alternating] Cycle length in steps
+            selective_loss_mask_for_n_steps: [alternating] Steps with masking ON per cycle
             selective_loss_verbose: Print masking statistics during training
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
@@ -964,15 +970,22 @@ class VisionLanguageTrainer:
             from model_garden.selective_loss import create_selective_loss_collator
             
             console.print(f"[cyan]🎯 Using selective loss masking (level: {selective_loss_level})[/cyan]")
-            if selective_loss_masking_start_epoch > 0.0:
-                console.print(f"[yellow]⏱️  Masking delayed until epoch {selective_loss_masking_start_epoch}[/yellow]")
+            console.print(f"[cyan]   Strategy: {selective_loss_masking_strategy}[/cyan]")
+            if selective_loss_masking_strategy == "epoch_based" and selective_loss_masking_start_epoch > 0.0:
+                console.print(f"[yellow]   ⏱️  Masking delayed until epoch {selective_loss_masking_start_epoch}[/yellow]")
+            elif selective_loss_masking_strategy == "alternating":
+                console.print(f"[yellow]   🔄 Alternating: ON for {selective_loss_mask_for_n_steps}/{selective_loss_mask_every_n_steps} steps per cycle[/yellow]")
+            
             data_collator = create_selective_loss_collator(
                 model=self.model,
                 processor=self.processor,
                 mask_level=selective_loss_level,
                 schema_keys=selective_loss_schema_keys,
                 dataset=train_dataset,  # Pass dataset for auto-detection
+                masking_strategy=selective_loss_masking_strategy,
                 masking_start_epoch=selective_loss_masking_start_epoch,
+                mask_every_n_steps=selective_loss_mask_every_n_steps,
+                mask_for_n_steps=selective_loss_mask_for_n_steps,
                 verbose=selective_loss_verbose,
                 train_on_responses_only=True,  # Enable prompt masking
                 instruction_part=instruction_marker,  # Auto-detected from tokenizer

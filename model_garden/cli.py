@@ -755,10 +755,28 @@ def serve(host: str, port: int, reload: bool) -> None:
     help="Comma-separated schema keys to mask (for aggressive mode, e.g., 'Marque,Modele,contents')",
 )
 @click.option(
+    "--selective-loss-masking-strategy",
+    type=click.Choice(["epoch_based", "alternating"]),
+    default="epoch_based",
+    help="Masking strategy: 'epoch_based' (enable after epoch threshold) or 'alternating' (cycle ON/OFF every n steps)",
+)
+@click.option(
     "--selective-loss-masking-start-epoch",
     type=float,
     default=0.0,
-    help="Delay masking until this epoch (0.0=immediate, 0.5=halfway through first epoch, 1.0=after first epoch).",
+    help="[epoch_based only] Delay masking until this epoch (0.0=immediate, 0.5=halfway through first epoch).",
+)
+@click.option(
+    "--selective-loss-mask-every-n-steps",
+    type=int,
+    default=100,
+    help="[alternating only] Full cycle length in training steps (default: 100)",
+)
+@click.option(
+    "--selective-loss-mask-for-n-steps",
+    type=int,
+    default=50,
+    help="[alternating only] Steps with masking ON per cycle (default: 50, i.e., 50%% of cycle)",
 )
 @click.option(
     "--selective-loss-verbose/--no-selective-loss-verbose",
@@ -849,7 +867,10 @@ def train_vision(
     selective_loss: bool,
     selective_loss_level: str,
     selective_loss_schema_keys: Optional[str],
+    selective_loss_masking_strategy: str,
     selective_loss_masking_start_epoch: float,
+    selective_loss_mask_every_n_steps: int,
+    selective_loss_mask_for_n_steps: int,
     selective_loss_verbose: bool,
     quality_mode: bool,
     load_in_16bit: bool,
@@ -1002,7 +1023,10 @@ def train_vision(
             selective_loss=selective_loss,
             selective_loss_level=selective_loss_level,
             selective_loss_schema_keys=schema_keys_list,
+            selective_loss_masking_strategy=selective_loss_masking_strategy,
             selective_loss_masking_start_epoch=selective_loss_masking_start_epoch,
+            selective_loss_mask_every_n_steps=selective_loss_mask_every_n_steps,
+            selective_loss_mask_for_n_steps=selective_loss_mask_for_n_steps,
             selective_loss_verbose=selective_loss_verbose,
         )
 

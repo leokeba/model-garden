@@ -64,7 +64,10 @@
     selective_loss: false,
     selective_loss_level: "conservative",
     selective_loss_schema_keys: "",
+    selective_loss_masking_strategy: "epoch_based",
     selective_loss_masking_start_epoch: 0.0,
+    selective_loss_mask_every_n_steps: 100,
+    selective_loss_mask_for_n_steps: 50,
     selective_loss_verbose: false,
     early_stopping_enabled: false,
     early_stopping_patience: 3,
@@ -284,8 +287,14 @@
         selective_loss: formData.selective_loss,
         selective_loss_level: formData.selective_loss_level,
         selective_loss_schema_keys: schema_keys_array,
+        selective_loss_masking_strategy:
+          formData.selective_loss_masking_strategy,
         selective_loss_masking_start_epoch:
           formData.selective_loss_masking_start_epoch,
+        selective_loss_mask_every_n_steps:
+          formData.selective_loss_mask_every_n_steps,
+        selective_loss_mask_for_n_steps:
+          formData.selective_loss_mask_for_n_steps,
         selective_loss_verbose: formData.selective_loss_verbose,
         // Add early stopping fields
         early_stopping_enabled: formData.early_stopping_enabled,
@@ -2181,6 +2190,176 @@
                       </p>
                     </div>
                   </div>
+
+                  <div>
+                    <label
+                      for="selective_loss_masking_strategy"
+                      class="block text-sm font-medium text-gray-700 mb-2"
+                    >
+                      Masking Strategy
+                    </label>
+                    <select
+                      id="selective_loss_masking_strategy"
+                      bind:value={formData.selective_loss_masking_strategy}
+                      class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    >
+                      <option value="epoch_based"
+                        >Epoch-based (Enable after threshold)</option
+                      >
+                      <option value="alternating"
+                        >Alternating (Cycle ON/OFF)</option
+                      >
+                    </select>
+                    <div class="mt-2 p-3 bg-blue-50 rounded-lg">
+                      <p class="text-xs text-blue-700">
+                        {#if formData.selective_loss_masking_strategy === "epoch_based"}
+                          <strong>📅 Epoch-based:</strong> Enable masking after a
+                          certain epoch. Good for initial experiments and understanding
+                          masking impact.
+                        {:else}
+                          <strong>🔄 Alternating:</strong> Continuously cycle between
+                          learning structure and semantics. Recommended for balanced
+                          training and avoiding structure degradation.
+                        {/if}
+                      </p>
+                    </div>
+                  </div>
+
+                  {#if formData.selective_loss_masking_strategy === "epoch_based"}
+                    <div>
+                      <label
+                        for="selective_loss_masking_start_epoch"
+                        class="block text-sm font-medium text-gray-700 mb-2"
+                      >
+                        Masking Start Epoch: {formData.selective_loss_masking_start_epoch}
+                      </label>
+                      <input
+                        type="range"
+                        id="selective_loss_masking_start_epoch"
+                        bind:value={formData.selective_loss_masking_start_epoch}
+                        min="0"
+                        max={formData.hyperparameters.num_epochs}
+                        step="0.1"
+                        class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-500"
+                      />
+                      <div
+                        class="flex justify-between text-xs text-gray-500 mt-1"
+                      >
+                        <span>0.0 (Immediate)</span>
+                        {#if formData.hyperparameters.num_epochs > 1}
+                          <span
+                            >{(formData.hyperparameters.num_epochs / 2).toFixed(
+                              1,
+                            )}</span
+                          >
+                        {/if}
+                        <span
+                          >{formData.hyperparameters.num_epochs}.0 epochs</span
+                        >
+                      </div>
+                      <div class="mt-2 p-3 bg-green-50 rounded-lg">
+                        <p class="text-xs text-green-700">
+                          {#if formData.selective_loss_masking_start_epoch === 0.0}
+                            <em>Masking starts immediately</em>
+                          {:else}
+                            <em
+                              >Model learns structure for {formData.selective_loss_masking_start_epoch}
+                              epochs, then masking begins</em
+                            >
+                          {/if}
+                        </p>
+                      </div>
+                    </div>
+                  {:else}
+                    <!-- Alternating Strategy Controls -->
+                    <div class="space-y-4">
+                      <div>
+                        <label
+                          for="selective_loss_mask_every_n_steps"
+                          class="block text-sm font-medium text-gray-700 mb-2"
+                        >
+                          Cycle Length (steps): {formData.selective_loss_mask_every_n_steps}
+                        </label>
+                        <input
+                          type="range"
+                          id="selective_loss_mask_every_n_steps"
+                          bind:value={
+                            formData.selective_loss_mask_every_n_steps
+                          }
+                          min="20"
+                          max="500"
+                          step="10"
+                          class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                        <div
+                          class="flex justify-between text-xs text-gray-500 mt-1"
+                        >
+                          <span>20 (Frequent)</span>
+                          <span>250</span>
+                          <span>500 (Long cycles)</span>
+                        </div>
+                        <p class="text-xs text-gray-600 mt-2">
+                          Total steps per cycle (masking ON + masking OFF)
+                        </p>
+                      </div>
+
+                      <div>
+                        <label
+                          for="selective_loss_mask_for_n_steps"
+                          class="block text-sm font-medium text-gray-700 mb-2"
+                        >
+                          Masking ON per cycle (steps): {formData.selective_loss_mask_for_n_steps}
+                        </label>
+                        <input
+                          type="range"
+                          id="selective_loss_mask_for_n_steps"
+                          bind:value={formData.selective_loss_mask_for_n_steps}
+                          min="10"
+                          max={formData.selective_loss_mask_every_n_steps}
+                          step="5"
+                          class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                        />
+                        <div
+                          class="flex justify-between text-xs text-gray-500 mt-1"
+                        >
+                          <span>10</span>
+                          <span
+                            >{Math.floor(
+                              formData.selective_loss_mask_every_n_steps / 2,
+                            )}</span
+                          >
+                          <span
+                            >{formData.selective_loss_mask_every_n_steps}</span
+                          >
+                        </div>
+                        <p class="text-xs text-gray-600 mt-2">
+                          Steps with masking ON (rest of cycle has masking OFF)
+                        </p>
+                      </div>
+
+                      <div
+                        class="p-3 bg-purple-50 border border-purple-200 rounded-lg"
+                      >
+                        <p class="text-xs text-purple-800">
+                          <strong>Current pattern:</strong><br />
+                          🟢 Steps 0-{formData.selective_loss_mask_for_n_steps -
+                            1}: Masking ON (learn semantics)<br />
+                          🔴 Steps {formData.selective_loss_mask_for_n_steps}-{formData.selective_loss_mask_every_n_steps -
+                            1}: Masking OFF (learn structure)<br />
+                          Then cycle repeats... ({Math.round(
+                            (formData.selective_loss_mask_for_n_steps /
+                              formData.selective_loss_mask_every_n_steps) *
+                              100,
+                          )}% masking / {100 -
+                            Math.round(
+                              (formData.selective_loss_mask_for_n_steps /
+                                formData.selective_loss_mask_every_n_steps) *
+                                100,
+                            )}% structure)
+                        </p>
+                      </div>
+                    </div>
+                  {/if}
 
                   <div>
                     <div class="flex items-center">

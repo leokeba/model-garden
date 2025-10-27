@@ -66,7 +66,10 @@ interface TrainingJob {
   selective_loss?: boolean;
   selective_loss_level?: string;
   selective_loss_schema_keys?: string[];
+  selective_loss_masking_strategy?: string;
   selective_loss_masking_start_epoch?: number;
+  selective_loss_mask_every_n_steps?: number;
+  selective_loss_mask_for_n_steps?: number;
   selective_loss_verbose?: boolean;
   // Rerun metadata
   rerun_from?: string;

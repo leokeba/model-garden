@@ -4,7 +4,7 @@ import os
 import asyncio
 import json
 from pathlib import Path
-from typing import AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from rich.console import Console
 
@@ -1205,7 +1205,11 @@ class InferenceService:
                 max_tokens = 512  # Standard default
 
         # Format messages into a single prompt
-        # This is a simple implementation - you may need to customize for specific models
+        # For vision models, convert to multimodal format before applying template
+        if image and self.tokenizer:
+            # Convert messages to multimodal format with image placeholder
+            messages = self._inject_image_into_messages(messages, image)
+        
         prompt = self._format_chat_messages(messages)
         
         if stream:
@@ -1242,6 +1246,37 @@ class InferenceService:
             console.print("[yellow]    Falling back to simple format[/yellow]")
             return self._format_simple(messages)
     
+    def _inject_image_into_messages(self, messages: List[Dict[str, Any]], image: str) -> List[Dict[str, Any]]:
+        """Convert messages to multimodal format by injecting image placeholder.
+        
+        Transforms the last user message to include an image placeholder in the
+        OpenAI multimodal format, which the chat template will process correctly.
+        
+        Args:
+            messages: Original text-only messages
+            image: Image data (will be passed separately to vLLM)
+            
+        Returns:
+            Messages with image placeholder injected into last user message
+        """
+        # Deep copy to avoid modifying original
+        import copy
+        modified_messages = copy.deepcopy(messages)
+        
+        # Find the last user message
+        for i in range(len(modified_messages) - 1, -1, -1):
+            if modified_messages[i].get('role') == 'user':
+                content = modified_messages[i].get('content', '')
+                
+                # Convert to multimodal format if not already
+                if isinstance(content, str):
+                    modified_messages[i]['content'] = [
+                        {"type": "image"},  # Placeholder for vision tokens
+                        {"type": "text", "text": content}
+                    ]
+                break
+        
+        return modified_messages
     def _format_simple(self, messages: List[Dict[str, str]]) -> str:
         """Simple fallback formatting for models without chat templates.
         
