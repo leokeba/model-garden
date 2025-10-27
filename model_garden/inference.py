@@ -512,6 +512,9 @@ class InferenceService:
         self.engine = None
         self.is_loaded = False
         
+        # Tokenizer for chat template formatting (loaded separately from vLLM)
+        self.tokenizer = None
+        
         # LoRA adapter tracking
         self.is_adapter = False
         self.base_model_path: Optional[str] = None
@@ -729,6 +732,22 @@ class InferenceService:
             # Create async engine
             self.engine = AsyncLLMEngine.from_engine_args(engine_args)
             self.is_loaded = True
+            
+            # Load tokenizer separately for chat template formatting
+            try:
+                from transformers import AutoTokenizer
+                console.print(f"[cyan]📝 Loading tokenizer for chat template support...[/cyan]")
+                # Use the actual loaded model path (base_model_path if adapter, otherwise model_path)
+                tokenizer_path = self.base_model_path if self.is_adapter else self.model_path
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    tokenizer_path,
+                    trust_remote_code=self.trust_remote_code
+                )
+                console.print("[green]✓[/green] Tokenizer loaded successfully")
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Could not load tokenizer: {e}[/yellow]")
+                console.print("[yellow]   Chat formatting will use simple fallback[/yellow]")
+                self.tokenizer = None
             
             console.print("[green]✓[/green] Base model loaded successfully")
             
@@ -973,18 +992,10 @@ class InferenceService:
                         raise FileNotFoundError(f"Image file not found: {img_data}")
                     loaded_images.append(str(img_file))
             
-            # For Qwen2.5-VL and similar models, ensure prompt includes vision tokens
-            # If the prompt doesn't have vision tokens, add them
-            if '<|vision_start|>' not in prompt and '<|image_pad|>' not in prompt:
-                # Wrap the prompt with Qwen2.5-VL vision tokens
-                # Format: <|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{prompt}<|im_end|>\n<|im_start|>assistant\n
-                formatted_prompt = (
-                    "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-                    "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>"
-                    f"{prompt}<|im_end|>\n"
-                    "<|im_start|>assistant\n"
-                )
-                prompt = formatted_prompt
+            # Note: The prompt should already be formatted with proper chat template
+            # including vision tokens if needed (done by _format_chat_messages with apply_chat_template)
+            # Vision tokens like <|vision_start|><|image_pad|><|vision_end|> are automatically
+            # added by the tokenizer's chat template when formatting multimodal messages
             
             # Create multimodal input
             # For Qwen2-VL models, vLLM expects "image" (singular) key with a LIST of images
@@ -1203,10 +1214,42 @@ class InferenceService:
             return await self._chat_completion_complete(messages, prompt, max_tokens, temperature, top_p, image=image, structured_outputs=structured_outputs, **kwargs)
 
     def _format_chat_messages(self, messages: List[Dict[str, str]]) -> str:
-        """Format chat messages into a prompt string.
+        """Format chat messages using the model's native chat template.
         
-        This is a simple implementation. For specific models, you should use their
-        official chat template from the tokenizer.
+        Automatically uses the tokenizer's apply_chat_template() method, which supports
+        any chat model (Qwen, Llama, Phi, Mistral, etc.) without hardcoding templates.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            
+        Returns:
+            Formatted prompt string ready for the model
+        """
+        if not self.tokenizer:
+            console.print("[yellow]⚠️  No tokenizer available, using simple format[/yellow]")
+            return self._format_simple(messages)
+        
+        try:
+            # Use the tokenizer's built-in chat template (works for any model!)
+            formatted = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+            return formatted
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not apply chat template: {e}[/yellow]")
+            console.print("[yellow]    Falling back to simple format[/yellow]")
+            return self._format_simple(messages)
+    
+    def _format_simple(self, messages: List[Dict[str, str]]) -> str:
+        """Simple fallback formatting for models without chat templates.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            
+        Returns:
+            Simple formatted prompt string
         """
         formatted_parts = []
         for msg in messages:

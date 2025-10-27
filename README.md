@@ -408,6 +408,7 @@ pre-commit run --all-files
 - [x] **BoAmps real data integration** ✨ - Real hardware metrics in all report sections
 - [x] **Job queue for training & model loading** ✨ - Priority-based queue with API endpoints
 - [x] **Dataset validation and statistics** ✨ - Schema detection, format support, quality checks
+- [ ] **Automatic Chat Template Detection** - Use `tokenizer.apply_chat_template()` instead of hardcoding Qwen markers ([details](./CHAT_TEMPLATE_AUTOMATION.md))
 - [ ] **Carbon CLI commands** - Add `carbon report`, `carbon summary`, `carbon export` commands (deferred)
 - [ ] **Real-time training monitoring via WebSocket** - Live loss/accuracy charts
 - [ ] **Advanced carbon analytics dashboard** - Trends, comparisons, recommendations

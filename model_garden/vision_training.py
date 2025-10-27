@@ -521,6 +521,110 @@ class VisionLanguageTrainer:
         
         return result
 
+    def _detect_chat_markers(self, processor) -> tuple[str, str]:
+        """Detect instruction and response markers from tokenizer's chat template.
+        
+        This method automatically extracts the chat markers used by the model's tokenizer,
+        making the code work with any chat model (Qwen, Llama, Phi, Mistral, etc.) without
+        hardcoding model-specific templates.
+        
+        Args:
+            processor: The model's processor (contains tokenizer)
+        
+        Returns:
+            Tuple of (instruction_marker, response_marker)
+            - instruction_marker: The marker before user messages (e.g., "<|im_start|>user")
+            - response_marker: The marker before assistant messages (e.g., "<|im_start|>assistant")
+        
+        Example:
+            >>> instruction, response = trainer._detect_chat_markers(processor)
+            >>> print(f"User: {instruction}, Assistant: {response}")
+            User: <|im_start|>user, Assistant: <|im_start|>assistant
+        """
+        try:
+            # Apply template to sample messages with placeholders
+            sample = [
+                {"role": "user", "content": "__USER_PLACEHOLDER__"},
+                {"role": "assistant", "content": "__ASSISTANT_PLACEHOLDER__"}
+            ]
+            
+            formatted = processor.apply_chat_template(
+                sample, 
+                tokenize=False, 
+                add_generation_prompt=False
+            )
+            
+            # Find placeholder positions
+            user_idx = formatted.find("__USER_PLACEHOLDER__")
+            assistant_idx = formatted.find("__ASSISTANT_PLACEHOLDER__")
+            
+            if user_idx > 0 and assistant_idx > 0:
+                # Extract the line before user content
+                lines_before_user = formatted[:user_idx].split('\n')
+                instruction_marker = None
+                for line in reversed(lines_before_user):
+                    if line.strip() and not line.strip().endswith('_PLACEHOLDER__'):
+                        instruction_marker = line.strip()
+                        break
+                
+                # Extract the line before assistant content
+                lines_before_assistant = formatted[:assistant_idx].split('\n')
+                response_marker = None
+                for line in reversed(lines_before_assistant):
+                    if line.strip() and not line.strip().endswith('_PLACEHOLDER__'):
+                        response_marker = line.strip()
+                        break
+                
+                if instruction_marker and response_marker:
+                    console.print(f"[green]✓ Auto-detected chat markers:[/green]")
+                    console.print(f"  instruction_part: {repr(instruction_marker)}")
+                    console.print(f"  response_part: {repr(response_marker)}")
+                    return instruction_marker, response_marker
+                    
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not auto-detect chat markers: {e}[/yellow]")
+        
+        # Fallback to model-specific markers
+        return self._fallback_markers(processor)
+    
+    def _fallback_markers(self, processor) -> tuple[str, str]:
+        """Fallback chat markers for models without templates or when detection fails.
+        
+        Uses model type to select appropriate markers from common patterns.
+        
+        Args:
+            processor: The model's processor
+            
+        Returns:
+            Tuple of (instruction_marker, response_marker)
+        """
+        try:
+            model_type = processor.tokenizer.config.model_type.lower()
+        except:
+            model_type = ""
+        
+        # Common chat template patterns
+        if "qwen" in model_type:
+            markers = ("<|im_start|>user", "<|im_start|>assistant")
+        elif "llama" in model_type:
+            markers = ("[INST]", "[/INST]")
+        elif "phi" in model_type:
+            markers = ("<|user|>", "<|assistant|>")
+        elif "mistral" in model_type:
+            markers = ("[INST]", "[/INST]")
+        elif "gemma" in model_type:
+            markers = ("<start_of_turn>user", "<start_of_turn>model")
+        else:
+            # Generic fallback
+            console.print("[yellow]⚠️  Using generic markers - training may not work optimally[/yellow]")
+            console.print("[yellow]    Consider adding model-specific markers to _fallback_markers()[/yellow]")
+            markers = ("User:", "Assistant:")
+        
+        console.print(f"[cyan]Using fallback markers for {model_type or 'unknown'}:[/cyan]")
+        console.print(f"  instruction_part: {repr(markers[0])}")
+        console.print(f"  response_part: {repr(markers[1])}")
+        return markers
+
     def format_dataset(
         self,
         dataset: Dataset,
@@ -850,6 +954,10 @@ class VisionLanguageTrainer:
 
         console.print("[cyan]ℹ️  Vision training uses UnslothVisionDataCollator for efficient image processing[/cyan]")
         
+        # Auto-detect chat markers from the model's tokenizer
+        console.print("[cyan]🔍 Auto-detecting chat template markers...[/cyan]")
+        instruction_marker, response_marker = self._detect_chat_markers(self.processor)
+        
         # Choose data collator based on selective_loss flag
         if selective_loss:
             # Lazy import to avoid spawning torch compile workers at module import time
@@ -867,13 +975,12 @@ class VisionLanguageTrainer:
                 masking_start_epoch=selective_loss_masking_start_epoch,
                 verbose=selective_loss_verbose,
                 train_on_responses_only=True,  # Enable prompt masking
-                instruction_part="<|im_start|>user",  # Qwen chat markers
-                response_part="<|im_start|>assistant"
+                instruction_part=instruction_marker,  # Auto-detected from tokenizer
+                response_part=response_marker  # Auto-detected from tokenizer
             )
         else:
             # Use standard Unsloth collator with prompt masking enabled
-            # For Qwen vision models, we need to explicitly set the chat markers since
-            # the tokenizer doesn't have _unsloth_input_part/_unsloth_output_part
+            # Chat markers are automatically detected from the tokenizer's template
             #
             # CRITICAL: force_match=False is essential for vision models!
             # Vision tokens can interfere with marker detection. With force_match=True,
@@ -883,8 +990,8 @@ class VisionLanguageTrainer:
                 self.model, 
                 self.processor,
                 train_on_responses_only=True,
-                instruction_part="<|im_start|>user",
-                response_part="<|im_start|>assistant",
+                instruction_part=instruction_marker,  # Auto-detected from tokenizer
+                response_part=response_marker,  # Auto-detected from tokenizer
                 force_match=False  # Don't mask everything if markers not found
             )
 
