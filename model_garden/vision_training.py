@@ -803,6 +803,7 @@ class VisionLanguageTrainer:
         selective_loss_masking_start_epoch: float = 0.0,
         selective_loss_mask_every_n_steps: int = 100,
         selective_loss_mask_for_n_steps: int = 50,
+        selective_loss_structural_weight: float = 0.1,
         selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
@@ -837,10 +838,11 @@ class VisionLanguageTrainer:
             selective_loss: Enable selective loss masking for structured outputs
             selective_loss_level: Masking level ('conservative', 'moderate', 'aggressive')
             selective_loss_schema_keys: Schema keys to mask in aggressive mode
-            selective_loss_masking_strategy: Masking strategy ('epoch_based' or 'alternating')
+            selective_loss_masking_strategy: Masking strategy ('epoch_based', 'alternating', or 'weighted')
             selective_loss_masking_start_epoch: [epoch_based] Delay masking until this epoch
             selective_loss_mask_every_n_steps: [alternating] Cycle length in steps
             selective_loss_mask_for_n_steps: [alternating] Steps with masking ON per cycle
+            selective_loss_structural_weight: [weighted] Weight for structural tokens (0.0-1.0, default 0.1)
             selective_loss_verbose: Print masking statistics during training
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
@@ -975,6 +977,8 @@ class VisionLanguageTrainer:
                 console.print(f"[yellow]   ⏱️  Masking delayed until epoch {selective_loss_masking_start_epoch}[/yellow]")
             elif selective_loss_masking_strategy == "alternating":
                 console.print(f"[yellow]   🔄 Alternating: ON for {selective_loss_mask_for_n_steps}/{selective_loss_mask_every_n_steps} steps per cycle[/yellow]")
+            elif selective_loss_masking_strategy == "weighted":
+                console.print(f"[yellow]   ⚖️  Weighted: structural tokens weight = {selective_loss_structural_weight}[/yellow]")
             
             data_collator = create_selective_loss_collator(
                 model=self.model,
@@ -986,6 +990,7 @@ class VisionLanguageTrainer:
                 masking_start_epoch=selective_loss_masking_start_epoch,
                 mask_every_n_steps=selective_loss_mask_every_n_steps,
                 mask_for_n_steps=selective_loss_mask_for_n_steps,
+                structural_weight=selective_loss_structural_weight,
                 verbose=selective_loss_verbose,
                 train_on_responses_only=True,  # Enable prompt masking
                 instruction_part=instruction_marker,  # Auto-detected from tokenizer
@@ -1030,16 +1035,34 @@ class VisionLanguageTrainer:
             console.print(f"[red]⚠️  WARNING: max_seq_length ({self.max_seq_length}) may be too small for vision models![/red]")
             console.print(f"[red]   Images can use 1500+ tokens, leaving little room for prompts/responses.[/red]")
             console.print(f"[red]   If you see 'ALL tokens masked' errors, increase max_seq_length to 16384+[/red]")
+        
+        # Choose trainer based on masking strategy
+        if selective_loss and selective_loss_masking_strategy == "weighted":
+            # Use WeightedLossTrainer for weighted masking
+            from model_garden.weighted_loss_trainer import WeightedLossTrainer
+            console.print("[cyan]🎯 Using WeightedLossTrainer for weighted masking strategy[/cyan]")
             
-        trainer = SFTTrainer(
-            model=self.model,
-            tokenizer=self.tokenizer,  # type: ignore
-            args=training_args,
-            train_dataset=train_dataset,  # type: ignore
-            eval_dataset=eval_dataset,  # type: ignore
-            data_collator=data_collator,
-            callbacks=all_callbacks,
-        )
+            trainer = WeightedLossTrainer(
+                model=self.model,
+                args=training_args,
+                train_dataset=train_dataset,  # type: ignore
+                eval_dataset=eval_dataset,  # type: ignore
+                data_collator=data_collator,
+                callbacks=all_callbacks,
+                tokenizer=self.tokenizer,  # type: ignore
+                verbose_loss=selective_loss_verbose,
+            )
+        else:
+            # Use standard SFTTrainer for other strategies
+            trainer = SFTTrainer(
+                model=self.model,
+                tokenizer=self.tokenizer,  # type: ignore
+                args=training_args,
+                train_dataset=train_dataset,  # type: ignore
+                eval_dataset=eval_dataset,  # type: ignore
+                data_collator=data_collator,
+                callbacks=all_callbacks,
+            )
         
         # Link trainer to data collator for epoch-based masking
         if selective_loss:
@@ -1438,6 +1461,35 @@ def merge_vision_lora_adapter(
         console.print(f"[cyan]Saving merged model to {output_dir}...[/cyan]")
         merged_model.save_pretrained(output_dir)
         console.print("[green]✓ Model saved[/green]")
+        
+        # CRITICAL: Remove quantization_config from merged model
+        # The merged model was created from a 4-bit base model, so config.json still contains
+        # quantization_config with _load_in_4bit=true. This causes vLLM to load the model
+        # with BitsAndBytes quantization, which is extremely slow for inference.
+        # We need to remove this config so vLLM loads it as a normal FP16/BF16 model.
+        console.print("[cyan]Cleaning quantization_config from merged model...[/cyan]")
+        config_path = Path(output_dir) / "config.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Remove quantization_config at root level
+            if "quantization_config" in config:
+                del config["quantization_config"]
+                console.print("[green]✓ Removed root-level quantization_config[/green]")
+            
+            # Remove quantization_config from text_config (for vision models)
+            if "text_config" in config and isinstance(config["text_config"], dict):
+                if "quantization_config" in config["text_config"]:
+                    del config["text_config"]["quantization_config"]
+                    console.print("[green]✓ Removed text_config quantization_config[/green]")
+            
+            # Write cleaned config
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            console.print("[green]✓ Config cleaned - vLLM will load as FP16/BF16 model[/green]")
+        else:
+            console.print("[yellow]⚠️  config.json not found, skipping cleanup[/yellow]")
         
         # Save tokenizer (from base model)
         from transformers import AutoTokenizer

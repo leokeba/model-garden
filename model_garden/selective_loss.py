@@ -11,6 +11,7 @@ Key Features:
 - Supports multiple masking strategies:
   * epoch_based: Enable masking after a certain epoch threshold
   * alternating: Cycle between masking ON/OFF to learn structure and semantics throughout training
+  * weighted: Apply soft masking with reduced loss weights for structural tokens (always active)
 
 Usage:
     from model_garden.selective_loss import create_selective_loss_collator
@@ -33,6 +34,16 @@ Usage:
         mask_level="aggressive",
         masking_strategy="epoch_based",
         masking_start_epoch=0.5,  # Start masking halfway through first epoch
+        verbose=True
+    )
+    
+    # Weighted strategy (soft constraints, experimental)
+    collator = create_selective_loss_collator(
+        model=model,
+        processor=processor,
+        mask_level="aggressive",
+        masking_strategy="weighted",
+        structural_weight=0.1,  # Structural tokens get 10% loss weight
         verbose=True
     )
     
@@ -73,6 +84,7 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
     Masking Strategies:
     - epoch_based: Enable masking after a certain epoch (masking_start_epoch)
     - alternating: Cycle between masking ON/OFF every n steps to learn both structure and semantics
+    - weighted: Apply soft masking with reduced weights for structural tokens (always active)
     
     Args:
         model: The model being trained
@@ -80,10 +92,12 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         mask_structural_tokens: Whether to mask JSON structure (default: True)
         mask_schema_keys: Whether to mask field names (default: False)
         schema_keys: List of field names to mask (required if mask_schema_keys=True)
-        masking_strategy: Strategy for applying masking ("epoch_based" or "alternating")
+        masking_strategy: Strategy for applying masking ("epoch_based", "alternating", or "weighted")
         masking_start_epoch: For epoch_based: start masking at this epoch (default: 0.0)
         mask_every_n_steps: For alternating: cycle length in steps (default: 100)
         mask_for_n_steps: For alternating: steps with masking ON per cycle (default: 50)
+        weighted_masking: Deprecated - use masking_strategy="weighted" instead
+        structural_weight: For weighted: weight for structural tokens, 0.0-1.0 (default: 0.1)
         verbose: Whether to print masking statistics (default: False)
     
     Note:
@@ -108,6 +122,15 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         ...     masking_strategy="alternating",
         ...     mask_every_n_steps=100,  # Cycle every 100 steps
         ...     mask_for_n_steps=50      # Mask ON for 50, OFF for 50
+        ... )
+        
+        >>> # Weighted masking (soft constraints, always active)
+        >>> collator = SelectiveLossVisionCollator(
+        ...     model=model,
+        ...     processor=processor,
+        ...     mask_structural_tokens=True,
+        ...     masking_strategy="weighted",
+        ...     structural_weight=0.1  # Structural tokens get 10% weight
         ... )
     """
     
@@ -147,6 +170,8 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         masking_strategy: str = "epoch_based",
         mask_every_n_steps: int = 100,
         mask_for_n_steps: int = 50,
+        weighted_masking: bool = False,
+        structural_weight: float = 0.1,
         verbose: bool = False,
         **kwargs
     ):
@@ -161,13 +186,21 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         self.masking_start_epoch = masking_start_epoch
         self.mask_every_n_steps = mask_every_n_steps
         self.mask_for_n_steps = mask_for_n_steps
+        self.weighted_masking = weighted_masking
+        self.structural_weight = structural_weight
         self.verbose = verbose
         
         # Validate strategy
-        if self.masking_strategy not in ["epoch_based", "alternating"]:
+        if self.masking_strategy not in ["epoch_based", "alternating", "weighted"]:
             raise ValueError(
                 f"Invalid masking_strategy: {masking_strategy}. "
-                f"Choose from: 'epoch_based', 'alternating'"
+                f"Choose from: 'epoch_based', 'alternating', 'weighted'"
+            )
+        
+        # Validate weighted masking parameters
+        if self.masking_strategy == "weighted" and not (0.0 <= self.structural_weight <= 1.0):
+            raise ValueError(
+                f"structural_weight must be between 0.0 and 1.0, got {structural_weight}"
             )
         
         # Statistics for debugging
@@ -199,6 +232,11 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 console.print(f"  [yellow]  - Mask OFF for {self.mask_every_n_steps - self.mask_for_n_steps} steps[/yellow]")
                 console.print(f"  [yellow]  - Cycle repeats every {self.mask_every_n_steps} steps[/yellow]")
                 console.print(f"  [yellow]This ensures learning of both structure and semantics throughout training[/yellow]")
+            elif self.masking_strategy == "weighted":
+                console.print(f"  [yellow]Weighted masking enabled:[/yellow]")
+                console.print(f"  [yellow]  - Structural token weight: {self.structural_weight:.2f}[/yellow]")
+                console.print(f"  [yellow]  - Semantic token weight: 1.00[/yellow]")
+                console.print(f"  [yellow]This applies soft constraints - structural tokens still contribute to loss[/yellow]")
     
     def __call__(self, features):
         """Process batch and apply selective loss masking."""
@@ -268,7 +306,14 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
         # Determine if masking should be enabled based on the chosen strategy
         masking_should_be_enabled = self._should_enable_masking()
         
-        # Check if we should apply masking yet
+        # For weighted masking strategy, we always apply weights (no on/off switching)
+        if self.masking_strategy == "weighted" and self.mask_structural:
+            if "labels" in batch:
+                # Create weight tensor instead of binary mask
+                batch = self._apply_weighted_masking(batch)
+            return batch
+        
+        # Check if we should apply masking yet (for epoch_based and alternating)
         if not self.mask_structural:
             return batch  # No masking, use standard Unsloth behavior
         
@@ -492,6 +537,52 @@ class SelectiveLossVisionCollator(UnslothVisionDataCollator):
                 labels[i, mask_indices] = -100
         
         return labels
+    
+    def _apply_weighted_masking(self, batch):
+        """Apply weighted masking to batch - creates weight tensor instead of binary mask.
+        
+        Args:
+            batch: Batch dictionary with 'labels' key
+            
+        Returns:
+            Modified batch with 'sample_weights' key added
+        """
+        labels = batch["labels"]
+        
+        # Create weight tensor initialized to 1.0 (full weight for all tokens)
+        # Shape: [batch_size, seq_len]
+        weights = torch.ones_like(labels, dtype=torch.float32)
+        
+        # Track statistics if verbose
+        total_structural = 0
+        total_semantic = 0
+        
+        for i in range(labels.size(0)):
+            # Get the label sequence for this example
+            label_tokens = labels[i]
+            
+            # Find positions of structural tokens
+            structural_indices = self._find_structural_indices(label_tokens)
+            
+            if structural_indices:
+                # Apply reduced weight to structural tokens (soft masking)
+                weights[i, structural_indices] = self.structural_weight
+                total_structural += len(structural_indices)
+            
+            # Count semantic tokens (not structural, not already masked)
+            valid_mask = label_tokens != -100
+            total_semantic += valid_mask.sum().item() - len(structural_indices)
+        
+        # Store weights in batch for custom loss computation
+        # The trainer will need to use these weights
+        batch["sample_weights"] = weights
+        
+        # Update statistics
+        if self.verbose and torch.is_grad_enabled():
+            self.total_tokens += total_semantic + total_structural
+            self.masked_tokens += total_structural  # Track weighted tokens
+        
+        return batch
     
     def _find_structural_indices(self, token_ids):
         """Identify which token positions are structural (not semantic).
@@ -862,6 +953,7 @@ def create_selective_loss_collator(
     masking_start_epoch: float = 0.0,
     mask_every_n_steps: int = 100,
     mask_for_n_steps: int = 50,
+    structural_weight: float = 0.1,
     verbose: bool = False,
     train_on_responses_only: bool = False,
     instruction_part: Optional[str] = None,
@@ -882,9 +974,11 @@ def create_selective_loss_collator(
         masking_strategy: How to apply masking during training:
             - "epoch_based": Enable masking after masking_start_epoch (default)
             - "alternating": Alternate between masking ON/OFF every n steps
+            - "weighted": Apply soft masking with reduced weights (always active)
         masking_start_epoch: For epoch_based: delay masking until this epoch (0.0 = immediate)
         mask_every_n_steps: For alternating: cycle length in steps (default: 100)
         mask_for_n_steps: For alternating: steps with masking ON per cycle (default: 50)
+        structural_weight: For weighted: weight for structural tokens, 0.0-1.0 (default: 0.1)
         verbose: Whether to print statistics
         train_on_responses_only: Whether to mask prompts (train only on assistant responses)
         instruction_part: Chat template marker for user messages (e.g., "<|im_start|>user")
@@ -911,6 +1005,16 @@ def create_selective_loss_collator(
         ...     masking_strategy="alternating",
         ...     mask_every_n_steps=100,  # Cycle every 100 steps
         ...     mask_for_n_steps=50,     # Mask ON for 50 steps, OFF for 50 steps
+        ...     dataset=train_dataset,
+        ...     verbose=True
+        ... )
+        
+        >>> # Weighted masking (soft constraints, always active)
+        >>> collator = create_selective_loss_collator(
+        ...     model, processor,
+        ...     mask_level="aggressive",
+        ...     masking_strategy="weighted",
+        ...     structural_weight=0.1,  # Structural tokens get 10% weight vs 100% for semantic
         ...     dataset=train_dataset,
         ...     verbose=True
         ... )
@@ -952,6 +1056,7 @@ def create_selective_loss_collator(
             masking_start_epoch=masking_start_epoch,
             mask_every_n_steps=mask_every_n_steps,
             mask_for_n_steps=mask_for_n_steps,
+            structural_weight=structural_weight,
             verbose=verbose,
             **kwargs
         )
@@ -974,6 +1079,7 @@ def create_selective_loss_collator(
             masking_start_epoch=masking_start_epoch,
             mask_every_n_steps=mask_every_n_steps,
             mask_for_n_steps=mask_for_n_steps,
+            structural_weight=structural_weight,
             verbose=verbose,
             **kwargs
         )
@@ -1015,6 +1121,7 @@ def create_selective_loss_collator(
             masking_start_epoch=masking_start_epoch,
             mask_every_n_steps=mask_every_n_steps,
             mask_for_n_steps=mask_for_n_steps,
+            structural_weight=structural_weight,
             verbose=verbose,
             **kwargs
         )

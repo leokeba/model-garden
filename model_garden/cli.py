@@ -756,9 +756,9 @@ def serve(host: str, port: int, reload: bool) -> None:
 )
 @click.option(
     "--selective-loss-masking-strategy",
-    type=click.Choice(["epoch_based", "alternating"]),
+    type=click.Choice(["epoch_based", "alternating", "weighted"]),
     default="epoch_based",
-    help="Masking strategy: 'epoch_based' (enable after epoch threshold) or 'alternating' (cycle ON/OFF every n steps)",
+    help="Masking strategy: 'epoch_based' (enable after epoch threshold), 'alternating' (cycle ON/OFF), or 'weighted' (soft per-token weights)",
 )
 @click.option(
     "--selective-loss-masking-start-epoch",
@@ -777,6 +777,12 @@ def serve(host: str, port: int, reload: bool) -> None:
     type=int,
     default=50,
     help="[alternating only] Steps with masking ON per cycle (default: 50, i.e., 50%% of cycle)",
+)
+@click.option(
+    "--selective-loss-structural-weight",
+    type=float,
+    default=0.1,
+    help="[weighted only] Weight for structural tokens (0.0-1.0, default: 0.1). Lower = less emphasis on structure.",
 )
 @click.option(
     "--selective-loss-verbose/--no-selective-loss-verbose",
@@ -871,6 +877,7 @@ def train_vision(
     selective_loss_masking_start_epoch: float,
     selective_loss_mask_every_n_steps: int,
     selective_loss_mask_for_n_steps: int,
+    selective_loss_structural_weight: float,
     selective_loss_verbose: bool,
     quality_mode: bool,
     load_in_16bit: bool,
@@ -1027,6 +1034,7 @@ def train_vision(
             selective_loss_masking_start_epoch=selective_loss_masking_start_epoch,
             selective_loss_mask_every_n_steps=selective_loss_mask_every_n_steps,
             selective_loss_mask_for_n_steps=selective_loss_mask_for_n_steps,
+            selective_loss_structural_weight=selective_loss_structural_weight,
             selective_loss_verbose=selective_loss_verbose,
         )
 

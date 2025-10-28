@@ -68,6 +68,7 @@
     selective_loss_masking_start_epoch: 0.0,
     selective_loss_mask_every_n_steps: 100,
     selective_loss_mask_for_n_steps: 50,
+    selective_loss_structural_weight: 0.1,
     selective_loss_verbose: false,
     early_stopping_enabled: false,
     early_stopping_patience: 3,
@@ -295,6 +296,8 @@
           formData.selective_loss_mask_every_n_steps,
         selective_loss_mask_for_n_steps:
           formData.selective_loss_mask_for_n_steps,
+        selective_loss_structural_weight:
+          formData.selective_loss_structural_weight,
         selective_loss_verbose: formData.selective_loss_verbose,
         // Add early stopping fields
         early_stopping_enabled: formData.early_stopping_enabled,
@@ -2209,6 +2212,9 @@
                       <option value="alternating"
                         >Alternating (Cycle ON/OFF)</option
                       >
+                      <option value="weighted"
+                        >Weighted (Soft per-token weights)</option
+                      >
                     </select>
                     <div class="mt-2 p-3 bg-blue-50 rounded-lg">
                       <p class="text-xs text-blue-700">
@@ -2216,10 +2222,15 @@
                           <strong>📅 Epoch-based:</strong> Enable masking after a
                           certain epoch. Good for initial experiments and understanding
                           masking impact.
-                        {:else}
+                        {:else if formData.selective_loss_masking_strategy === "alternating"}
                           <strong>🔄 Alternating:</strong> Continuously cycle between
                           learning structure and semantics. Recommended for balanced
                           training and avoiding structure degradation.
+                        {:else}
+                          <strong>⚖️ Weighted:</strong> Soft masking with reduced
+                          weight for structural tokens (0.0-1.0). Most flexible approach
+                          - structure contributes throughout training but with lower
+                          emphasis.
                         {/if}
                       </p>
                     </div>
@@ -2270,7 +2281,7 @@
                         </p>
                       </div>
                     </div>
-                  {:else}
+                  {:else if formData.selective_loss_masking_strategy === "alternating"}
                     <!-- Alternating Strategy Controls -->
                     <div class="space-y-4">
                       <div>
@@ -2356,6 +2367,92 @@
                                 formData.selective_loss_mask_every_n_steps) *
                                 100,
                             )}% structure)
+                        </p>
+                      </div>
+                    </div>
+                  {:else if formData.selective_loss_masking_strategy === "weighted"}
+                    <!-- Weighted Strategy Controls -->
+                    <div class="space-y-4">
+                      <div>
+                        <label
+                          for="selective_loss_structural_weight"
+                          class="block text-sm font-medium text-gray-700 mb-2"
+                        >
+                          Structural Token Weight: {formData.selective_loss_structural_weight.toFixed(
+                            2,
+                          )}
+                        </label>
+                        <input
+                          type="range"
+                          id="selective_loss_structural_weight"
+                          bind:value={formData.selective_loss_structural_weight}
+                          min="0.0"
+                          max="1.0"
+                          step="0.05"
+                          class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                        />
+                        <div
+                          class="flex justify-between text-xs text-gray-500 mt-1"
+                        >
+                          <span>0.0 (Ignore)</span>
+                          <span>0.5 (Balanced)</span>
+                          <span>1.0 (Full weight)</span>
+                        </div>
+                        <p class="text-xs text-gray-600 mt-2">
+                          Weight applied to structural tokens during loss
+                          calculation. Lower = less emphasis on structure,
+                          higher = more emphasis.
+                        </p>
+                      </div>
+
+                      <div
+                        class="p-3 bg-amber-50 border border-amber-200 rounded-lg"
+                      >
+                        <p class="text-xs text-amber-800">
+                          <strong>Current weighting:</strong><br />
+                          🔧 Structural tokens (JSON syntax, keys):
+                          <strong
+                            >{formData.selective_loss_structural_weight.toFixed(
+                              2,
+                            )}×</strong
+                          >
+                          weight<br />
+                          📝 Semantic tokens (values, content):
+                          <strong>1.00×</strong>
+                          weight<br />
+                          <br />
+                          {#if formData.selective_loss_structural_weight < 0.1}
+                            <em
+                              >Very low structure emphasis - model may struggle
+                              with formatting</em
+                            >
+                          {:else if formData.selective_loss_structural_weight < 0.3}
+                            <em
+                              >Recommended for structured outputs - good balance</em
+                            >
+                          {:else if formData.selective_loss_structural_weight < 0.7}
+                            <em
+                              >Moderate structure emphasis - more balanced
+                              training</em
+                            >
+                          {:else}
+                            <em
+                              >High structure emphasis - close to unweighted
+                              training</em
+                            >
+                          {/if}
+                        </p>
+                      </div>
+
+                      <div
+                        class="p-3 bg-blue-50 border border-blue-200 rounded-lg"
+                      >
+                        <p class="text-xs text-blue-700">
+                          <strong>💡 Tip:</strong> Start with 0.10 (default) and
+                          adjust based on results. Lower values (0.05-0.15) work
+                          well for structured outputs where semantic content is most
+                          important. Higher values (0.3-0.5) provide more balanced
+                          training.
                         </p>
                       </div>
                     </div>

@@ -78,10 +78,11 @@ class TrainingJobRequest(BaseModel):
     selective_loss: bool = False  # Enable selective loss for structured outputs
     selective_loss_level: str = "conservative"  # Level: conservative, moderate, aggressive
     selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
-    selective_loss_masking_strategy: str = "epoch_based"  # Strategy: epoch_based or alternating
+    selective_loss_masking_strategy: str = "epoch_based"  # Strategy: epoch_based, alternating, or weighted
     selective_loss_masking_start_epoch: float = 0.0  # [epoch_based] Delay masking until this epoch
     selective_loss_mask_every_n_steps: int = 100  # [alternating] Cycle length in steps
     selective_loss_mask_for_n_steps: int = 50  # [alternating] Steps with masking ON per cycle
+    selective_loss_structural_weight: float = 0.1  # [weighted] Weight for structural tokens (0.0-1.0)
     selective_loss_verbose: bool = False  # Print masking statistics
     # Early stopping
     early_stopping_enabled: bool = False  # Enable early stopping
@@ -126,6 +127,7 @@ class TrainingJobInfo(BaseModel):
     selective_loss_masking_start_epoch: Optional[float] = 0.0
     selective_loss_mask_every_n_steps: Optional[int] = 100
     selective_loss_mask_for_n_steps: Optional[int] = 50
+    selective_loss_structural_weight: Optional[float] = 0.1
     selective_loss_verbose: Optional[bool] = False
     # Quality settings
     quality_mode: Optional[bool] = False
@@ -301,6 +303,7 @@ def create_training_job_record(
         selective_loss_masking_start_epoch=job_request.selective_loss_masking_start_epoch,
         selective_loss_mask_every_n_steps=job_request.selective_loss_mask_every_n_steps,
         selective_loss_mask_for_n_steps=job_request.selective_loss_mask_for_n_steps,
+        selective_loss_structural_weight=job_request.selective_loss_structural_weight,
         selective_loss_verbose=job_request.selective_loss_verbose,
         # Quality settings
         quality_mode=job_request.quality_mode,
@@ -828,6 +831,7 @@ def run_training_job(job_id: str):
                 selective_loss_masking_start_epoch=job.get("selective_loss_masking_start_epoch", 0.0),
                 selective_loss_mask_every_n_steps=job.get("selective_loss_mask_every_n_steps", 100),
                 selective_loss_mask_for_n_steps=job.get("selective_loss_mask_for_n_steps", 50),
+                selective_loss_structural_weight=job.get("selective_loss_structural_weight", 0.1),
                 selective_loss_verbose=job.get("selective_loss_verbose", False),
             )
             
@@ -2107,6 +2111,7 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
         "selective_loss_masking_start_epoch": original_job.get("selective_loss_masking_start_epoch", 0.0),
         "selective_loss_mask_every_n_steps": original_job.get("selective_loss_mask_every_n_steps", 100),
         "selective_loss_mask_for_n_steps": original_job.get("selective_loss_mask_for_n_steps", 50),
+        "selective_loss_structural_weight": original_job.get("selective_loss_structural_weight", 0.1),
         "selective_loss_verbose": original_job.get("selective_loss_verbose", False),
         # Clone quality settings
         "quality_mode": original_job.get("quality_mode", False),
