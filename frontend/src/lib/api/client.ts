@@ -257,6 +257,12 @@ interface RegistryModelsResponse {
   category?: string;
 }
 
+interface Config {
+  hf_user: string;
+  models_dir: string;
+  hf_home: string;
+}
+
 class APIClient {
   private baseURL: string;
 
@@ -282,6 +288,12 @@ class APIClient {
     }
 
     return response.json();
+  }
+
+  // Configuration
+  async getConfig(): Promise<Config> {
+    const response = await this.request<{ success: boolean; data: Config }>('/config');
+    return response.data;
   }
 
   // Models
@@ -478,7 +490,7 @@ class APIClient {
 
 export const api = new APIClient(API_BASE);
 export type {
-  Model, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemStatus,
+  Config, Model, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemStatus,
   TrainingJob
 };
 

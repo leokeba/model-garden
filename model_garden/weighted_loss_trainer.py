@@ -133,21 +133,21 @@ class WeightedLossTrainer(Trainer):
             # Multiply loss by weights (element-wise)
             weighted_loss = loss * weights_flat
             
-            # Compute weighted average: sum(loss * weight) / sum(weight)
+            # Compute weighted average: sum(loss * weight) / num_valid_tokens
+            # IMPORTANT: Normalize by number of tokens, not sum of weights!
+            # This keeps loss magnitude comparable to standard training.
             # Only consider valid tokens (not -100)
             valid_mask = (labels != -100).view(-1)
             
             if valid_mask.any():
                 # Sum of weighted losses for valid tokens
                 total_weighted_loss = weighted_loss[valid_mask].sum()
-                # Sum of weights for valid tokens (for proper averaging)
-                total_weights = weights_flat[valid_mask].sum()
+                # Number of valid tokens (for consistent loss magnitude)
+                num_valid_tokens = valid_mask.sum()
                 
-                # Avoid division by zero
-                if total_weights > 0:
-                    final_loss = total_weighted_loss / total_weights
-                else:
-                    final_loss = weighted_loss[valid_mask].mean()
+                # Normalize by number of tokens (not sum of weights)
+                # This ensures loss remains in the same range as standard training
+                final_loss = total_weighted_loss / num_valid_tokens
             else:
                 final_loss = torch.tensor(0.0, device=loss.device)
             
@@ -208,6 +208,7 @@ class WeightedLossTrainer(Trainer):
             console.print(f"  Weight distribution: {weight_counts}")
             console.print(f"  Avg loss (unweighted): {valid_loss.mean().item():.4f}")
             console.print(f"  Avg weight: {valid_weights.mean().item():.4f}")
+            console.print(f"  Weighted avg: sum(loss*weight)/{valid_mask.sum().item()} = {final_loss.item():.4f}")
 
 
 class WeightedLossTrainerWithMetrics(WeightedLossTrainer):

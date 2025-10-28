@@ -2149,53 +2149,6 @@
 
                   <div>
                     <label
-                      for="selective_loss_masking_start_epoch"
-                      class="block text-sm font-medium text-gray-700 mb-2"
-                    >
-                      Masking Start Epoch: {formData.selective_loss_masking_start_epoch}
-                    </label>
-                    <input
-                      type="range"
-                      id="selective_loss_masking_start_epoch"
-                      bind:value={formData.selective_loss_masking_start_epoch}
-                      min="0"
-                      max={formData.hyperparameters.num_epochs}
-                      step="0.1"
-                      class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-500"
-                    />
-                    <div
-                      class="flex justify-between text-xs text-gray-500 mt-1"
-                    >
-                      <span>0.0 (Immediate)</span>
-                      {#if formData.hyperparameters.num_epochs > 1}
-                        <span
-                          >{(formData.hyperparameters.num_epochs / 2).toFixed(
-                            1,
-                          )}</span
-                        >
-                      {/if}
-                      <span>{formData.hyperparameters.num_epochs}.0 epochs</span
-                      >
-                    </div>
-                    <div class="mt-2 p-3 bg-green-50 rounded-lg">
-                      <p class="text-xs text-green-700">
-                        <strong>🎯 Epoch-based masking:</strong>
-                        Start masking at a specific epoch to let the model learn
-                        structure first.
-                        {#if formData.selective_loss_masking_start_epoch === 0.0}
-                          <br /><em>Currently: Masking starts immediately</em>
-                        {:else}
-                          <br /><em
-                            >Currently: Model learns structure for {formData.selective_loss_masking_start_epoch}
-                            epochs, then masking begins</em
-                          >
-                        {/if}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label
                       for="selective_loss_masking_strategy"
                       class="block text-sm font-medium text-gray-700 mb-2"
                     >

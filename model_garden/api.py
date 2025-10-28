@@ -1348,6 +1348,19 @@ async def health_check():
     return {"status": "healthy", "message": "Model Garden API is running"}
 
 
+@app.get("/api/v1/config")
+async def get_config():
+    """Get frontend configuration including environment variables."""
+    return {
+        "success": True,
+        "data": {
+            "hf_user": os.getenv("HF_USER", ""),
+            "models_dir": MODELS_DIR,
+            "hf_home": HF_HOME,
+        }
+    }
+
+
 # Model Registry endpoints
 @app.get("/api/v1/registry/models")
 async def get_registry_models(category: Optional[str] = None):

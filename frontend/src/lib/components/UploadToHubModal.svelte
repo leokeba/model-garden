@@ -1,5 +1,6 @@
 <script lang="ts">
     import { api, type Model } from "$lib/api/client";
+    import { onMount } from "svelte";
     import Button from "./Button.svelte";
 
     interface Props {
@@ -17,7 +18,7 @@
     }: Props = $props();
 
     let repoId = $state("");
-    let isPrivate = $state(false);
+    let isPrivate = $state(true);
     let commitMessage = $state("Upload model from Model Garden");
     let repoDescription = $state(
         `Model fine-tuned with Model Garden. Base model: ${model.base_model}`,
@@ -26,6 +27,17 @@
     let error = $state("");
     let uploadSuccess = $state(false);
     let uploadedUrl = $state("");
+    let hfUser = $state("");
+
+    // Fetch config on mount to get HF_USER
+    onMount(async () => {
+        try {
+            const config = await api.getConfig();
+            hfUser = config.hf_user;
+        } catch (err) {
+            console.error("Failed to fetch config:", err);
+        }
+    });
 
     // Pre-fill repo_id with a sensible default
     $effect(() => {
@@ -36,7 +48,10 @@
                 .replace(/[^a-z0-9-_]/g, "-")
                 .replace(/-+/g, "-")
                 .replace(/^-|-$/g, "");
-            repoId = `username/${sanitizedName}`;
+
+            // Use HF_USER if available, otherwise default to "username"
+            const username = hfUser || "username";
+            repoId = `${username}/${sanitizedName}`;
         }
     });
 
