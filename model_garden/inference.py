@@ -140,6 +140,9 @@ def calculate_gpu_memory_utilization(
     
     It also checks actual available memory to avoid OOM errors when switching models.
     
+    For vision models, uses more conservative utilization to leave headroom for
+    vision encoder temporary buffers (rotary embeddings, image processing).
+    
     Args:
         model_path: Path to the model or HuggingFace model ID
         max_model_len: Maximum sequence length (affects KV cache size)
@@ -153,6 +156,11 @@ def calculate_gpu_memory_utilization(
     if gpu_memory_gb == 0:
         console.print("[yellow]⚠️  No GPU detected, using default utilization of 0.9[/yellow]")
         return 0.9
+    
+    # Detect vision models - they need extra memory for vision encoder buffers
+    is_vision_model = any(x in model_path.lower() for x in ['vl', 'vision', 'llava', 'qwen2-vl', 'qwen2.5-vl'])
+    if is_vision_model:
+        console.print("[cyan]👁️  Vision model detected - using conservative memory allocation for vision encoder buffers[/cyan]")
     
     # Check actual free memory (important when switching models)
     free_memory_gb = get_free_gpu_memory_gb()
@@ -199,27 +207,33 @@ def calculate_gpu_memory_utilization(
         console.print(f"[yellow]   vLLM may automatically reduce max_model_len to fit[/yellow]")
     
     # Calculate utilization based on effective memory
+    # For vision models, reduce by 5-10% to leave room for vision encoder temporary buffers
+    vision_buffer_adjustment = 0.05 if is_vision_model else 0.0
+    
     if total_with_margin >= effective_gpu_memory:
         # Model won't fit comfortably, need to use very high utilization
         # But cap at 0.95 to leave minimal room for overhead
         # Calculate how much we need: if we need 36GB but only have 23GB,
         # we need utilization of at least (36/23) * 0.90 = but cap at 0.95
         required_util = (total_needed / effective_gpu_memory) * 0.95
-        utilization = min(0.95, max(0.85, required_util))
+        utilization = min(0.95, max(0.85, required_util)) - vision_buffer_adjustment
         console.print(f"[yellow]⚠️  Model memory requirements ({total_with_margin:.1f} GB) exceed available capacity ({effective_gpu_memory:.1f} GB)[/yellow]")
         console.print(f"[yellow]   Using high utilization: {utilization:.2f} (vLLM will adjust KV cache accordingly)[/yellow]")
     elif total_with_margin >= effective_gpu_memory * 0.7:
         # Model is a significant portion of memory
-        utilization = 0.85
+        utilization = 0.85 - vision_buffer_adjustment
         console.print(f"[cyan]✓ Model requires ~{(total_with_margin/effective_gpu_memory)*100:.0f}% of available GPU memory[/cyan]")
         console.print(f"[cyan]  Using standard utilization: {utilization}[/cyan]")
     else:
         # Model fits comfortably, use conservative utilization
         # This leaves plenty of room for batching and multiple concurrent requests
         # Use at least 0.5 to ensure good throughput, cap at 0.75 to leave room for batching
-        utilization = max(0.50, min(0.75, (total_with_margin / effective_gpu_memory) + 0.20))
+        utilization = max(0.50, min(0.75, (total_with_margin / effective_gpu_memory) + 0.20)) - vision_buffer_adjustment
         console.print(f"[cyan]✓ Model requires ~{(total_with_margin/effective_gpu_memory)*100:.0f}% of available GPU memory[/cyan]")
         console.print(f"[cyan]  Using conservative utilization: {utilization} (leaves room for batching)[/cyan]")
+    
+    if is_vision_model:
+        console.print(f"[cyan]  Vision model buffer adjustment: -{vision_buffer_adjustment*100:.0f}% (leaves ~{(1-utilization)*gpu_memory_gb:.1f}GB for vision encoder)[/cyan]")
     
     return round(utilization, 2)
 
@@ -523,6 +537,10 @@ class InferenceService:
         # Vision model tracking
         self.is_vision_lora_adapter = False
         self.merged_vision_model_path: Optional[str] = None  # Temp merged model path
+        self.original_base_model: Optional[str] = None  # Original base model for tokenizer (for merged vision models)
+        
+        # Request serialization for vision models (prevents vLLM deadlocks with concurrent multimodal requests)
+        self._vision_request_semaphore = asyncio.Semaphore(1)  # Only 1 concurrent vision request
 
     async def load_model(self) -> None:
         """Load the model into vLLM engine.
@@ -563,6 +581,8 @@ class InferenceService:
                 console.print("[yellow]   vLLM doesn't support LoRA on vision models - merging adapter with base model first[/yellow]")
                 
                 self.is_vision_lora_adapter = True
+                # Store the original base model for tokenizer loading
+                self.original_base_model = base_model
                 
                 # Create temporary directory for merged model in HF_HOME (not /tmp/)
                 # This avoids filling up the main drive
@@ -581,18 +601,72 @@ class InferenceService:
                 console.print(f"[cyan]   Output: {self.merged_vision_model_path}[/cyan]")
                 
                 try:
-                    # Import the merge function from vision_training
-                    from model_garden.vision_training import merge_vision_lora_adapter
+                    # CRITICAL: Run merge in a completely isolated subprocess
+                    # We must avoid ANY CUDA initialization in the main process before vLLM starts
+                    # Create a temporary script file and execute it as a separate process
+                    console.print("[cyan]🔄 Running merge in isolated subprocess for clean GPU state...[/cyan]")
                     
-                    # Merge the adapter - this will save the merged model to temp directory
-                    merged_path = merge_vision_lora_adapter(
-                        adapter_path=self.adapter_path,
-                        output_dir=self.merged_vision_model_path,
-                        base_model=base_model,
-                        load_in_4bit=True,  # Use 4-bit for memory efficiency during merge
-                    )
+                    import subprocess
+                    import sys
+                    import tempfile
                     
-                    console.print(f"[green]✓ Vision LoRA merged successfully[/green]")
+                    # Create a temporary Python script file
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                        merge_script_path = f.name
+                        f.write(f"""
+import sys
+import os
+
+# Set up environment
+sys.path.insert(0, '{Path(__file__).parent.parent}')
+
+# Ensure CUDA variables are not inherited
+os.environ.pop('CUDA_VISIBLE_DEVICES_SET_BY_PARENT', None)
+
+from model_garden.vision_training import merge_vision_lora_adapter
+
+try:
+    merged_path = merge_vision_lora_adapter(
+        adapter_path='{self.adapter_path}',
+        output_dir='{self.merged_vision_model_path}',
+        base_model='{base_model}',
+        load_in_4bit=True,
+    )
+    print(f"MERGED_PATH:{{merged_path}}")
+except Exception as e:
+    print(f"MERGE_ERROR:{{e}}", file=sys.stderr)
+    sys.exit(1)
+""")
+                    
+                    try:
+                        # Run merge in completely separate process with fresh environment
+                        result = subprocess.run(
+                            [sys.executable, merge_script_path],
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                            env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+                        )
+                        
+                        # Extract merged path from output
+                        merged_path = None
+                        for line in result.stdout.splitlines():
+                            if line.startswith("MERGED_PATH:"):
+                                merged_path = line.split(":", 1)[1]
+                                break
+                        
+                        if not merged_path:
+                            merged_path = self.merged_vision_model_path
+                        
+                        console.print(f"[green]✓ Vision LoRA merged successfully in subprocess[/green]")
+                        console.print(f"[cyan]   GPU memory automatically freed by subprocess termination[/cyan]")
+                    
+                    finally:
+                        # Clean up temporary script
+                        try:
+                            Path(merge_script_path).unlink()
+                        except:
+                            pass
                     
                     # Verify that the merge actually produced a valid model directory
                     merged_config = Path(merged_path) / "config.json"
@@ -718,7 +792,51 @@ class InferenceService:
                 "trust_remote_code": trust_remote_code,
                 "enforce_eager": False,  # Use CUDA graphs for better performance
                 "disable_log_stats": False,
+                # Enable vLLM optimizations that are on by default in vLLM CLI
+                "enable_prefix_caching": True,  # Enables prefix caching for better performance
+                "enable_chunked_prefill": True,  # Enables chunked prefill (auto-sized)
             }
+            
+            # For vision models (Qwen2.5-VL, LLaVA, etc), use the base model tokenizer
+            # This is critical because fine-tuned vision models may have incomplete tokenizers
+            is_vision = is_vision_model(self.model_path)
+            
+            if is_vision:
+                # Determine the correct base tokenizer for vision models
+                if self.is_vision_lora_adapter and self.original_base_model:
+                    # For merged adapters, we stored the original base model
+                    tokenizer_path = self.original_base_model
+                    console.print(f"[cyan]📝 Vision adapter: using original base tokenizer: {tokenizer_path}[/cyan]")
+                elif "qwen2.5-vl" in self.model_path.lower() or "qwen2-vl" in self.model_path.lower():
+                    # For Qwen2.5-VL models, use the official Qwen tokenizer
+                    # Extract size (72B, 7B, etc) from model name
+                    model_name_lower = self.model_path.lower()
+                    if "72b" in model_name_lower:
+                        tokenizer_path = "unsloth/Qwen2.5-VL-72B-Instruct"
+                    elif "7b" in model_name_lower:
+                        tokenizer_path = "unsloth/Qwen2.5-VL-7B-Instruct"  
+                    elif "3b" in model_name_lower:
+                        tokenizer_path = "Qwen/Qwen2.5-VL-3B-Instruct"
+                    else:
+                        # Default to 7B if size not detected
+                        tokenizer_path = "unsloth/Qwen2.5-VL-7B-Instruct"
+                    console.print(f"[cyan]📝 Qwen2.5-VL model: using base tokenizer: {tokenizer_path}[/cyan]")
+                else:
+                    # For other vision models, use the model itself as tokenizer
+                    tokenizer_path = self.base_model_path
+                    console.print(f"[cyan]📝 Vision model: using model's own tokenizer: {tokenizer_path}[/cyan]")
+                
+                engine_args_dict["tokenizer"] = tokenizer_path
+
+            # Debug: print engine args we will pass to vLLM so we can compare with
+            # the vllm CLI behavior when troubleshooting timeouts.
+            try:
+                console.print("[magenta]🔍 vLLM engine args preview:[/magenta]")
+                # Pretty-print keys we explicitly set
+                for k, v in engine_args_dict.items():
+                    console.print(f"  {k}: {v}")
+            except Exception:
+                pass
             
             # Add LoRA support if enabled
             if self.enable_lora:
@@ -737,8 +855,14 @@ class InferenceService:
             try:
                 from transformers import AutoTokenizer
                 console.print(f"[cyan]📝 Loading tokenizer for chat template support...[/cyan]")
-                # Use the actual loaded model path (base_model_path if adapter, otherwise model_path)
-                tokenizer_path = self.base_model_path if self.is_adapter else self.model_path
+                # For vision models with merged adapters, use the original base model tokenizer
+                # Otherwise use the actual loaded model path
+                if self.is_vision_lora_adapter and self.original_base_model:
+                    tokenizer_path = self.original_base_model
+                    console.print(f"[cyan]   Using original base model tokenizer: {tokenizer_path}[/cyan]")
+                else:
+                    tokenizer_path = self.base_model_path if self.is_adapter else self.model_path
+                
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     tokenizer_path,
                     trust_remote_code=self.trust_remote_code
@@ -853,6 +977,15 @@ class InferenceService:
         if not self.is_loaded:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
+        # Log request details for debugging
+        console.print(f"[magenta]🎯 generate() called:[/magenta]")
+        console.print(f"  prompt length: {len(prompt)} chars")
+        console.print(f"  max_tokens: {max_tokens}")
+        console.print(f"  temperature: {temperature}")
+        console.print(f"  images: {len(images) if images else 0}")
+        console.print(f"  structured_outputs: {bool(structured_outputs)}")
+        console.print(f"  stream: {stream}")
+
         from vllm import SamplingParams
         
         # Set default max_tokens if not provided
@@ -863,26 +996,6 @@ class InferenceService:
             else:
                 max_tokens = 512  # Standard default
         
-        # Set sensible defaults for penalties if not provided by client
-        # For structured outputs, use STRONG anti-repetition penalties to combat model degeneration
-        if frequency_penalty is None:
-            if structured_outputs:
-                frequency_penalty = 1.0  # Increased from 0.5 - stronger penalty for repeated tokens
-            else:
-                frequency_penalty = 0.0  # Standard default
-        
-        if presence_penalty is None:
-            if structured_outputs:
-                presence_penalty = 0.6  # Increased from 0.3 - encourage more diversity
-            else:
-                presence_penalty = 0.0  # Standard default
-        
-        if repetition_penalty is None:
-            if structured_outputs:
-                repetition_penalty = 1.2  # Increased from 1.1 - stronger n-gram penalty
-            else:
-                repetition_penalty = 1.0  # Standard default (no penalty)
-        
         # Create structured outputs params if provided
         structured_outputs_params = None
         if structured_outputs:
@@ -892,18 +1005,31 @@ class InferenceService:
             except ImportError:
                 console.print("[yellow]Warning: StructuredOutputsParams not available in this vLLM version[/yellow]")
         
-        # Create sampling parameters
-        sampling_params = SamplingParams(
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-            repetition_penalty=repetition_penalty,
-            stop=stop,
-            structured_outputs=structured_outputs_params,
-        )
+        # Create sampling parameters - use vLLM defaults for any None values
+        # Only pass parameters that are explicitly provided by the client
+        sampling_params_dict = {
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "seed": 0,  # Deterministic generation like vLLM CLI default
+        }
+        
+        # Add optional parameters only if provided (let vLLM use defaults otherwise)
+        if top_p is not None:
+            sampling_params_dict["top_p"] = top_p
+        if top_k is not None:
+            sampling_params_dict["top_k"] = top_k
+        if frequency_penalty is not None:
+            sampling_params_dict["frequency_penalty"] = frequency_penalty
+        if presence_penalty is not None:
+            sampling_params_dict["presence_penalty"] = presence_penalty
+        if repetition_penalty is not None:
+            sampling_params_dict["repetition_penalty"] = repetition_penalty
+        if stop is not None:
+            sampling_params_dict["stop"] = stop
+        if structured_outputs_params is not None:
+            sampling_params_dict["structured_outputs"] = structured_outputs_params
+        
+        sampling_params = SamplingParams(**sampling_params_dict)
         
         # Prepare inputs (text + optional images)
         inputs = self._prepare_inputs(prompt, images)
@@ -1067,9 +1193,15 @@ class InferenceService:
         sampling_params,
         request_id: str,
     ) -> Dict:
-        """Generate complete response (non-streaming)."""
+        """Generate complete response (non-streaming).
+        
+        Uses a semaphore to serialize vision model requests to prevent vLLM deadlocks.
+        """
         if self.engine is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        # Check if this is a vision request (inputs is TextPrompt with multi_modal_data)
+        is_vision_request = not isinstance(inputs, str)
         
         # Prepare lora_request if we have an adapter (only for text models, not vision)
         lora_request = None
@@ -1086,11 +1218,43 @@ class InferenceService:
             except ImportError:
                 console.print("[yellow]⚠️  LoRA support not available in this vLLM version[/yellow]")
         
-        results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
-        
-        final_output = None
-        async for request_output in results_generator:
-            final_output = request_output
+        # For vision requests, use semaphore to serialize (prevents vLLM deadlocks)
+        if is_vision_request:
+            async with self._vision_request_semaphore:
+                console.print(f"[cyan]🔒 Acquired vision request lock for {request_id}[/cyan]")
+                console.print(f"[cyan]📊 Calling engine.generate with sampling_params: max_tokens={sampling_params.max_tokens}, temp={sampling_params.temperature}[/cyan]")
+                console.print(f"[cyan]📊 Input type: {type(inputs)}, is TextPrompt: {hasattr(inputs, 'prompt')}[/cyan]")
+                
+                import time
+                start_time = time.time()
+                results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
+                console.print(f"[green]✓ engine.generate() returned generator in {time.time()-start_time:.2f}s[/green]")
+                
+                final_output = None
+                iteration_count = 0
+                async for request_output in results_generator:
+                    iteration_count += 1
+                    if iteration_count % 10 == 0:
+                        console.print(f"[cyan]📊 Generator iteration {iteration_count}, outputs: {len(request_output.outputs)}[/cyan]")
+                    final_output = request_output
+                    
+                console.print(f"[green]✓ Generation completed after {iteration_count} iterations in {time.time()-start_time:.2f}s[/green]")
+                console.print(f"[cyan]🔓 Released vision request lock for {request_id}[/cyan]")
+        else:
+            console.print(f"[cyan]📊 Non-vision request: calling engine.generate[/cyan]")
+            import time
+            start_time = time.time()
+            results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
+            console.print(f"[green]✓ engine.generate() returned generator in {time.time()-start_time:.2f}s[/green]")
+            
+            final_output = None
+            iteration_count = 0
+            async for request_output in results_generator:
+                iteration_count += 1
+                if iteration_count % 10 == 0:
+                    console.print(f"[cyan]📊 Generator iteration {iteration_count}[/cyan]")
+                final_output = request_output
+            console.print(f"[green]✓ Generation completed after {iteration_count} iterations in {time.time()-start_time:.2f}s[/green]")
         
         if final_output is None:
             return {"text": "", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
@@ -1098,6 +1262,11 @@ class InferenceService:
         # Return the generated text with usage stats
         generated_text = final_output.outputs[0].text
         finish_reason = final_output.outputs[0].finish_reason
+        
+        # Log a sample of the output for debugging repetition issues
+        text_preview = generated_text[:500] if len(generated_text) > 500 else generated_text
+        console.print(f"[cyan]📝 Generated text preview (first 500 chars): {text_preview}[/cyan]")
+        console.print(f"[cyan]📝 Total generated length: {len(generated_text)} chars, finish_reason: {finish_reason}[/cyan]")
         
         # Get token counts
         prompt_tokens = len(final_output.prompt_token_ids) if final_output.prompt_token_ids else 0
@@ -1140,9 +1309,15 @@ class InferenceService:
         sampling_params,
         request_id: str,
     ) -> AsyncIterator[str]:
-        """Generate streaming response."""
+        """Generate streaming response.
+        
+        Uses a semaphore to serialize vision model requests to prevent vLLM deadlocks.
+        """
         if self.engine is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        # Check if this is a vision request (inputs is TextPrompt with multi_modal_data)
+        is_vision_request = not isinstance(inputs, str)
         
         # Prepare lora_request if we have an adapter (only for text models, not vision)
         lora_request = None
@@ -1157,16 +1332,32 @@ class InferenceService:
             except ImportError:
                 console.print("[yellow]⚠️  LoRA support not available in this vLLM version[/yellow]")
         
-        results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
-        
-        previous_text = ""
-        async for request_output in results_generator:
-            text = request_output.outputs[0].text
-            # Yield only the new tokens
-            new_text = text[len(previous_text):]
-            if new_text:
-                yield new_text
-            previous_text = text
+        # For vision requests, use semaphore to serialize (prevents vLLM deadlocks)
+        if is_vision_request:
+            async with self._vision_request_semaphore:
+                console.print(f"[cyan]🔒 Acquired vision request lock for {request_id}[/cyan]")
+                results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
+                
+                previous_text = ""
+                async for request_output in results_generator:
+                    text = request_output.outputs[0].text
+                    # Yield only the new tokens
+                    new_text = text[len(previous_text):]
+                    if new_text:
+                        yield new_text
+                    previous_text = text
+                console.print(f"[cyan]🔓 Released vision request lock for {request_id}[/cyan]")
+        else:
+            results_generator = self.engine.generate(inputs, sampling_params, request_id, lora_request=lora_request)
+            
+            previous_text = ""
+            async for request_output in results_generator:
+                text = request_output.outputs[0].text
+                # Yield only the new tokens
+                new_text = text[len(previous_text):]
+                if new_text:
+                    yield new_text
+                previous_text = text
 
     async def chat_completion(
         self,
