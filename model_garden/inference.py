@@ -46,84 +46,32 @@ def estimate_model_size_gb(model_path: str) -> float:
         Estimated model size in GB
     """
     model_dir = Path(model_path)
-    
+
     # If it's a HuggingFace model ID (contains slash and not a local path)
     if "/" in model_path and not model_dir.exists():
-        # Try to extract size from model name (e.g., "7B", "13B", "3B", "1.1B")
         import re
-        # Match patterns like "7B", "3B", "1.1B" but not "2.5" (version), "4bit", or "8bit"
-        # We look for: hyphen/underscore/start of string, then number >= 1, then 'B'
-        # This avoids matching decimal versions like "2.5" or "3.2"
         size_match = re.search(r'[-_](\d+(?:\.\d+)?)[Bb](?!it)', model_path)
         if size_match:
             param_size = float(size_match.group(1))
-            # Rough estimate: FP16 = 2 bytes per parameter
-            return param_size * 2
-        # Default estimate for unknown HF models
-        return 7.0  # Assume 7B model as default
-    
+            # Rough estimate: FP16 = 2 bytes per parameter -> size in GB
+            return max(1.0, param_size * 2)
+        return 7.0
+
     # For local models, check actual file sizes
     if not model_dir.exists() or not model_dir.is_dir():
         return 7.0  # Default estimate
-    
-    total_size = 0.0
-    
-    # Sum up all weight files (.safetensors and .bin)
-    for pattern in ["*.safetensors", "*.bin"]:
-        for weight_file in model_dir.glob(pattern):
-            total_size += weight_file.stat().st_size
-    
-    if total_size > 0:
-        return total_size / (1024 ** 3)  # Convert bytes to GB
-    
-    # If no weight files found, try to estimate from config
-    config_file = model_dir / "config.json"
-    if config_file.exists():
-        try:
-            with open(config_file) as f:
-                config = json.load(f)
-            
-            # Try to estimate from model architecture params
-            hidden_size = config.get("hidden_size", 4096)
-            num_layers = config.get("num_hidden_layers", 32)
-            vocab_size = config.get("vocab_size", 32000)
-            
-            # Rough estimate based on transformer architecture
-            # Each layer has attention (4 * hidden_size^2) + FFN (varies)
-            # Plus embeddings (vocab_size * hidden_size)
-            params_estimate = (
-                vocab_size * hidden_size  # Embeddings
-                + num_layers * (4 * hidden_size * hidden_size * 2)  # Attention + FFN (rough)
-            )
-            
-            # Assume FP16 (2 bytes per parameter)
-            return (params_estimate * 2) / (1024 ** 3)
-        except Exception:
-            pass
-    
-    # Default fallback
-    return 7.0
 
+    total_bytes = 0
+    for pattern in ("*.safetensors", "*.bin"):
+        for wf in model_dir.glob(pattern):
+            try:
+                total_bytes += wf.stat().st_size
+            except Exception:
+                continue
 
-def get_free_gpu_memory_gb() -> float:
-    """Get currently available (free) GPU memory in GB.
-    
-    Returns:
-        Free GPU memory in GB, or 0.0 if no GPU is available
-    """
-    try:
-        import torch
-        if torch.cuda.is_available():
-            # Force synchronize and clear cache to get accurate free memory
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            
-            # Get free memory for the first GPU (device 0)
-            free_memory, total_memory = torch.cuda.mem_get_info(0)
-            return free_memory / (1024 ** 3)  # Convert bytes to GB
-    except Exception as e:
-        console.print(f"[yellow]⚠️  Could not detect free GPU memory: {e}[/yellow]")
-    return 0.0
+    # Convert bytes to GB and ensure a sensible minimum
+    total_gb = total_bytes / (1024 ** 3) if total_bytes > 0 else 1.0
+    return max(1.0, round(total_gb, 2))
 
 
 def calculate_gpu_memory_utilization(
@@ -131,111 +79,42 @@ def calculate_gpu_memory_utilization(
     max_model_len: Optional[int] = None,
     tensor_parallel_size: int = 1,
 ) -> float:
-    """Calculate optimal GPU memory utilization based on model size and available VRAM.
-    
-    This function estimates the memory requirements for:
-    - Model weights
-    - KV cache (based on max_model_len)
-    - Temporary buffers and overhead
-    
-    It also checks actual available memory to avoid OOM errors when switching models.
-    
-    For vision models, uses more conservative utilization to leave headroom for
-    vision encoder temporary buffers (rotary embeddings, image processing).
-    
-    Args:
-        model_path: Path to the model or HuggingFace model ID
-        max_model_len: Maximum sequence length (affects KV cache size)
-        tensor_parallel_size: Number of GPUs for tensor parallelism
-        
-    Returns:
-        Recommended GPU memory utilization (0.0-1.0)
+    """Lightweight heuristic to calculate GPU memory utilization.
+
+    This is a conservative estimate used when gpu_memory_utilization==0.0 (auto).
+    It uses detected GPU memory, an estimate of model size, and a rough KV cache
+    estimation to return a utilization fraction between 0.5 and 0.95.
     """
-    gpu_memory_gb = get_gpu_memory_gb()
-    
-    if gpu_memory_gb == 0:
-        console.print("[yellow]⚠️  No GPU detected, using default utilization of 0.9[/yellow]")
-        return 0.9
-    
-    # Detect vision models - they need extra memory for vision encoder buffers
-    is_vision_model = any(x in model_path.lower() for x in ['vl', 'vision', 'llava', 'qwen2-vl', 'qwen2.5-vl'])
-    if is_vision_model:
-        console.print("[cyan]👁️  Vision model detected - using conservative memory allocation for vision encoder buffers[/cyan]")
-    
-    # Check actual free memory (important when switching models)
-    free_memory_gb = get_free_gpu_memory_gb()
-    console.print(f"[cyan]💾 GPU memory: {free_memory_gb:.1f} GB free / {gpu_memory_gb:.1f} GB total[/cyan]")
-    
-    # Estimate model size
-    model_size_gb = estimate_model_size_gb(model_path)
-    console.print(f"[cyan]📊 Estimated model size: {model_size_gb:.1f} GB[/cyan]")
-    
-    # Divide by tensor parallel size (model is sharded across GPUs)
-    model_size_per_gpu = model_size_gb / tensor_parallel_size
-    
-    # Estimate KV cache size (more conservative)
-    # vLLM uses paged attention which is more memory efficient
-    # Rule of thumb: ~0.3-0.5GB per 1K tokens for 7B models with reasonable batch sizes
-    if max_model_len is None:
-        max_model_len = 4096  # Default assumption
-    
-    # More conservative KV cache estimate: (model_size_gb / 7.0) * (max_model_len / 1000) * 0.4 GB
-    kv_cache_estimate = (model_size_gb / 7.0) * (max_model_len / 1000) * 0.4
-    console.print(f"[cyan]🗄️  Estimated KV cache: {kv_cache_estimate:.1f} GB (for max_model_len={max_model_len})[/cyan]")
-    
-    # Total memory needed per GPU
-    total_needed = model_size_per_gpu + kv_cache_estimate
-    
-    # Add safety margin for temporary buffers and CUDA graphs (20%)
-    total_with_margin = total_needed * 1.20
-    
-    # If free memory is significantly less than total memory, we need to be more conservative
-    # This happens when switching models - old model may not be fully cleared yet
-    memory_pressure_ratio = free_memory_gb / gpu_memory_gb
-    if memory_pressure_ratio < 0.95:
-        console.print(f"[yellow]⚠️  GPU memory not fully cleared ({memory_pressure_ratio*100:.1f}% free)[/yellow]")
-        console.print(f"[yellow]   Adjusting target to use free memory instead of total memory[/yellow]")
-        # Use free memory as the effective total, with extra safety margin
-        effective_gpu_memory = free_memory_gb * 0.95  # 5% safety margin
-    else:
-        effective_gpu_memory = gpu_memory_gb
-    
-    # Check if KV cache is unreasonably large compared to available memory
-    # If KV cache + model won't fit, warn but continue (vLLM will handle it)
-    if total_needed > (effective_gpu_memory * 0.75):
-        console.print(f"[yellow]⚠️  Requested max_model_len ({max_model_len}) may be too large for available memory[/yellow]")
-        console.print(f"[yellow]   vLLM may automatically reduce max_model_len to fit[/yellow]")
-    
-    # Calculate utilization based on effective memory
-    # For vision models, reduce by 5-10% to leave room for vision encoder temporary buffers
-    vision_buffer_adjustment = 0.05 if is_vision_model else 0.0
-    
-    if total_with_margin >= effective_gpu_memory:
-        # Model won't fit comfortably, need to use very high utilization
-        # But cap at 0.95 to leave minimal room for overhead
-        # Calculate how much we need: if we need 36GB but only have 23GB,
-        # we need utilization of at least (36/23) * 0.90 = but cap at 0.95
-        required_util = (total_needed / effective_gpu_memory) * 0.95
-        utilization = min(0.95, max(0.85, required_util)) - vision_buffer_adjustment
-        console.print(f"[yellow]⚠️  Model memory requirements ({total_with_margin:.1f} GB) exceed available capacity ({effective_gpu_memory:.1f} GB)[/yellow]")
-        console.print(f"[yellow]   Using high utilization: {utilization:.2f} (vLLM will adjust KV cache accordingly)[/yellow]")
-    elif total_with_margin >= effective_gpu_memory * 0.7:
-        # Model is a significant portion of memory
-        utilization = 0.85 - vision_buffer_adjustment
-        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/effective_gpu_memory)*100:.0f}% of available GPU memory[/cyan]")
-        console.print(f"[cyan]  Using standard utilization: {utilization}[/cyan]")
-    else:
-        # Model fits comfortably, use conservative utilization
-        # This leaves plenty of room for batching and multiple concurrent requests
-        # Use at least 0.5 to ensure good throughput, cap at 0.75 to leave room for batching
-        utilization = max(0.50, min(0.75, (total_with_margin / effective_gpu_memory) + 0.20)) - vision_buffer_adjustment
-        console.print(f"[cyan]✓ Model requires ~{(total_with_margin/effective_gpu_memory)*100:.0f}% of available GPU memory[/cyan]")
-        console.print(f"[cyan]  Using conservative utilization: {utilization} (leaves room for batching)[/cyan]")
-    
-    if is_vision_model:
-        console.print(f"[cyan]  Vision model buffer adjustment: -{vision_buffer_adjustment*100:.0f}% (leaves ~{(1-utilization)*gpu_memory_gb:.1f}GB for vision encoder)[/cyan]")
-    
-    return round(utilization, 2)
+    try:
+        gpu_memory_gb = get_gpu_memory_gb() or 24.0
+        model_size_gb = estimate_model_size_gb(model_path)
+
+        # KV cache estimate: proportional to model size and sequence length
+        if not max_model_len:
+            max_model_len = 4096
+        kv_cache_gb = (model_size_gb / 7.0) * (max_model_len / 1000) * 0.4
+
+        total_needed = model_size_gb + kv_cache_gb
+
+        # Safety margin
+        total_with_margin = total_needed * 1.2
+
+        # Simple rules to pick utilization
+        if total_with_margin >= gpu_memory_gb:
+            utilization = 0.88 if gpu_memory_gb >= 16 else 0.75
+        elif total_with_margin >= gpu_memory_gb * 0.7:
+            utilization = 0.80
+        else:
+            utilization = 0.60
+
+        # Adjust for tensor parallelism (reduce per-GPU utilization)
+        if tensor_parallel_size > 1:
+            utilization = utilization * (1.0 - 0.05 * (tensor_parallel_size - 1))
+
+        utilization = max(0.5, min(0.95, utilization))
+        return round(utilization, 2)
+    except Exception:
+        return 0.88
 
 
 def is_lora_adapter(model_path: str) -> bool:
@@ -601,72 +480,32 @@ class InferenceService:
                 console.print(f"[cyan]   Output: {self.merged_vision_model_path}[/cyan]")
                 
                 try:
-                    # CRITICAL: Run merge in a completely isolated subprocess
-                    # We must avoid ANY CUDA initialization in the main process before vLLM starts
-                    # Create a temporary script file and execute it as a separate process
-                    console.print("[cyan]🔄 Running merge in isolated subprocess for clean GPU state...[/cyan]")
-                    
-                    import subprocess
-                    import sys
-                    import tempfile
-                    
-                    # Create a temporary Python script file
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-                        merge_script_path = f.name
-                        f.write(f"""
-import sys
-import os
-
-# Set up environment
-sys.path.insert(0, '{Path(__file__).parent.parent}')
-
-# Ensure CUDA variables are not inherited
-os.environ.pop('CUDA_VISIBLE_DEVICES_SET_BY_PARENT', None)
-
-from model_garden.vision_training import merge_vision_lora_adapter
-
-try:
-    merged_path = merge_vision_lora_adapter(
-        adapter_path='{self.adapter_path}',
-        output_dir='{self.merged_vision_model_path}',
-        base_model='{base_model}',
-        load_in_4bit=True,
-    )
-    print(f"MERGED_PATH:{{merged_path}}")
-except Exception as e:
-    print(f"MERGE_ERROR:{{e}}", file=sys.stderr)
-    sys.exit(1)
-""")
-                    
+                    # Option A: Run merge in main process for debugging
+                    # If MODEL_GARDEN_DEBUG_RUN_MERGE_IN_MAIN is set to 1/true, perform the merge
+                    # inline so tracebacks and prints appear in the main logs for easier debugging.
+                    # Always run merge in-process (subprocess merge support removed)
                     try:
-                        # Run merge in completely separate process with fresh environment
-                        result = subprocess.run(
-                            [sys.executable, merge_script_path],
-                            capture_output=True,
-                            text=True,
-                            check=True,
-                            env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+                        from model_garden.vision_training import merge_vision_lora_adapter
+                        merged_path = merge_vision_lora_adapter(
+                            adapter_path=self.adapter_path,
+                            output_dir=self.merged_vision_model_path,
+                            base_model=base_model,
+                            load_in_4bit=True,
                         )
-                        
-                        # Extract merged path from output
-                        merged_path = None
-                        for line in result.stdout.splitlines():
-                            if line.startswith("MERGED_PATH:"):
-                                merged_path = line.split(":", 1)[1]
-                                break
-                        
-                        if not merged_path:
-                            merged_path = self.merged_vision_model_path
-                        
-                        console.print(f"[green]✓ Vision LoRA merged successfully in subprocess[/green]")
-                        console.print(f"[cyan]   GPU memory automatically freed by subprocess termination[/cyan]")
-                    
-                    finally:
-                        # Clean up temporary script
-                        try:
-                            Path(merge_script_path).unlink()
-                        except:
-                            pass
+
+                        console.print("[cyan]POST_MERGE: Merge handler completed by vision_training.merge_vision_lora_adapter().[/cyan]")
+
+                    except Exception as e:
+                        console.print(f"[red]❌ Failed to merge vision LoRA adapter: {e}[/red]")
+                        import traceback
+                        console.print(f"[red]Full error:[/red]")
+                        console.print(traceback.format_exc())
+                        # Clean up temp directory on failure
+                        if self.merged_vision_model_path and Path(self.merged_vision_model_path).exists():
+                            import shutil
+                            shutil.rmtree(self.merged_vision_model_path, ignore_errors=True)
+                        self.merged_vision_model_path = None
+                        raise
                     
                     # Verify that the merge actually produced a valid model directory
                     merged_config = Path(merged_path) / "config.json"

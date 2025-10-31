@@ -1457,39 +1457,91 @@ def merge_vision_lora_adapter(
         merged_model: Any = peft_model.merge_and_unload()
         console.print("[green]✓ Merge complete![/green]")
         
-        # Save merged model
+        # Save merged model. Prefer Unsloth's memory-aware merged save if available
         console.print(f"[cyan]Saving merged model to {output_dir}...[/cyan]")
-        merged_model.save_pretrained(output_dir)
-        console.print("[green]✓ Model saved[/green]")
+        # Try calling Unsloth's save directly (use the library function) so we don't
+        # rely on an instance method being monkey-patched onto the model returned
+        # by PEFT's merge. This mirrors training where Unsloth's memory-aware
+        # saver is used to produce `merged_16bit` artifacts.
+        try:
+            console.print("[cyan]POST_MERGE: Attempting Unsloth unsloth_save_pretrained_merged(...) (memory-aware, full-rewrite requested)...[/cyan]")
+            try:
+                # Import the helper directly from the installed unsloth package
+                from unsloth.save import unsloth_save_pretrained_merged
+                # Use a temporary location inside the output dir to ensure
+                # the rewrite happens on the same filesystem (reduces risk of
+                # fallback in-place behavior that can preserve quantization auxiliaries).
+                temp_loc = str(Path(output_dir) / "_unsloth_temporary_saved_buffers")
+                os.makedirs(temp_loc, exist_ok=True)
+
+                # Decide save_method: if base was loaded in 4-bit we should
+                # preserve/produce a 4-bit (bitsandbytes) serialized model so
+                # vLLM uses its bitsandbytes loader and benefits from lower
+                # GPU memory usage. If not, fall back to merged_16bit.
+                chosen_save_method = "merged_4bit_forced" if load_in_4bit else "merged_16bit"
+
+                unsloth_save_pretrained_merged(
+                    merged_model,
+                    save_directory=output_dir,
+                    tokenizer=None,
+                    save_method=chosen_save_method,
+                    push_to_hub=False,
+                    token=None,
+                    is_main_process=True,
+                    state_dict=None,
+                    save_function=__import__("torch").save,
+                    max_shard_size="5GB",
+                    safe_serialization=True,
+                    variant=None,
+                    save_peft_format=True,
+                    tags=[],
+                    temporary_location=temp_loc,
+                    maximum_memory_usage=0.95,
+                )
+                console.print(f"[green]✓ Unsloth unsloth_save_pretrained_merged succeeded (full rewrite, method={chosen_save_method})[/green]")
+            except Exception as e:
+                console.print(f"[yellow]POST_MERGE: unsloth_save_pretrained_merged failed: {e}\nFalling back to regular save_pretrained()[/yellow]")
+                merged_model.save_pretrained(output_dir)
+                console.print("[green]✓ Model saved (regular save_pretrained)[/green]")
+        except Exception as outer_e:
+            console.print(f"[red]❌ Unexpected error while attempting Unsloth save: {outer_e}[/red]")
+            merged_model.save_pretrained(output_dir)
+            console.print("[green]✓ Model saved (regular save_pretrained)[/green]")
         
-        # CRITICAL: Remove quantization_config from merged model
-        # The merged model was created from a 4-bit base model, so config.json still contains
-        # quantization_config with _load_in_4bit=true. This causes vLLM to load the model
-        # with BitsAndBytes quantization, which is extremely slow for inference.
-        # We need to remove this config so vLLM loads it as a normal FP16/BF16 model.
-        console.print("[cyan]Cleaning quantization_config from merged model...[/cyan]")
+        # Decide whether to keep quantization metadata in config.json.
+        # If we intentionally saved a 4-bit/bitsandbytes artifact above (load_in_4bit==True)
+        # we SHOULD PRESERVE the quantization metadata so vLLM will select its
+        # bitsandbytes loader and avoid doing large FP16 allocations. If we saved
+        # a merged_16bit artifact, keep current behavior (no quant metadata).
         config_path = Path(output_dir) / "config.json"
         if config_path.exists():
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            
-            # Remove quantization_config at root level
-            if "quantization_config" in config:
-                del config["quantization_config"]
-                console.print("[green]✓ Removed root-level quantization_config[/green]")
-            
-            # Remove quantization_config from text_config (for vision models)
-            if "text_config" in config and isinstance(config["text_config"], dict):
-                if "quantization_config" in config["text_config"]:
-                    del config["text_config"]["quantization_config"]
-                    console.print("[green]✓ Removed text_config quantization_config[/green]")
-            
-            # Write cleaned config
-            with open(config_path, 'w') as f:
-                json.dump(config, f, indent=2)
-            console.print("[green]✓ Config cleaned - vLLM will load as FP16/BF16 model[/green]")
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+
+                if load_in_4bit:
+                    console.print("[cyan]Keeping quantization_config in config.json so vLLM will use bitsandbytes loader[/cyan]")
+                else:
+                    # Remove quantization_config at root level for 16-bit merges
+                    modified = False
+                    if "quantization_config" in config:
+                        del config["quantization_config"]
+                        modified = True
+                        console.print("[green]✓ Removed root-level quantization_config (16-bit save)[/green]")
+                    if "text_config" in config and isinstance(config["text_config"], dict):
+                        if "quantization_config" in config["text_config"]:
+                            del config["text_config"]["quantization_config"]
+                            modified = True
+                            console.print("[green]✓ Removed text_config quantization_config (16-bit save)[/green]")
+
+                    if modified:
+                        with open(config_path, 'w') as f:
+                            json.dump(config, f, indent=2)
+                        console.print("[green]✓ Config cleaned for vLLM compatibility (16-bit)[/green]")
+            except Exception as e:
+                console.print(f"[yellow]⚠️ Failed to inspect/modify config.json: {e} - continuing[/yellow]")
         else:
-            console.print("[yellow]⚠️  config.json not found, skipping cleanup[/yellow]")
+            console.print("[yellow]⚠️  config.json not found, skipping config adjustments[/yellow]")
         
         # Save tokenizer (from base model)
         from transformers import AutoTokenizer
