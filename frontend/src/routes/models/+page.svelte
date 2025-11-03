@@ -51,8 +51,10 @@
   }
 
   async function handleRename(model: Model) {
-    const newName = window.prompt(`Rename model '${model.name}' to:`,
-      model.name || '');
+    const newName = window.prompt(
+      `Rename model '${model.name}' to:`,
+      model.name || "",
+    );
     if (!newName) return;
 
     try {
@@ -63,7 +65,8 @@
       alert(`Model renamed to ${newName}`);
     } catch (err) {
       alert(
-        'Failed to rename model: ' + (err instanceof Error ? err.message : 'Unknown error'),
+        "Failed to rename model: " +
+          (err instanceof Error ? err.message : "Unknown error"),
       );
     }
   }
@@ -144,7 +147,10 @@
               <div class="flex items-start justify-between">
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900">
-                    <a href={`/models/${encodeURIComponent(model.id)}`} class="hover:underline">
+                    <a
+                      href={`/models/${encodeURIComponent(model.id)}`}
+                      class="hover:underline"
+                    >
                       {model.name}
                     </a>
                   </h3>
