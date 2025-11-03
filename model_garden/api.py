@@ -1603,6 +1603,132 @@ async def delete_model(model_id: str):
     )
 
 
+# Pydantic model for rename requests
+class ModelRenameRequest(BaseModel):
+    """Request body for renaming a model."""
+    new_name: str
+
+
+@app.post("/api/v1/models/{model_id}/rename", response_model=APIResponse)
+async def rename_model(model_id: str, request: ModelRenameRequest):
+    """Rename a model directory and update storage entries atomically.
+
+    This will move the model directory on disk and update `models_storage`
+    and any `training_jobs` that reference the model's output directory.
+    If any step fails, an attempt is made to rollback the filesystem move
+    to keep on-disk state and JSON storage consistent.
+    """
+    if model_id not in models_storage:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model {model_id} not found"
+        )
+
+    new_name = request.new_name.strip()
+    # Basic validation: new_name must be a simple directory name
+    if not new_name or '/' in new_name or '\\' in new_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid new_name. Provide a single directory name without path separators."
+        )
+
+    # Prevent clobbering an existing model id
+    if new_name in models_storage:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A model with name '{new_name}' already exists"
+        )
+
+    # Resolve paths
+    old_entry = models_storage[model_id]
+    old_path = Path(old_entry.get("path", ""))
+    if not old_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model directory not found on disk: {old_path}"
+        )
+
+    new_path = old_path.parent / new_name
+    if new_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Target path already exists: {new_path}"
+        )
+
+    import shutil
+
+    # Prepare backup copies of in-memory state for rollback
+    old_models_storage = dict(models_storage)
+    old_training_jobs = dict(training_jobs)
+
+    try:
+        # Move directory on disk
+        shutil.move(str(old_path), str(new_path))
+
+        # Update models_storage: remove old key, add new key
+        new_id = new_name
+        new_entry = dict(old_entry)
+        new_entry["id"] = new_id
+        new_entry["name"] = new_name
+        new_entry["path"] = str(new_path)
+        new_entry["updated_at"] = datetime.utcnow().isoformat() + "Z"
+
+        # Remove old entry and insert new one
+        del models_storage[model_id]
+        models_storage[new_id] = new_entry
+
+        # Update training_jobs that reference the old path
+        old_path_str = str(old_path)
+        new_path_str = str(new_path)
+        updated_jobs = []
+        for jid, job in training_jobs.items():
+            # Update exact matches and prefix matches (e.g., checkpoints inside model dir)
+            out_dir = job.get("output_dir")
+            if out_dir and isinstance(out_dir, str):
+                if out_dir == old_path_str or out_dir.startswith(old_path_str + os.sep):
+                    new_out = out_dir.replace(old_path_str, new_path_str, 1)
+                    training_jobs[jid]["output_dir"] = new_out
+                    updated_jobs.append(jid)
+
+        # Persist both storages
+        storage_manager.save_training_jobs(training_jobs)
+        storage_manager.save_models(models_storage)
+
+        msg = f"Model '{model_id}' renamed to '{new_id}' successfully"
+        if updated_jobs:
+            msg += f"; updated {len(updated_jobs)} training job(s)"
+
+        return APIResponse(success=True, message=msg, data={"old_id": model_id, "new_id": new_id})
+
+    except Exception as e:
+        # Attempt rollback: move files back and restore in-memory state
+        try:
+            if new_path.exists() and not old_path.exists():
+                shutil.move(str(new_path), str(old_path))
+        except Exception as rollback_err:
+            print(f"⚠️  Rollback failed moving files back: {rollback_err}")
+
+        # Restore in-memory dicts
+        models_storage.clear()
+        models_storage.update(old_models_storage)
+        training_jobs.clear()
+        training_jobs.update(old_training_jobs)
+
+        # Persist restored state
+        try:
+            storage_manager.save_training_jobs(training_jobs)
+            storage_manager.save_models(models_storage)
+        except Exception:
+            print("⚠️  Failed to persist restored storage after rollback")
+
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to rename model: {e}"
+        )
+
+
 @app.post("/api/v1/models/{model_id}/upload-to-hub")
 async def upload_model_to_hub(
     model_id: str,
@@ -1709,17 +1835,53 @@ async def upload_model_to_hub(
         except Exception as e:
             print(f"Repository creation note: {e}")
         
-        # Upload the entire model directory
+        # Upload the entire model directory with retries/backoff for transient HF errors
+        import time
+        import requests
+
         print(f"Uploading model from {model_path} to {repo_id}...")
-        url = upload_folder(
-            folder_path=str(model_path),
-            repo_id=repo_id,
-            token=hf_token,
-            commit_message=commit_message,
-            repo_type="model"
-        )
-        
-        print(f"✓ Model uploaded successfully to {url}")
+
+        max_retries = int(os.getenv("HF_UPLOAD_RETRIES", "3"))
+        backoff_base = float(os.getenv("HF_UPLOAD_BACKOFF_BASE", "2.0"))
+        url = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                url = upload_folder(
+                    folder_path=str(model_path),
+                    repo_id=repo_id,
+                    token=hf_token,
+                    commit_message=commit_message,
+                    repo_type="model"
+                )
+                print(f"✓ Model uploaded successfully to {url} (attempt {attempt})")
+                break
+
+            except Exception as exc:
+                # Try to detect transient HTTP errors (502/503/504) or connection issues
+                resp = getattr(exc, "response", None)
+                status_code = getattr(resp, "status_code", None) if resp is not None else None
+
+                is_transient = False
+                if status_code in (502, 503, 504):
+                    is_transient = True
+                if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+                    is_transient = True
+
+                # If we should retry, sleep with exponential backoff
+                if attempt < max_retries and is_transient:
+                    sleep_time = backoff_base ** (attempt - 1)
+                    print(f"Upload attempt {attempt} failed with transient error (status={status_code}): {exc}. Retrying in {sleep_time}s...")
+                    time.sleep(sleep_time)
+                    continue
+
+                # Non-retryable or out of attempts - re-raise to outer handler
+                print(f"Upload attempt {attempt} failed (status={status_code}): {exc}")
+                raise
+
+        if not url:
+            # Shouldn't happen because exceptions above are re-raised, but guard anyway
+            raise RuntimeError("Failed to upload model to HuggingFace Hub: no URL returned")
         
         # Create a README if it doesn't exist
         readme_path = model_path / "README.md"

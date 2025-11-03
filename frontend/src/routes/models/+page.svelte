@@ -50,6 +50,24 @@
     }
   }
 
+  async function handleRename(model: Model) {
+    const newName = window.prompt(`Rename model '${model.name}' to:`,
+      model.name || '');
+    if (!newName) return;
+
+    try {
+      await api.renameModel(model.id, newName.trim());
+      // Refresh list
+      const response = await api.getModels();
+      models = response.items;
+      alert(`Model renamed to ${newName}`);
+    } catch (err) {
+      alert(
+        'Failed to rename model: ' + (err instanceof Error ? err.message : 'Unknown error'),
+      );
+    }
+  }
+
   function handleUploadClick(model: Model) {
     selectedModel = model;
     uploadModalOpen = true;
@@ -126,7 +144,9 @@
               <div class="flex items-start justify-between">
                 <div>
                   <h3 class="text-lg font-semibold text-gray-900">
-                    {model.name}
+                    <a href={`/models/${encodeURIComponent(model.id)}`} class="hover:underline">
+                      {model.name}
+                    </a>
                   </h3>
                   <p class="text-sm text-gray-500">{model.base_model}</p>
                 </div>
@@ -183,6 +203,13 @@
                       : "Upload model to HuggingFace Hub"}
                   >
                     🤗 Upload to Hub
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onclick={() => handleRename(model)}
+                  >
+                    ✏️ Rename
                   </Button>
                   <Button
                     variant="danger"

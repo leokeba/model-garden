@@ -3,6 +3,7 @@
   import Button from '$lib/components/Button.svelte';
   import Card from '$lib/components/Card.svelte';
   import { api, type Model } from '$lib/api/client';
+  import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
 
   const modelName = $derived($page.params.name);
@@ -33,6 +34,22 @@
       error = err instanceof Error ? err.message : 'Failed to load model';
     } finally {
       loading = false;
+    }
+  }
+
+  async function handleRename() {
+    if (!model) return;
+    const newName = window.prompt(`Rename model '${model.name}' to:`, model.name || '');
+    if (!newName) return;
+
+    try {
+      const res = await api.renameModel(model.id, newName.trim());
+      const newId = res.data?.new_id || newName.trim();
+      alert(`Model renamed to ${newId}`);
+      // Navigate to new model page
+      goto(`/models/${encodeURIComponent(newId)}`);
+    } catch (err) {
+      alert('Failed to rename model: ' + (err instanceof Error ? err.message : 'Unknown error'));
     }
   }
 
@@ -325,6 +342,9 @@
                 
                 <Button href="/models" variant="secondary" fullWidth>
                   Back to Models
+                </Button>
+                <Button onclick={handleRename} variant="secondary" fullWidth>
+                  ✏️ Rename Model
                 </Button>
               </div>
             </div>

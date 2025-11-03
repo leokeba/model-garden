@@ -324,6 +324,13 @@ class APIClient {
     });
   }
 
+  async renameModel(modelId: string, newName: string): Promise<{ success: boolean; data: { old_id: string; new_id: string }; message: string }> {
+    return this.request(`/models/${encodeURIComponent(modelId)}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ new_name: newName }),
+    });
+  }
+
   async generateText(modelName: string, params: {
     prompt: string;
     max_length?: number;
