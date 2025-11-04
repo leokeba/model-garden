@@ -116,15 +116,27 @@ class WeightedLossTrainer(Trainer):
         outputs = model(**inputs)
         logits = outputs.get("logits")
         
+        # CRITICAL: Apply causal LM shift (predict token i+1 from position i)
+        # This matches the behavior of ForCausalLMLoss in transformers
+        # Shift labels: pad right with -100, then take [1:] to align with logits
+        labels = F.pad(labels, (0, 1), value=-100)  # Add padding at end
+        shift_labels = labels[..., 1:].contiguous()  # Shift left by 1
+        
+        # Also shift sample_weights if present (must match labels shift)
+        if has_weights:
+            # Pad weights with 0.0 at the end, then shift
+            sample_weights = F.pad(sample_weights, (0, 1), value=0.0)
+            sample_weights = sample_weights[..., 1:].contiguous()
+        
+        # Now logits[i] predicts shift_labels[i] (which is original labels[i+1])
+        # Reshape for cross-entropy: [batch * seq_len, vocab_size] and [batch * seq_len]
+        logits_flat = logits.view(-1, logits.size(-1))
+        shift_labels_flat = shift_labels.view(-1)
+        
         # Compute per-token loss (no reduction)
         # ignore_index=-100 handles prompt tokens that are already masked
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=-100)
-        
-        # Reshape for cross-entropy: [batch * seq_len, vocab_size] and [batch * seq_len]
-        loss = loss_fct(
-            logits.view(-1, logits.size(-1)),
-            labels.view(-1)
-        )
+        loss = loss_fct(logits_flat, shift_labels_flat)
         
         # Apply per-token weights if provided
         if has_weights:
@@ -136,8 +148,8 @@ class WeightedLossTrainer(Trainer):
             # Compute weighted average: sum(loss * weight) / num_valid_tokens
             # IMPORTANT: Normalize by number of tokens, not sum of weights!
             # This keeps loss magnitude comparable to standard training.
-            # Only consider valid tokens (not -100)
-            valid_mask = (labels != -100).view(-1)
+            # Only consider valid tokens (not -100) - use shift_labels now
+            valid_mask = (shift_labels_flat != -100)
             
             if valid_mask.any():
                 # Sum of weighted losses for valid tokens
@@ -160,8 +172,8 @@ class WeightedLossTrainer(Trainer):
                     final_loss=final_loss
                 )
         else:
-            # Standard averaging over valid tokens (no weights)
-            valid_mask = (labels != -100).view(-1)
+            # Standard averaging over valid tokens (no weights) - use shift_labels now
+            valid_mask = (shift_labels_flat != -100)
             
             if valid_mask.any():
                 final_loss = loss[valid_mask].mean()

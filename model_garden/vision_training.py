@@ -39,6 +39,7 @@ from PIL import Image
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from transformers.trainer_callback import TrainerControl
+from trl.trainer.sft_trainer import SFTTrainer  # type: ignore
 
 # Import carbon tracking
 from model_garden.carbon import CarbonTracker
@@ -49,6 +50,35 @@ from model_garden.training_utils import detect_model_dtype, get_training_precisi
 
 console = Console()
 
+
+class FixedSFTTrainer(SFTTrainer):
+    """Custom SFTTrainer that fixes the eval loss computation bug.
+    
+    The bug: Trainer.prediction_step() doesn't pass num_items_in_batch to compute_loss,
+    causing incorrect loss normalization during evaluation when using masked tokens.
+    
+    Training path: compute_loss(model, inputs, num_items_in_batch=...) → correct
+    Eval path: compute_loss(model, inputs, return_outputs=True) → MISSING num_items_in_batch!
+    
+    This fixes the eval path to also pass num_items_in_batch for correct loss computation.
+    """
+    
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        """Override to disable num_items_in_batch entirely.
+        
+        The issue: Training sums tokens across gradient_accumulation_steps batches (~1700 tokens)
+        and computes loss = sum / 1700. Eval uses a single batch (~425 tokens) with loss = sum / 425.
+        Even though both are "per-token averages", they differ due to batch composition.
+        
+        Solution: Force num_items_in_batch=None for both train and eval to use consistent
+        reduction='mean' behavior across all tokens in each batch independently.
+        """
+        # Force num_items_in_batch=None for both training and eval
+        # This makes both use reduction='mean' (default behavior)
+        num_items_in_batch = None
+        
+        # Call parent with num_items_in_batch=None
+        return super().compute_loss(model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch)
 
 def _cleanup_memory_after_merge():
     """Clean up GPU and system memory after model merge.
@@ -1053,8 +1083,8 @@ class VisionLanguageTrainer:
                 verbose_loss=selective_loss_verbose,
             )
         else:
-            # Use standard SFTTrainer for other strategies
-            trainer = SFTTrainer(
+            # Use our fixed SFTTrainer that passes num_items_in_batch during evaluation
+            trainer = FixedSFTTrainer(
                 model=self.model,
                 tokenizer=self.tokenizer,  # type: ignore
                 args=training_args,
