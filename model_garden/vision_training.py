@@ -477,6 +477,13 @@ class VisionLanguageTrainer:
                 return image_data.convert("RGB")
             return image_data
         
+        # Check for PIL.Image subclasses (PngImageFile, JpegImageFile, etc.)
+        if image_data is not None and hasattr(image_data, 'mode') and hasattr(image_data, 'convert'):
+            # It's an image object
+            if image_data.mode != "RGB":
+                return image_data.convert("RGB")
+            return image_data
+        
         # File path
         if isinstance(image_data, str):
             if image_data.startswith("data:image") or (len(image_data) > 100 and not os.path.exists(image_data)):
@@ -497,7 +504,7 @@ class VisionLanguageTrainer:
                 return img
         
         # Fallback: create blank image
-        console.print(f"[yellow]⚠️  Unknown image format, using blank image[/yellow]")
+        console.print(f"[yellow]⚠️  Unknown image format (type: {type(image_data).__name__}), using blank image[/yellow]")
         return Image.new("RGB", (224, 224))
 
     def _convert_messages_to_simple_format(self, messages: List[Dict]) -> Dict[str, str]:
@@ -655,6 +662,65 @@ class VisionLanguageTrainer:
         console.print(f"  response_part: {repr(markers[1])}")
         return markers
 
+    def _detect_vqa_format(self, example: Dict) -> bool:
+        """Detect if example uses VQA format (question + answer/answers)."""
+        has_question = "question" in example
+        has_answer = "answer" in example or "answers" in example
+        has_image = "image" in example
+        return has_question and has_answer and has_image
+    
+    def _convert_vqa_to_simple(self, example: Dict) -> Dict[str, Any]:
+        """Convert VQA-style formats to simple format.
+        
+        Handles formats like:
+        - ScienceQA: {question, choices, answer (index), solution, image}
+        - VQA: {question, answers (list), image}
+        - DocVQA: {question, answers (list), image}
+        """
+        result = {
+            "text": example.get("question", ""),
+            "image": example.get("image"),
+            "response": ""
+        }
+        
+        # Handle different answer formats
+        if "choices" in example and "answer" in example:
+            # ScienceQA format - answer is index into choices
+            answer_idx = example.get("answer", 0)
+            choices = example.get("choices", [])
+            if isinstance(answer_idx, int) and answer_idx < len(choices):
+                result["response"] = choices[answer_idx]
+                
+                # Add solution if available
+                solution = example.get("solution", "")
+                if solution:
+                    result["response"] = f"{result['response']}. {solution}"
+        
+        elif "answers" in example:
+            # Generic VQA format - answers is a list
+            answers = example.get("answers", [])
+            if isinstance(answers, list) and answers:
+                # Get first answer
+                if isinstance(answers[0], str):
+                    result["response"] = answers[0]
+                elif isinstance(answers[0], dict):
+                    result["response"] = answers[0].get("answer", "")
+            elif isinstance(answers, str):
+                result["response"] = answers
+        
+        elif "answer" in example:
+            # Simple answer field
+            answer = example.get("answer")
+            if isinstance(answer, str):
+                result["response"] = answer
+            elif isinstance(answer, int) and "choices" in example:
+                # Answer is index
+                choices = example.get("choices", [])
+                if answer < len(choices):
+                    result["response"] = choices[answer]
+        
+        return result
+
     def format_dataset(
         self,
         dataset: Dataset,
@@ -665,7 +731,7 @@ class VisionLanguageTrainer:
     ) -> list:
         """Format dataset for vision-language training using OpenAI message format.
 
-        Supports two input formats:
+        Supports multiple input formats:
         
         1. Simple format (custom datasets):
            {
@@ -685,10 +751,14 @@ class VisionLanguageTrainer:
                    {"role": "assistant", "content": [{"type": "text", "text": "..."}]}
                ]
            }
+        
+        3. VQA formats (auto-detected):
+           - ScienceQA: {question, choices, answer (index), solution, image}
+           - Generic VQA: {question, answers (list), image}
+           - DocVQA: {question, answers, image}
            
-        Note: OpenAI messages format is automatically converted to simple format
+        Note: OpenAI messages and VQA formats are automatically converted to simple format
         for compatibility with UnslothVisionDataCollator.
-        Also supports older format with {"type": "image", "image": "..."}.
 
         Returns list of message dictionaries for UnslothVisionDataCollator.
 
@@ -715,6 +785,13 @@ class VisionLanguageTrainer:
         
         has_messages_field = messages_field in dataset.column_names
         
+        # Check if dataset uses VQA format (check first example)
+        first_example = dataset[0] if len(dataset) > 0 else {}
+        is_vqa_format = self._detect_vqa_format(first_example) if first_example else False
+        
+        if is_vqa_format:
+            console.print("[yellow]✓ Detected VQA format - will auto-convert (question/answer/image)[/yellow]")
+        
         for example in dataset:
             # Ensure example is a dict-like object
             if isinstance(example, dict):
@@ -722,8 +799,37 @@ class VisionLanguageTrainer:
             else:
                 # Handle list case (shouldn't happen with proper datasets)
                 continue
+            
+            if is_vqa_format:
+                # VQA format - convert to simple format first
+                simple = self._convert_vqa_to_simple(example_dict)
+                text = simple.get("text", "")
+                response = simple.get("response", "")
+                pil_image = self._load_image(simple.get("image"))
                 
-            if has_messages_field and messages_field in example_dict:
+                # Format as OpenAI messages
+                formatted_messages = {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": [{"type": "text", "text": system_message}],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": pil_image},
+                                {"type": "text", "text": text},
+                            ],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": response}],
+                        },
+                    ],
+                }
+                formatted_data.append(formatted_messages)
+                
+            elif has_messages_field and messages_field in example_dict:
                 # OpenAI messages format - convert to simple format first
                 console.print("[yellow]Converting OpenAI messages format to simple format for compatibility...[/yellow]") if len(formatted_data) == 0 else None
                 
