@@ -151,22 +151,19 @@
   <title>Load Model - Model Garden</title>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50">
-  <!-- Header -->
-  <div class="bg-white shadow">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex justify-between items-center py-6">
-        <div class="flex items-center">
-          <Button href="/models" variant="ghost" size="sm">← Models</Button>
-          <h1 class="text-3xl font-bold text-gray-900 ml-4">
-            Load Model for Inference
-          </h1>
-        </div>
+<div class="min-h-screen bg-gray-50 pt-6">
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-900">
+          Load Model for Inference
+        </h1>
+        <p class="mt-2 text-sm text-gray-600">
+          Load a model from your local storage or HuggingFace Hub
+        </p>
       </div>
     </div>
-  </div>
-
-  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     {#if loading}
       <div class="text-center py-12">
         <div

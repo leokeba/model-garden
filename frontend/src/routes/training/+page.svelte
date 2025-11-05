@@ -119,25 +119,22 @@
   <title>Training Jobs - Model Garden</title>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50">
-  <!-- Header -->
-  <div class="bg-white shadow">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex justify-between items-center py-6">
-        <div class="flex items-center">
-          <Button href="/" variant="ghost" size="sm">← Dashboard</Button>
-          <h1 class="text-3xl font-bold text-gray-900 ml-4">Training Jobs</h1>
-        </div>
-        <div class="flex gap-3">
-          <Button href="/training/new" variant="primary">
-            + New Training Job
-          </Button>
-        </div>
+<div class="min-h-screen bg-gray-50 pt-6">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-900">Training Jobs</h1>
+        <p class="mt-2 text-sm text-gray-600">
+          Monitor and manage your model training jobs
+        </p>
+      </div>
+      <div class="flex gap-3">
+        <Button href="/training/new" variant="primary">
+          + New Training Job
+        </Button>
       </div>
     </div>
-  </div>
-
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     {#if loading}
       <div class="text-center py-12">
         <div

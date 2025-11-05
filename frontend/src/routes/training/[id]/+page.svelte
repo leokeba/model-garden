@@ -352,18 +352,20 @@
   <title>Training Job {jobId} - Model Garden</title>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50">
-  <!-- Header -->
-  <div class="bg-white shadow">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex justify-between items-center py-6">
-        <div class="flex items-center">
-          <Button href="/training" variant="ghost" size="sm"
-            >← Training Jobs</Button
-          >
-          <h1 class="text-3xl font-bold text-gray-900 ml-4">
-            Training Job Details
-          </h1>
+<div class="min-h-screen bg-gray-50 pt-6">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="mb-6">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-4">
+          <Button href="/training" variant="ghost" size="sm">← Back</Button>
+          <div>
+            <h1 class="text-3xl font-bold text-gray-900">
+              Training Job Details
+            </h1>
+            <p class="mt-1 text-sm text-gray-600">
+              Monitor and manage your training job
+            </p>
+          </div>
         </div>
         {#if job}
           <div class="flex items-center gap-3">
@@ -421,9 +423,6 @@
         {/if}
       </div>
     </div>
-  </div>
-
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     {#if loading}
       <div class="flex justify-center items-center h-64">
         <div
@@ -1173,6 +1172,22 @@
                                 {job.selective_loss_level || "conservative"}
                               </dd>
                             </div>
+                            {#if job.selective_loss_masking_strategy !== undefined}
+                              <div>
+                                <dt class="text-gray-600">Masking Strategy</dt>
+                                <dd class="text-gray-900">
+                                  {job.selective_loss_masking_strategy}
+                                </dd>
+                              </div>
+                            {/if}
+                            {#if job.selective_loss_structural_weight !== undefined}
+                              <div>
+                                <dt class="text-gray-600">Structural Weight</dt>
+                                <dd class="text-gray-900">
+                                  {job.selective_loss_structural_weight}
+                                </dd>
+                              </div>
+                            {/if}
                             {#if job.selective_loss_masking_start_epoch !== undefined}
                               <div>
                                 <dt class="text-gray-600">
@@ -1180,6 +1195,24 @@
                                 </dt>
                                 <dd class="text-gray-900">
                                   {job.selective_loss_masking_start_epoch}
+                                </dd>
+                              </div>
+                            {/if}
+                            {#if job.selective_loss_mask_every_n_steps !== undefined}
+                              <div>
+                                <dt class="text-gray-600">
+                                  Mask Every N Steps
+                                </dt>
+                                <dd class="text-gray-900">
+                                  {job.selective_loss_mask_every_n_steps}
+                                </dd>
+                              </div>
+                            {/if}
+                            {#if job.selective_loss_mask_for_n_steps !== undefined}
+                              <div>
+                                <dt class="text-gray-600">Mask For N Steps</dt>
+                                <dd class="text-gray-900">
+                                  {job.selective_loss_mask_for_n_steps}
                                 </dd>
                               </div>
                             {/if}
