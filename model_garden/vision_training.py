@@ -48,6 +48,9 @@ from model_garden.selective_loss import create_selective_loss_collator
 # Import shared training utilities
 from model_garden.training_utils import detect_model_dtype, get_training_precision_config, MemoryMonitorCallback
 
+# Import backend base class
+from model_garden.backends.base import VisionTrainer
+
 console = Console()
 
 
@@ -102,7 +105,7 @@ def _cleanup_memory_after_merge():
         torch.cuda.reset_peak_memory_stats()
 
 
-class VisionLanguageTrainer:
+class VisionLanguageTrainer(VisionTrainer):
     """Handles vision-language model fine-tuning."""
 
     def __init__(
@@ -1777,3 +1780,43 @@ def create_vision_sample_dataset(output_path: str, num_examples: int = 10) -> No
 
     console.print(f"[green]✓[/green] Sample vision-language dataset created at {output_path}")
     console.print("[yellow]⚠️  Note: Replace placeholder image paths with actual image files[/yellow]")
+
+
+def create_vision_trainer(
+    base_model: str,
+    max_seq_length: int = 16384,
+    load_in_4bit: bool = True,
+    load_in_8bit: bool = False,
+    dtype: Optional[Any] = None,
+    backend: str = "unsloth",
+) -> VisionTrainer:
+    """Create a vision trainer using the specified backend.
+    
+    This is a convenience function that creates a vision trainer through the backend system.
+    It allows for backend selection while maintaining backward compatibility.
+    
+    Args:
+        base_model: HuggingFace model identifier
+        max_seq_length: Maximum sequence length (larger for vision models)
+        load_in_4bit: Whether to load model in 4-bit quantization
+        load_in_8bit: Whether to load model in 8-bit quantization
+        dtype: Data type (None for auto-detection)
+        backend: Backend to use ('unsloth', etc.)
+    
+    Returns:
+        A vision trainer instance
+        
+    Example:
+        >>> trainer = create_vision_trainer("Qwen/Qwen2.5-VL-3B-Instruct", backend="unsloth")
+        >>> trainer.load_model()
+    """
+    from model_garden.backends import get_backend
+    
+    backend_instance = get_backend(backend)
+    return backend_instance.create_vision_trainer(
+        base_model=base_model,
+        max_seq_length=max_seq_length,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
+        dtype=dtype,
+    )

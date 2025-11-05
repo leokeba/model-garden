@@ -75,6 +75,7 @@ class TrainingJobRequest(BaseModel):
     is_vision: bool = False  # Flag for vision-language models
     model_type: Optional[str] = None  # 'text' or 'vision'
     save_method: str = "merged_16bit"  # How to save: 'lora', 'merged_16bit', 'merged_4bit'
+    backend: str = "unsloth"  # Training backend to use
     selective_loss: bool = False  # Enable selective loss for structured outputs
     selective_loss_level: str = "conservative"  # Level: conservative, moderate, aggressive
     selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
@@ -118,6 +119,7 @@ class TrainingJobInfo(BaseModel):
     total_steps: Optional[int] = None
     current_epoch: Optional[int] = None
     save_method: Optional[str] = "merged_16bit"
+    backend: Optional[str] = "unsloth"
     metrics: Optional[Dict] = None  # Training and validation metrics history
     # Selective loss settings
     selective_loss: Optional[bool] = False
@@ -722,17 +724,22 @@ def run_training_job(job_id: str):
         # Determine quantization (after quality mode overrides)
         load_in_4bit = not (load_in_16bit or load_in_8bit)
         
+        # Get backend (default to unsloth for backward compatibility)
+        backend = job.get("backend", "unsloth")
+        print(f"🔧 Using backend: {backend}")
+        
         if is_vision:
-            # Use VisionLanguageTrainer for vision models
-            from model_garden.vision_training import VisionLanguageTrainer
+            # Use create_vision_trainer with backend support
+            from model_garden.vision_training import create_vision_trainer
             
             print(f"🎨 Using VisionLanguageTrainer for {job['base_model']}")
             
-            trainer = VisionLanguageTrainer(
+            trainer = create_vision_trainer(
                 base_model=job["base_model"],
                 max_seq_length=job["hyperparameters"].get("max_seq_length", 16384),  # Default 16384 for vision models
                 load_in_4bit=load_in_4bit,
-                load_in_8bit=load_in_8bit,  # Add 8-bit support for vision models
+                load_in_8bit=load_in_8bit,
+                backend=backend,
             )
             
             # Load model
@@ -870,15 +877,16 @@ def run_training_job(job_id: str):
             except Exception:
                 pass
         else:
-            # Lazy import ModelTrainer to avoid spawning torch workers at API startup
-            from model_garden.training import ModelTrainer
+            # Lazy import create_text_trainer to avoid spawning torch workers at API startup
+            from model_garden.training import create_text_trainer
             
-            # Use standard ModelTrainer for text-only models
-            trainer = ModelTrainer(
+            # Use create_text_trainer with backend support
+            trainer = create_text_trainer(
                 base_model=job["base_model"],
                 max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
                 load_in_4bit=load_in_4bit,
-                load_in_8bit=load_in_8bit,  # Add 8-bit support for text models
+                load_in_8bit=load_in_8bit,
+                backend=backend,
             )
             
             # Load model
@@ -1359,6 +1367,31 @@ async def get_config():
             "hf_home": HF_HOME,
         }
     }
+
+
+@app.get("/api/v1/backends")
+async def list_available_backends():
+    """List all available training backends.
+    
+    Returns:
+        List of available backends with their capabilities.
+    """
+    try:
+        from model_garden.backends import list_backends
+        
+        backends = list_backends()
+        
+        return {
+            "success": True,
+            "data": backends,
+            "message": f"Found {len(backends)} available backend(s)"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "data": [],
+            "message": f"Error listing backends: {str(e)}"
+        }
 
 
 # Model Registry endpoints

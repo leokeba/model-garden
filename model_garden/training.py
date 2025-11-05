@@ -46,10 +46,13 @@ from typing import cast
 # Import carbon tracking
 from model_garden.carbon import CarbonTracker
 
+# Import backend base class
+from model_garden.backends.base import TextTrainer
+
 console = Console()
 
 
-class ModelTrainer:
+class ModelTrainer(TextTrainer):
     """Handles model fine-tuning using Unsloth."""
 
     def __init__(
@@ -578,3 +581,43 @@ def create_sample_dataset(output_path: str, num_examples: int = 100) -> None:
             f.write(json.dumps(example) + "\n")
 
     console.print(f"[green]✓[/green] Sample dataset created at {output_path}")
+
+
+def create_text_trainer(
+    base_model: str,
+    max_seq_length: int = 2048,
+    load_in_4bit: bool = True,
+    load_in_8bit: bool = False,
+    dtype: Optional[str] = None,
+    backend: str = "unsloth",
+) -> TextTrainer:
+    """Create a text trainer using the specified backend.
+    
+    This is a convenience function that creates a text trainer through the backend system.
+    It allows for backend selection while maintaining backward compatibility.
+    
+    Args:
+        base_model: HuggingFace model identifier or local path
+        max_seq_length: Maximum sequence length
+        load_in_4bit: Whether to load model in 4-bit quantization
+        load_in_8bit: Whether to load model in 8-bit quantization
+        dtype: Data type (None for auto-detection)
+        backend: Backend to use ('unsloth', etc.)
+    
+    Returns:
+        A text trainer instance
+        
+    Example:
+        >>> trainer = create_text_trainer("unsloth/tinyllama-bnb-4bit", backend="unsloth")
+        >>> trainer.load_model()
+    """
+    from model_garden.backends import get_backend
+    
+    backend_instance = get_backend(backend)
+    return backend_instance.create_text_trainer(
+        base_model=base_model,
+        max_seq_length=max_seq_length,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
+        dtype=dtype,
+    )

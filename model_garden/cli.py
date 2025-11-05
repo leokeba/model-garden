@@ -220,6 +220,12 @@ def main() -> None:
     is_flag=True,
     help="Enable quality-optimized settings (16-bit precision, standard gradient checkpointing, better optimizer)",
 )
+@click.option(
+    "--backend",
+    type=str,
+    default="unsloth",
+    help="Training backend to use (default: unsloth). Use 'model-garden list-backends' to see available options.",
+)
 def train(
     base_model: str,
     dataset: str,
@@ -256,6 +262,7 @@ def train(
     use_rslora: bool,
     optim: str,
     quality_mode: bool,
+    backend: str,
 ) -> None:
     """Fine-tune a language model using Unsloth.
 
@@ -289,9 +296,10 @@ def train(
     """
     try:
         # Lazy import to avoid loading unsloth for inference commands
-        from model_garden.training import ModelTrainer
+        from model_garden.training import create_text_trainer
         
         console.print("\n[bold cyan]🌱 Model Garden - Fine-tuning[/bold cyan]\n")
+        console.print(f"[cyan]Backend: {backend}[/cyan]\n")
         
         # Apply quality mode overrides
         if quality_mode:
@@ -320,12 +328,13 @@ def train(
         
         load_in_4bit_final = not (load_in_16bit or load_in_8bit)
 
-        # Initialize trainer
-        trainer = ModelTrainer(
+        # Initialize trainer with backend
+        trainer = create_text_trainer(
             base_model=base_model,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit_final,
-            load_in_8bit=load_in_8bit,  # Add 8-bit support
+            load_in_8bit=load_in_8bit,
+            backend=backend,
         )
 
         # Load model
@@ -841,6 +850,12 @@ def serve(host: str, port: int, reload: bool) -> None:
     default=True,
     help="Fine-tune MLP layers (disable for faster training with slightly lower quality)",
 )
+@click.option(
+    "--backend",
+    type=str,
+    default="unsloth",
+    help="Training backend to use (default: unsloth). Use 'model-garden list-backends' to see available options.",
+)
 def train_vision(
     base_model: str,
     dataset: str,
@@ -889,6 +904,7 @@ def train_vision(
     finetune_language_layers: bool,
     finetune_attention_modules: bool,
     finetune_mlp_modules: bool,
+    backend: str,
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
 
@@ -921,9 +937,10 @@ def train_vision(
             {"messages": [{"role": "user", "content": [{"type": "image", "image": "data:image/jpeg;base64,..."}]}]}
     """
     try:
-        from model_garden.vision_training import VisionLanguageTrainer
+        from model_garden.vision_training import create_vision_trainer
         
         console.print("\n[bold cyan]🌱 Model Garden - Vision-Language Fine-tuning[/bold cyan]\n")
+        console.print(f"[cyan]Backend: {backend}[/cyan]\n")
         
         if from_hub:
             console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset}[/cyan]")
@@ -962,12 +979,13 @@ def train_vision(
         
         load_in_4bit_final = not (load_in_16bit or load_in_8bit)
 
-        # Initialize trainer
-        trainer = VisionLanguageTrainer(
+        # Initialize trainer with backend
+        trainer = create_vision_trainer(
             base_model=base_model,
             max_seq_length=max_seq_length,
             load_in_4bit=load_in_4bit_final,
             load_in_8bit=load_in_8bit,
+            backend=backend,
         )
 
         # Load model
@@ -1498,6 +1516,53 @@ def inference_chat(model_path, system_prompt, max_tokens, temperature, tensor_pa
         
         asyncio.run(chat())
         console.print("[green]✨ Chat session ended![/green]\n")
+        
+    except Exception as e:
+        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
+        raise click.Abort()
+
+
+@main.command(name="list-backends")
+def list_backends_cmd() -> None:
+    """List available training backends.
+    
+    Shows all registered backends with their capabilities (text/vision support).
+    
+    Example:
+        uv run model-garden list-backends
+    """
+    try:
+        from model_garden.backends import list_backends
+        
+        console.print("\n[bold cyan]Available Training Backends[/bold cyan]\n")
+        
+        backends = list_backends()
+        
+        if not backends:
+            console.print("[yellow]No backends registered[/yellow]\n")
+            return
+        
+        from rich.table import Table
+        
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Backend", style="green")
+        table.add_column("Description")
+        table.add_column("Text", justify="center")
+        table.add_column("Vision", justify="center")
+        
+        for backend in backends:
+            text_support = "✓" if backend["supports_text"] else "✗"
+            vision_support = "✓" if backend["supports_vision"] else "✗"
+            
+            table.add_row(
+                backend["name"],
+                backend["description"],
+                text_support,
+                vision_support,
+            )
+        
+        console.print(table)
+        console.print()
         
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
