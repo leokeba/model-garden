@@ -25,8 +25,21 @@ def _register_backends():
         import traceback
         traceback.print_exc()
     
+    # Register Transformers backend (standard HF)
+    try:
+        from model_garden.backends.transformers_backend import TransformersBackend
+        register_backend("transformers", TransformersBackend)
+    except ImportError as e:
+        import sys
+        print(f"Warning: Failed to register Transformers backend: {e}", file=sys.stderr)
+    except Exception as e:
+        import sys
+        print(f"Error registering Transformers backend: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+    
     # Future backends can be registered here
-    # e.g., TransformersBackend, DeepSpeedBackend, etc.
+    # e.g., DeepSpeedBackend, etc.
 
 _register_backends()
 
