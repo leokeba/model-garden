@@ -419,7 +419,7 @@ class InferenceService:
         self.original_base_model: Optional[str] = None  # Original base model for tokenizer (for merged vision models)
         
         # Request serialization for vision models (prevents vLLM deadlocks with concurrent multimodal requests)
-        self._vision_request_semaphore = asyncio.Semaphore(1)  # Only 1 concurrent vision request
+        self._vision_request_semaphore = asyncio.Semaphore(8)  # Allow 8 concurrent vision requests
 
     async def load_model(self) -> None:
         """Load the model into vLLM engine.
