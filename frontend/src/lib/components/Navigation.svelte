@@ -33,9 +33,7 @@
       <div class="flex">
         <!-- Logo -->
         <div class="flex-shrink-0 flex items-center">
-          <a href="/" class="text-xl font-bold text-gray-900">
-            🌱 Model Garden
-          </a>
+          <a href="/" class="text-xl font-bold text-gray-900"> 🌱 SEEDS Lab </a>
         </div>
 
         <!-- Navigation Links -->
