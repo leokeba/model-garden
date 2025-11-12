@@ -186,7 +186,7 @@ class JobQueue:
             job_id: Job identifier
             
         Returns:
-            True if job was cancelled, False if not found or already running
+            True if job was cancelled, False if not found or already completed
         """
         async with self._queue_lock:
             if job_id not in self._queue:
@@ -194,8 +194,8 @@ class JobQueue:
             
             job = self._queue[job_id]
             
-            # Can only cancel queued jobs
-            if job["status"] != JobStatus.QUEUED:
+            # Can cancel queued or running jobs, but not completed/failed/cancelled
+            if job["status"] in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
                 return False
             
             job["status"] = JobStatus.CANCELLED

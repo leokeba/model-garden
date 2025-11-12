@@ -104,19 +104,49 @@ class QueueWorker:
         
         This loop continuously:
         1. Checks how many training jobs are currently running
-        2. If under the limit, gets the next queued job
-        3. Starts the job in a background thread
-        4. Waits before checking again
+        2. Detects and cleans up orphaned jobs (jobs in queue but not in training database)
+        3. If under the limit, gets the next queued job
+        4. Starts the job in a background thread
+        5. Waits before checking again
         
         The loop runs until stop() is called.
         """
         queue = get_job_queue()
         logger.info("🔄 Queue worker loop started")
-        print("🔄 Queue worker loop started")
+        print("🔄 Queue worker loop started", flush=True)
         
         while self.running:
             try:
                 # Check if we can start a new training job
+                running_jobs = await queue.list_jobs(
+                    status=JobStatus.RUNNING, 
+                    job_type=JobType.TRAINING.value
+                )
+                
+                # Detect orphaned jobs (exist in queue but not in training database)
+                # Import here to avoid circular dependency
+                from model_garden.api import training_jobs
+                
+                for running_job in running_jobs:
+                    job_id = running_job["job_id"]
+                    if job_id not in training_jobs:
+                        # Job was deleted from training database but still marked as running in queue
+                        logger.warning(f"⚠️  Detected orphaned job in queue: {job_id} - marking as cancelled")
+                        print(f"⚠️  Detected orphaned job in queue: {job_id} - marking as cancelled", flush=True)
+                        await queue.cancel_job(job_id)
+                    elif training_jobs[job_id].get("status") in ["completed", "failed", "cancelled"]:
+                        # Job finished but queue wasn't updated
+                        final_status = training_jobs[job_id]["status"]
+                        logger.warning(f"⚠️  Job {job_id} is {final_status} but queue shows running - updating queue")
+                        print(f"⚠️  Job {job_id} is {final_status} but queue shows running - updating queue", flush=True)
+                        if final_status == "completed":
+                            await queue.complete_job(job_id, result={"auto_synced": True})
+                        elif final_status == "failed":
+                            await queue.fail_job(job_id, error="Auto-synced from training database")
+                        else:  # cancelled
+                            await queue.cancel_job(job_id)
+                
+                # Refresh running jobs list after cleanup
                 running_jobs = await queue.list_jobs(
                     status=JobStatus.RUNNING, 
                     job_type=JobType.TRAINING.value
