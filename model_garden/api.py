@@ -486,8 +486,8 @@ def create_progress_callback(job_id: str, manager: ConnectionManager):
                     training_jobs[self.job_id]["total_steps"] = total_steps
                     training_jobs[self.job_id]["current_epoch"] = int(current_epoch) if current_epoch else 0
                 
-                # Send WebSocket update
-                asyncio.run(self.manager.send_update(self.job_id, {
+                # Send WebSocket update (use helper for thread safety)
+                _run_async_in_thread(self.manager.send_update(self.job_id, {
                     "type": "progress",
                     "job_id": self.job_id,
                     "progress": {
@@ -551,8 +551,8 @@ def create_progress_callback(job_id: str, manager: ConnectionManager):
                             training_jobs[self.job_id]["metrics"] = {}
                         training_jobs[self.job_id]["metrics"]["validation"] = self.validation_metrics
                     
-                    # Send metrics via WebSocket
-                    asyncio.run(self.manager.send_update(self.job_id, {
+                    # Send metrics via WebSocket (use helper for thread safety)
+                    _run_async_in_thread(self.manager.send_update(self.job_id, {
                         "type": "validation_metrics",
                         "job_id": self.job_id,
                         "metrics": metric_point,
@@ -584,8 +584,8 @@ def create_progress_callback(job_id: str, manager: ConnectionManager):
                                 training_jobs[self.job_id]["metrics"] = {}
                             training_jobs[self.job_id]["metrics"]["training"] = self.training_metrics
                         
-                        # Send metrics via WebSocket
-                        asyncio.run(self.manager.send_update(self.job_id, {
+                        # Send metrics via WebSocket (use helper for thread safety)
+                        _run_async_in_thread(self.manager.send_update(self.job_id, {
                             "type": "training_metrics",
                             "job_id": self.job_id,
                             "metrics": metric_point,
@@ -658,17 +658,56 @@ async def run_model_loading(
         raise
 
 
+def _run_async_in_thread(coro):
+    """Helper to run async code in a sync context (thread or main).
+    
+    When run_training_job is called from a thread (by the queue worker),
+    we need to create a new event loop for that thread since asyncio.run()
+    can't be called from an existing event loop.
+    
+    This function safely handles both scenarios:
+    - Called from a thread: creates new event loop
+    - Called from sync code: uses asyncio.run()
+    """
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_running_loop()
+        # We're in a running loop - this shouldn't happen in training threads
+        # but if it does, we need to create a new loop in a thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
+    except RuntimeError:
+        # No running loop - safe to create one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
+
 def run_training_job(job_id: str):
     """Execute a training job in the background."""
     try:
         # Get queue and mark job as running
         queue = get_job_queue()
-        asyncio.run(queue.start_job(job_id))
+        _run_async_in_thread(queue.start_job(job_id))
         
         # Ensure there's a cancellation event map and register an event for this job
         _ce_map = globals().setdefault("cancellation_events", {})
         _ce_map[job_id] = threading.Event()
 
+        # Get the job - it should exist in training_jobs
+        if job_id not in training_jobs:
+            # Job not found - might be a test job or orphaned queue entry
+            print(f"⚠️  Job {job_id} not found in training_jobs, marking as failed in queue")
+            queue = get_job_queue()
+            _run_async_in_thread(queue.fail_job(job_id, "Job configuration not found in training_jobs"))
+            return
+        
         job = training_jobs[job_id]
         
         # Update job status to running
@@ -679,7 +718,7 @@ def run_training_job(job_id: str):
         storage_manager.save_training_jobs(training_jobs)
         
         # Notify WebSocket clients
-        asyncio.run(manager.send_update(job_id, {
+        _run_async_in_thread(manager.send_update(job_id, {
             "type": "status_update",
             "job_id": job_id,
             "status": "running",
@@ -1015,13 +1054,24 @@ def run_training_job(job_id: str):
         # Update job status to completed
         job["status"] = "completed"
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
-        job["progress"] = {"current_step": 100, "total_steps": 100, "epoch": hyperparams.get("num_epochs", 3)}
+        
+        # Preserve actual step counts from training (don't hardcode 100/100)
+        current_progress = job.get("progress", {})
+        actual_current_step = job.get("current_step", current_progress.get("current_step", 0))
+        actual_total_steps = job.get("total_steps", current_progress.get("total_steps", 0))
+        actual_epoch = job.get("current_epoch", current_progress.get("epoch", hyperparams.get("num_epochs", 3)))
+        
+        job["progress"] = {
+            "current_step": actual_current_step,
+            "total_steps": actual_total_steps,
+            "epoch": actual_epoch
+        }
         
         # Persist status change
         storage_manager.save_training_jobs(training_jobs)
         
         # Notify WebSocket clients
-        asyncio.run(manager.send_update(job_id, {
+        _run_async_in_thread(manager.send_update(job_id, {
             "type": "status_update",
             "job_id": job_id,
             "status": "completed",
@@ -1049,7 +1099,7 @@ def run_training_job(job_id: str):
         
         # Mark job as completed in queue
         queue = get_job_queue()
-        asyncio.run(queue.complete_job(job_id, result={
+        _run_async_in_thread(queue.complete_job(job_id, result={
             "model_id": model_id,
             "output_dir": job["output_dir"]
         }))
@@ -1088,10 +1138,10 @@ def run_training_job(job_id: str):
             
             # Mark job as cancelled in queue
             queue = get_job_queue()
-            asyncio.run(queue.cancel_job(job_id))
+            _run_async_in_thread(queue.cancel_job(job_id))
             
             # Notify WebSocket clients
-            asyncio.run(manager.send_update(job_id, {
+            _run_async_in_thread(manager.send_update(job_id, {
                 "type": "status_update",
                 "job_id": job_id,
                 "status": "cancelled",
@@ -1140,10 +1190,10 @@ def run_training_job(job_id: str):
             
             # Mark job as failed in queue
             queue = get_job_queue()
-            asyncio.run(queue.fail_job(job_id, str(e)))
+            _run_async_in_thread(queue.fail_job(job_id, str(e)))
             
             # Notify WebSocket clients
-            asyncio.run(manager.send_update(job_id, {
+            _run_async_in_thread(manager.send_update(job_id, {
                 "type": "status_update",
                 "job_id": job_id,
                 "status": "failed",
@@ -1183,6 +1233,14 @@ async def lifespan(app: FastAPI):
     scan_existing_models()
     
     print(f"✓ Found {len(models_storage)} existing models")
+    
+    # Start queue worker for autonomous job processing
+    print("🔧 Initializing queue worker...", flush=True)
+    from model_garden.queue_worker import get_queue_worker
+    worker = get_queue_worker()
+    print(f"🔧 Queue worker created: enabled={worker.enabled}, max_concurrent={worker.max_concurrent}", flush=True)
+    await worker.start()
+    print("✓ Queue worker startup completed", flush=True)
     
     # Auto-load inference model if specified
     autoload_model = os.getenv("MODEL_GARDEN_AUTOLOAD_MODEL")
@@ -1238,6 +1296,11 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     print("🌱 Model Garden API shutting down...")
+    
+    # Stop queue worker
+    from model_garden.queue_worker import get_queue_worker
+    worker = get_queue_worker()
+    await worker.stop()
     
     # Cleanup torch compile workers to free memory
     try:
@@ -2108,8 +2171,8 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     position = await queue.get_queue_position(job_id)
     position_msg = f" (position in queue: {position})" if position and position > 1 else ""
     
-    # Start training job in background
-    background_tasks.add_task(run_training_job, job_id)
+    # Queue worker will automatically start the job when ready
+    # (no need to use background_tasks.add_task anymore)
     
     return APIResponse(
         success=True,
@@ -2352,8 +2415,8 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
     position = await queue.get_queue_position(new_job_id)
     position_msg = f" (position in queue: {position})" if position and position > 1 else ""
     
-    # Start training job in background
-    background_tasks.add_task(run_training_job, new_job_id)
+    # Queue worker will automatically start the job when ready
+    # (no need to use background_tasks.add_task anymore)
     
     return APIResponse(
         success=True,
