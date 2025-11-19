@@ -63,7 +63,7 @@ class CarbonTracker:
             save_to_file=True,
             save_to_api=False,
             tracking_mode="machine",  # Track entire machine to capture vLLM GPU usage
-            measure_power_secs=15,  # Sample every 15 seconds
+            measure_power_secs=1,  # Sample every 1 second for faster inference tracking
         )
         
         self.emissions_data: Optional[Dict[str, Any]] = None
@@ -83,23 +83,53 @@ class CarbonTracker:
             console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
             console.print("[yellow]Continuing without carbon tracking...[/yellow]")
     
-    def get_live_emissions(self) -> Optional[float]:
+    def get_live_emissions(self) -> Optional[Dict[str, Any]]:
         """
         Get current emissions without stopping the tracker.
         
         Returns:
-            Current emissions in kg CO2, or None if unavailable
+            Dictionary with emissions and energy data, or None if unavailable
         """
         if not self.started:
             return None
         
         try:
-            # Access CodeCarbon's internal state
-            # The _total_emissions attribute tracks cumulative emissions
-            if hasattr(self.tracker, '_total_emissions'):
-                total_emissions = getattr(self.tracker, '_total_emissions', None)
-                if total_emissions and hasattr(total_emissions, 'kgs_carbon_emissions'):
-                    return total_emissions.kgs_carbon_emissions()
+            # Flush current measurements and get emissions data
+            self.tracker.flush()
+            
+            # Use CodeCarbon's _prepare_emissions_data to get live data
+            if hasattr(self.tracker, '_prepare_emissions_data'):
+                emissions_data = self.tracker._prepare_emissions_data()
+                if emissions_data:
+                    return {
+                        'emissions_kg_co2': getattr(emissions_data, 'emissions', 0.0),
+                        'energy_consumed_kwh': getattr(emissions_data, 'energy_consumed', 0.0),
+                        'cpu_energy_kwh': getattr(emissions_data, 'cpu_energy', 0.0),
+                        'gpu_energy_kwh': getattr(emissions_data, 'gpu_energy', 0.0),
+                        'ram_energy_kwh': getattr(emissions_data, 'ram_energy', 0.0),
+                        'duration_seconds': getattr(emissions_data, 'duration', 0.0),
+                        'cpu_power_watts': getattr(emissions_data, 'cpu_power', 0.0),
+                        'gpu_power_watts': getattr(emissions_data, 'gpu_power', 0.0),
+                        'ram_power_watts': getattr(emissions_data, 'ram_power', 0.0),
+                    }
+            
+            # Fallback: try _emissions attribute
+            if hasattr(self.tracker, '_emissions'):
+                emissions_obj = self.tracker._emissions
+                if hasattr(emissions_obj, 'values'):
+                    values = emissions_obj.values
+                    return {
+                        'emissions_kg_co2': values.get('emissions', 0.0),
+                        'energy_consumed_kwh': values.get('energy_consumed', 0.0),
+                        'cpu_energy_kwh': values.get('cpu_energy', 0.0),
+                        'gpu_energy_kwh': values.get('gpu_energy', 0.0),
+                        'ram_energy_kwh': values.get('ram_energy', 0.0),
+                        'duration_seconds': values.get('duration', 0.0),
+                        'cpu_power_watts': values.get('cpu_power', 0.0),
+                        'gpu_power_watts': values.get('gpu_power', 0.0),
+                        'ram_power_watts': values.get('ram_power', 0.0),
+                    }
+            
             return None
         except Exception as e:
             console.print(f"[dim]Could not get live emissions: {e}[/dim]")

@@ -645,6 +645,14 @@ async def run_model_loading(
         # Set as global service
         set_inference_service(service)
         
+        # Initialize carbon tracking for this model
+        try:
+            from model_garden.carbon import init_inference_tracker
+            init_inference_tracker(model_path)
+            print(f"✅ Carbon tracking initialized for {model_path}")
+        except Exception as e:
+            print(f"⚠️  Failed to initialize carbon tracking: {e}")
+        
         # Mark job as completed
         model_info = service.get_model_info()
         await queue.complete_job(job_id, result=model_info)
@@ -1284,6 +1292,15 @@ async def lifespan(app: FastAPI):
             
             await inference_service.load_model()
             set_inference_service(inference_service)  # Register globally
+            
+            # Initialize carbon tracking for this model
+            try:
+                from model_garden.carbon import init_inference_tracker
+                init_inference_tracker(autoload_model)
+                print(f"✅ Carbon tracking initialized for {autoload_model}")
+            except Exception as e:
+                print(f"⚠️  Failed to initialize carbon tracking: {e}")
+            
             print(f"✅ Inference model loaded: {autoload_model}")
         except Exception as e:
             print(f"❌ Failed to auto-load model: {e}")
@@ -3091,35 +3108,73 @@ async def chat_completions(request: ChatCompletionRequest):
             
             return StreamingResponse(generate_stream(), media_type="text/event-stream")
         else:
-            # Complete response
+            # Complete response - track emissions for THIS request using delta measurement
+            carbon_data = None
+            before_emissions = None
+            request_start_time = None
+            session_tracker = None
+            
+            try:
+                # Get emissions snapshot BEFORE request
+                from model_garden.carbon import get_inference_tracker
+                import time
+                
+                session_tracker = get_inference_tracker()
+                if session_tracker:
+                    before_emissions = session_tracker.get_request_emissions()
+                    request_start_time = time.time()
+            except Exception as e:
+                print(f"Warning: Could not capture before emissions: {e}")
+            
+            # Execute the request
             response = await service.chat_completion(**gen_params)
             
-            # Record request in carbon tracker and get emissions estimate
-            carbon_data = None
+            # Calculate per-request emissions using delta
             try:
-                from model_garden.carbon import get_inference_tracker
-                tracker = get_inference_tracker()
-                if tracker:
-                    tokens = 0
-                    if isinstance(response, dict) and 'usage' in response:
-                        tokens = response['usage'].get('completion_tokens', 0)
-                    tracker.record_request(tokens_generated=tokens)
+                import time
+                if session_tracker and before_emissions:
+                    # Get emissions snapshot AFTER request
+                    after_emissions = session_tracker.get_request_emissions()
+                    request_duration = time.time() - request_start_time if request_start_time else 0
                     
-                    # Get current stats with REAL measured emissions from CodeCarbon
-                    stats = tracker.get_current_stats()
-                    if stats and stats.get('tracking', False):
+                    if after_emissions:
+                        # Calculate delta (this request only)
+                        delta_emissions_kg = after_emissions.get('emissions_kg_co2', 0.0) - before_emissions.get('emissions_kg_co2', 0.0)
+                        delta_energy_kwh = after_emissions.get('energy_consumed_kwh', 0.0) - before_emissions.get('energy_consumed_kwh', 0.0)
+                        delta_cpu_kwh = after_emissions.get('cpu_energy_kwh', 0.0) - before_emissions.get('cpu_energy_kwh', 0.0)
+                        delta_gpu_kwh = after_emissions.get('gpu_energy_kwh', 0.0) - before_emissions.get('gpu_energy_kwh', 0.0)
+                        delta_ram_kwh = after_emissions.get('ram_energy_kwh', 0.0) - before_emissions.get('ram_energy_kwh', 0.0)
+                        
+                        tokens = 0
+                        if isinstance(response, dict) and 'usage' in response:
+                            tokens = response['usage'].get('completion_tokens', 0)
+                        
                         carbon_data = {
-                            "emissions_g_co2": stats.get('emissions_g_co2', 0.0),
-                            "emissions_per_request_g": stats.get('emissions_per_request_g', 0.0),
-                            "session_total_kg_co2": stats.get('emissions_kg_co2', 0.0),
-                            "session_requests": stats.get('request_count', 0),
-                            "session_tokens": stats.get('total_tokens', 0),
+                            "emissions_g_co2": delta_emissions_kg * 1000,
+                            "energy_consumed_wh": delta_energy_kwh * 1000,
+                            "cpu_energy_wh": delta_cpu_kwh * 1000,
+                            "gpu_energy_wh": delta_gpu_kwh * 1000,
+                            "ram_energy_wh": delta_ram_kwh * 1000,
+                            "duration_seconds": request_duration,
+                            "cpu_power_watts": after_emissions.get('cpu_power_watts', 0.0),
+                            "gpu_power_watts": after_emissions.get('gpu_power_watts', 0.0),
+                            "ram_power_watts": after_emissions.get('ram_power_watts', 0.0),
+                            "completion_tokens": tokens,
+                            "measured": True,
                             "tracking_active": True,
-                            "measured": True  # Flag to indicate this is real data, not estimated
                         }
+                        
+                        # Update session tracker for aggregate stats
+                        session_tracker.record_request(tokens_generated=tokens)
+                        stats = session_tracker.get_current_stats()
+                        if stats:
+                            carbon_data["session_total_kg_co2"] = stats.get('emissions_kg_co2', 0.0)
+                            carbon_data["session_requests"] = stats.get('request_count', 0)
+                            carbon_data["session_tokens"] = stats.get('total_tokens', 0)
             except Exception as e:
-                print(f"Warning: Could not add carbon tracking data: {e}")
-                pass  # Silently ignore tracking errors
+                print(f"Warning: Could not finalize carbon tracking: {e}")
+                import traceback
+                traceback.print_exc()
             
             # Add carbon data to response if available
             if carbon_data and isinstance(response, dict):

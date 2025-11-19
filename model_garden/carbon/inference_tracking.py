@@ -56,6 +56,19 @@ class InferenceEmissionsTracker:
         self.request_count += 1
         self.total_tokens += tokens_generated
     
+    def get_request_emissions(self) -> Optional[Dict[str, Any]]:
+        """
+        Get emissions data for the current request using delta measurement.
+        Call this before and after a request to get per-request emissions.
+        
+        Returns:
+            Dictionary with current emissions snapshot
+        """
+        if self.session_tracker is None:
+            return None
+        
+        return self.session_tracker.get_live_emissions()
+    
     def stop_session(self) -> Optional[Dict[str, Any]]:
         """Stop tracking and save emissions data."""
         if self.session_tracker is None:
@@ -104,7 +117,7 @@ class InferenceEmissionsTracker:
         duration = time.time() - (self.session_start_time or time.time())
         
         # Get live emissions from CodeCarbon
-        live_emissions_kg = self.session_tracker.get_live_emissions()
+        live_emissions_data = self.session_tracker.get_live_emissions()
         
         stats = {
             'tracking': True,
@@ -117,13 +130,16 @@ class InferenceEmissionsTracker:
         }
         
         # Add emissions data if available
-        if live_emissions_kg is not None:
+        if live_emissions_data is not None:
+            live_emissions_kg = live_emissions_data.get('emissions_kg_co2', 0.0)
             stats['emissions_kg_co2'] = live_emissions_kg
             stats['emissions_g_co2'] = live_emissions_kg * 1000
+            stats['energy_consumed_kwh'] = live_emissions_data.get('energy_consumed_kwh', 0.0)
             
             # Calculate per-request metrics
             if self.request_count > 0:
                 stats['emissions_per_request_g'] = (live_emissions_kg * 1000) / self.request_count
+                stats['energy_per_request_wh'] = (live_emissions_data.get('energy_consumed_kwh', 0.0) * 1000) / self.request_count
             
             # Calculate per-token metrics
             if self.total_tokens > 0:
