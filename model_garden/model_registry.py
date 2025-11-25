@@ -79,6 +79,9 @@ class InferenceDefaults:
     gpu_memory_utilization: float
     quantization: Optional[str] = None
     tensor_parallel_size: int = 1
+    max_num_seqs: int = 16  # Max concurrent sequences (reduce for memory-constrained GPUs)
+    enforce_eager: bool = False  # Disable CUDA graphs (True saves ~2GB memory)
+    limit_mm_per_prompt: Optional[Dict[str, int]] = None  # Limit multimodal inputs e.g. {"image": 2, "video": 0}
 
 
 @dataclass
@@ -126,13 +129,19 @@ class ModelInfo:
 
     def get_inference_config(self) -> Dict[str, Any]:
         """Get default inference configuration."""
-        return {
+        config = {
             "max_model_len": self.inference_defaults.max_model_len,
             "dtype": self.inference_defaults.dtype,
             "gpu_memory_utilization": self.inference_defaults.gpu_memory_utilization,
             "quantization": self.inference_defaults.quantization,
             "tensor_parallel_size": self.inference_defaults.tensor_parallel_size,
+            "max_num_seqs": self.inference_defaults.max_num_seqs,
+            "enforce_eager": self.inference_defaults.enforce_eager,
         }
+        # Only include limit_mm_per_prompt if set (for vision models)
+        if self.inference_defaults.limit_mm_per_prompt:
+            config["limit_mm_per_prompt"] = self.inference_defaults.limit_mm_per_prompt
+        return config
 
 
 class ModelRegistry:

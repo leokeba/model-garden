@@ -614,6 +614,9 @@ async def run_model_loading(
     tensor_parallel_size: int,
     gpu_memory_utilization: float,
     max_model_len: Optional[int],
+    max_num_seqs: int,
+    enforce_eager: bool,
+    limit_mm_per_prompt: Optional[Dict[str, int]],
     dtype: str,
     quantization: Optional[str]
 ):
@@ -635,6 +638,9 @@ async def run_model_loading(
             tensor_parallel_size=tensor_parallel_size,
             gpu_memory_utilization=gpu_memory_utilization,
             max_model_len=max_model_len,
+            max_num_seqs=max_num_seqs,
+            enforce_eager=enforce_eager,
+            limit_mm_per_prompt=limit_mm_per_prompt,
             dtype=dtype,
             quantization=quantization,
         )
@@ -2648,6 +2654,9 @@ class LoadModelRequest(BaseModel):
     tensor_parallel_size: int = 1
     gpu_memory_utilization: float = 0.0  # 0 = auto mode
     max_model_len: Optional[int] = None
+    max_num_seqs: Optional[int] = None  # Max concurrent sequences (None = use registry default or 16)
+    enforce_eager: Optional[bool] = None  # Disable CUDA graphs (None = use registry default or False)
+    limit_mm_per_prompt: Optional[Dict[str, int]] = None  # Limit multimodal inputs e.g. {"image": 2, "video": 0}
     dtype: str = "auto"
     quantization: Optional[str] = None
 
@@ -2678,6 +2687,9 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
     
     # Apply defaults from registry if parameters not specified
     max_model_len = request.max_model_len
+    max_num_seqs = request.max_num_seqs
+    enforce_eager = request.enforce_eager
+    limit_mm_per_prompt = request.limit_mm_per_prompt
     dtype = request.dtype
     gpu_memory_utilization = request.gpu_memory_utilization
     quantization = request.quantization
@@ -2688,6 +2700,18 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
         if max_model_len is None:
             max_model_len = model_info.inference_defaults.max_model_len
             print(f"  Using registry default max_model_len: {max_model_len}")
+        
+        if max_num_seqs is None:
+            max_num_seqs = model_info.inference_defaults.max_num_seqs
+            print(f"  Using registry default max_num_seqs: {max_num_seqs}")
+        
+        if enforce_eager is None:
+            enforce_eager = model_info.inference_defaults.enforce_eager
+            print(f"  Using registry default enforce_eager: {enforce_eager}")
+        
+        if limit_mm_per_prompt is None and model_info.inference_defaults.limit_mm_per_prompt:
+            limit_mm_per_prompt = model_info.inference_defaults.limit_mm_per_prompt
+            print(f"  Using registry default limit_mm_per_prompt: {limit_mm_per_prompt}")
         
         if dtype == "auto":
             dtype = model_info.inference_defaults.dtype
@@ -2704,6 +2728,12 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
         if tensor_parallel_size == 1 and model_info.inference_defaults.tensor_parallel_size > 1:
             tensor_parallel_size = model_info.inference_defaults.tensor_parallel_size
             print(f"  Using registry default tensor_parallel_size: {tensor_parallel_size}")
+    
+    # Apply final defaults for parameters not in registry
+    if max_num_seqs is None:
+        max_num_seqs = 16  # Safe default for most GPUs
+    if enforce_eager is None:
+        enforce_eager = False  # Default to CUDA graphs for performance
     
     # Check if a model is already loaded
     current_service = get_inference_service()
@@ -2734,6 +2764,9 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
                 "tensor_parallel_size": tensor_parallel_size,
                 "gpu_memory_utilization": gpu_memory_utilization,
                 "max_model_len": max_model_len,
+                "max_num_seqs": max_num_seqs,
+                "enforce_eager": enforce_eager,
+                "limit_mm_per_prompt": limit_mm_per_prompt,
                 "dtype": dtype,
                 "quantization": quantization,
             },
@@ -2760,6 +2793,9 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
             "tensor_parallel_size": tensor_parallel_size,
             "gpu_memory_utilization": gpu_memory_utilization,
             "max_model_len": max_model_len,
+            "max_num_seqs": max_num_seqs,
+            "enforce_eager": enforce_eager,
+            "limit_mm_per_prompt": limit_mm_per_prompt,
             "dtype": dtype,
             "quantization": quantization,
         },
@@ -2774,6 +2810,9 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
         tensor_parallel_size,
         gpu_memory_utilization,
         max_model_len,
+        max_num_seqs,
+        enforce_eager,
+        limit_mm_per_prompt,
         dtype,
         quantization
     )

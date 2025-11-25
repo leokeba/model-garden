@@ -370,6 +370,9 @@ class InferenceService:
         tensor_parallel_size: int = 1,
         gpu_memory_utilization: float = 0.0,
         max_model_len: Optional[int] = None,
+        max_num_seqs: int = 16,
+        enforce_eager: bool = False,
+        limit_mm_per_prompt: Optional[Dict[str, int]] = None,
         dtype: str = "auto",
         quantization: Optional[str] = "auto",
         trust_remote_code: bool = False,
@@ -384,6 +387,9 @@ class InferenceService:
             tensor_parallel_size: Number of GPUs to use for tensor parallelism
             gpu_memory_utilization: Fraction of GPU memory to use (0.0-1.0, 0 = auto)
             max_model_len: Maximum sequence length
+            max_num_seqs: Maximum number of concurrent sequences (reduce for memory-constrained GPUs)
+            enforce_eager: Disable CUDA graphs (True saves ~2GB memory but slower inference)
+            limit_mm_per_prompt: Limit multimodal inputs per prompt e.g. {"image": 2, "video": 0}
             dtype: Data type (auto, float16, bfloat16, float32)
             quantization: Quantization method (auto, awq, gptq, squeezellm, fp8, bitsandbytes, or None)
             trust_remote_code: Whether to trust remote code
@@ -395,6 +401,9 @@ class InferenceService:
         self.tensor_parallel_size = tensor_parallel_size
         self.gpu_memory_utilization = gpu_memory_utilization
         self.max_model_len = max_model_len
+        self.max_num_seqs = max_num_seqs
+        self.enforce_eager = enforce_eager
+        self.limit_mm_per_prompt = limit_mm_per_prompt
         self.dtype = dtype
         self.quantization = quantization
         self.trust_remote_code = trust_remote_code
@@ -625,16 +634,22 @@ class InferenceService:
                 "tensor_parallel_size": self.tensor_parallel_size,
                 "gpu_memory_utilization": gpu_memory_utilization,
                 "max_model_len": self.max_model_len,
+                "max_num_seqs": self.max_num_seqs,
                 "dtype": dtype_param,  # type: ignore
                 "quantization": quantization_param,  # type: ignore
                 "load_format": load_format,
                 "trust_remote_code": trust_remote_code,
-                "enforce_eager": False,  # Use CUDA graphs for better performance
+                "enforce_eager": self.enforce_eager,  # True saves memory, False uses CUDA graphs for performance
                 "disable_log_stats": False,
                 # Enable vLLM optimizations that are on by default in vLLM CLI
                 "enable_prefix_caching": True,  # Enables prefix caching for better performance
                 "enable_chunked_prefill": True,  # Enables chunked prefill (auto-sized)
             }
+            
+            # Add multimodal limits if specified (reduces profiling memory overhead for vision models)
+            if self.limit_mm_per_prompt:
+                engine_args_dict["limit_mm_per_prompt"] = self.limit_mm_per_prompt
+                console.print(f"[cyan]🖼️  Limiting multimodal inputs: {self.limit_mm_per_prompt}[/cyan]")
             
             # For vision models (Qwen2.5-VL, LLaVA, etc), use the base model tokenizer
             # This is critical because fine-tuned vision models may have incomplete tokenizers
