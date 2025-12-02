@@ -4,6 +4,8 @@
         "ms-python.python",
         "ms-python.debugpy",
         "bradlc.vscode-tailwindcss",
-        "ms-vscode.vscode-typescript-next"
+        "ms-vscode.vscode-typescript-next",
+        "charliermarsh.ruff",
+        "astral-sh.ty"
     ]
 }

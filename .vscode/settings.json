@@ -14,6 +14,8 @@
     "python.analysis.extraPaths": [
         "./model_garden"
     ],
+    // ty type checker settings (Astral)
+    "ty.enable": true,
     // Editor settings
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {

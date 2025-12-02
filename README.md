@@ -368,8 +368,8 @@ ruff format .
 # Lint code
 ruff check .
 
-# Type checking
-mypy model_garden
+# Type checking (using ty from Astral)
+uv run ty check model_garden/
 
 # Run all checks (formatting, linting, type checking)
 pre-commit run --all-files

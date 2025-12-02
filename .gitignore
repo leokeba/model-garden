@@ -64,6 +64,11 @@ dmypy.json
 /storage/*
 !/storage/models_registry*
 
+# Old files
+old/
+experiments/
+analysis_results/
+
 # Logs
 logs/
 *.log
