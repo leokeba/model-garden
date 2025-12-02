@@ -22,29 +22,24 @@ os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
-from datasets import Dataset, load_dataset
-from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+from datasets import Dataset
+from peft import PeftModel
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
+    DataCollatorForLanguageModeling,
     Trainer,
-    TrainingArguments,
 )
 
 from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
-from model_garden.carbon import CarbonTracker
-from model_garden.training.utils import (
-    MemoryMonitorCallback,
-    detect_model_dtype,
-    get_training_precision_config,
-)
+from model_garden.backends.transformers_base import TransformersTrainerMixin
 
 console = Console()
 
 
-class TransformersVisionTrainer(VisionTrainer):
+class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
     """Vision trainer using standard HuggingFace Transformers + PEFT for vision-language models.
 
     Note: This is a basic implementation that may not support all features of the Unsloth vision trainer.
@@ -60,24 +55,16 @@ class TransformersVisionTrainer(VisionTrainer):
         ) as progress:
             progress.add_task(description="Loading model...", total=None)
 
-            # Get HuggingFace token for private/gated models
-            hf_token = os.getenv("HF_TOKEN")
+            hf_token = self._get_hf_token()
 
             console.print(f"[cyan]Loading vision model: {self.base_model}[/cyan]")
             console.print("[yellow]Using HuggingFace Transformers (basic vision support)[/yellow]")
-
-            # Determine precision
-            if self.load_in_4bit:
-                console.print("[cyan]Precision: 4-bit (memory efficient)[/cyan]")
-            elif self.load_in_8bit:
-                console.print("[cyan]Precision: 8-bit (memory efficient)[/cyan]")
-            else:
-                console.print("[cyan]Precision: 16-bit (full precision)[/cyan]")
+            console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
 
             # Prepare model kwargs
-            torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            torch_dtype = self._get_torch_dtype()
 
-            model_kwargs = {
+            model_kwargs: dict[str, Any] = {
                 "pretrained_model_name_or_path": self.base_model,
                 "torch_dtype": torch_dtype,
                 "device_map": "auto",
@@ -86,22 +73,13 @@ class TransformersVisionTrainer(VisionTrainer):
             }
 
             # Add quantization if requested
-            if self.load_in_4bit:
-                from transformers import BitsAndBytesConfig
-
-                model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16
-                    if torch.cuda.is_bf16_supported()
-                    else torch.float16,
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4",
-                )
+            quant_config = self._get_quantization_config()
+            if quant_config:
+                model_kwargs["quantization_config"] = quant_config
             elif self.load_in_8bit:
                 model_kwargs["load_in_8bit"] = True
 
-            # Load model - use AutoModelForVision2Seq or similar for vision-language models
-            # Try to use the appropriate model class based on the model type
+            # Load model - use AutoModelForVision2Seq for vision-language models
             from transformers import AutoModelForVision2Seq
 
             try:
@@ -146,68 +124,26 @@ class TransformersVisionTrainer(VisionTrainer):
     ) -> None:
         """Prepare model for LoRA fine-tuning using PEFT."""
         console.print("[cyan]Configuring LoRA adapters for vision model (PEFT)...[/cyan]")
-
-        if target_modules is None:
-            # Default modules for Qwen2-VL and similar models
-            target_modules = [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ]
-
-        # Create PEFT config
-        peft_config = LoraConfig(
+        # Note: finetune_* parameters are Unsloth-specific, not used in standard PEFT
+        self._configure_lora(
             r=r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules=target_modules,
-            bias=cast(Literal["none", "all", "lora_only"], lora_bias),
-            task_type=TaskType.CAUSAL_LM,
             use_rslora=use_rslora,
+            lora_bias=lora_bias,
+            task_type=task_type,
+            use_gradient_checkpointing=use_gradient_checkpointing,
         )
-
-        # Apply PEFT
-        self.model = get_peft_model(self.model, peft_config)  # type: ignore
-
-        # Enable gradient checkpointing if requested
-        if use_gradient_checkpointing and use_gradient_checkpointing != "false":
-            self.model.enable_input_require_grads()  # type: ignore
-            if hasattr(self.model.base_model, "gradient_checkpointing_enable"):
-                self.model.base_model.gradient_checkpointing_enable()  # type: ignore
-
-        console.print("[green]✓[/green] LoRA adapters configured")
 
     def load_dataset_from_file(self, dataset_path: str) -> Dataset:
         """Load multimodal dataset from a local file."""
         console.print(f"[cyan]Loading vision dataset from: {dataset_path}[/cyan]")
-
-        path = Path(dataset_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
-
-        # Load based on file extension
-        suffix = path.suffix.lower()
-        if suffix == ".jsonl":
-            dataset = load_dataset("json", data_files=str(path), split="train")
-        elif suffix == ".json":
-            dataset = load_dataset("json", data_files=str(path), split="train")
-        else:
-            raise ValueError(f"Unsupported file format: {suffix}. Use .json or .jsonl")
-
-        dataset_len = len(dataset)  # type: ignore
-        console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
-        return cast(Dataset, dataset)
+        return self._load_dataset_from_local_file(dataset_path)
 
     def load_dataset_from_hub(self, dataset_name: str, split: str = "train", **kwargs) -> Dataset:
         """Load multimodal dataset from HuggingFace Hub."""
-        hf_token = os.getenv("HF_TOKEN")
-        console.print(f"[cyan]Loading dataset from Hub: {dataset_name}[/cyan]")
-        dataset = load_dataset(dataset_name, split=split, token=hf_token, **kwargs)
-        return cast(Dataset, dataset)
+        return self._load_dataset_from_hf_hub(dataset_name, split=split, **kwargs)
 
     def format_dataset(
         self,
@@ -230,7 +166,6 @@ class TransformersVisionTrainer(VisionTrainer):
         formatted_data = []
 
         for example in dataset:
-            # Ensure example is a dict
             if not isinstance(example, dict):
                 continue
 
@@ -331,55 +266,22 @@ class TransformersVisionTrainer(VisionTrainer):
                 "[yellow]⚠️  Selective loss not supported in Transformers backend[/yellow]"
             )
 
-        # Initialize carbon tracker
+        # Set up carbon tracking
         carbon_tracker = None
         if enable_carbon_tracking:
-            if job_id is None:
-                import time
-
-                job_id = f"vision-training-{int(time.time())}"
-
-            try:
-                carbon_tracker = CarbonTracker(
-                    job_id=job_id,
-                    job_type="training",
-                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
-                )
-                carbon_tracker.start()
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
-                carbon_tracker = None
-
-        # Set evaluation strategy
-        final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
-        eval_steps_value = eval_steps if eval_steps is not None else save_steps
-        final_load_best = load_best_model_at_end and eval_dataset is not None
-        final_metric = metric_for_best_model if eval_dataset is not None else None
-
-        # Detect model dtype and set precision
-        model_dtype = detect_model_dtype(self.model, self.load_in_4bit, self.load_in_8bit)
-        precision_config = get_training_precision_config(
-            self.model, self.load_in_4bit, self.load_in_8bit
-        )
-
-        console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
-        console.print(
-            f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
-        )
+            carbon_tracker = self._setup_carbon_tracking(output_dir, job_id, "vision-training")
 
         # Create training arguments
-        training_args = TrainingArguments(  # type: ignore
+        training_args = self._create_training_args(
             output_dir=output_dir,
+            num_train_epochs=num_train_epochs,
             per_device_train_batch_size=per_device_train_batch_size,
-            per_device_eval_batch_size=per_device_train_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
+            learning_rate=learning_rate,
             warmup_steps=warmup_steps,
             max_steps=max_steps,
-            num_train_epochs=num_train_epochs,
-            learning_rate=learning_rate,
-            fp16=precision_config["fp16"],
-            bf16=precision_config["bf16"],
             logging_steps=logging_steps,
+            save_steps=save_steps,
             optim=optim,
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler_type,
@@ -389,50 +291,27 @@ class TransformersVisionTrainer(VisionTrainer):
             adam_epsilon=adam_epsilon,
             dataloader_num_workers=dataloader_num_workers,
             dataloader_pin_memory=dataloader_pin_memory,
-            seed=42,
-            save_steps=save_steps,
             save_total_limit=save_total_limit,
-            report_to="none",
-            do_eval=eval_dataset is not None,
-            eval_strategy=final_eval_strategy,
-            eval_steps=eval_steps_value if eval_dataset else None,
-            load_best_model_at_end=final_load_best,
-            metric_for_best_model=final_metric,
+            eval_dataset=eval_dataset,
+            eval_strategy=eval_strategy,
+            eval_steps=eval_steps,
+            load_best_model_at_end=load_best_model_at_end,
+            metric_for_best_model=metric_for_best_model,
             remove_unused_columns=False,  # Important for vision models
         )
 
-        # Add memory monitoring callback
-        memory_monitor = MemoryMonitorCallback()
-        all_callbacks: list[Any] = [memory_monitor]
-        if callbacks:
-            all_callbacks.extend(callbacks)
-
-        console.print("[cyan]💡 Memory monitoring enabled[/cyan]")
-
-        # Convert dataset to the format expected by the processor
-        # The dataset should already be formatted from format_dataset()
-        if isinstance(dataset, list):
-            # Keep as list - we'll handle it in the collator
-            train_dataset = dataset
-        else:
-            train_dataset = dataset
+        all_callbacks = self._get_callbacks(callbacks)
 
         # Create a simple data collator for vision-language models
-        # This uses the standard processor API without Unsloth dependencies
         def collate_fn(examples):
             """Simple collator using standard Transformers processor API."""
-            # For standard Transformers vision-language models, we can use
-            # the processor's built-in message formatting
-
             batch_messages = []
             for example in examples:
-                # Each example has a "messages" field from format_dataset
                 messages = example.get("messages", [])
                 batch_messages.append(messages)
 
             # Use the processor's apply_chat_template if available
             if hasattr(self.processor, "apply_chat_template"):
-                # Modern approach: use chat template
                 texts = self.processor.apply_chat_template(
                     batch_messages,
                     tokenize=False,
@@ -442,12 +321,10 @@ class TransformersVisionTrainer(VisionTrainer):
                 # Extract images from messages
                 batch_images = []
                 for messages in batch_messages:
-                    images = []
                     for message in messages:
                         for content_item in message.get("content", []):
                             if content_item.get("type") == "image":
-                                images.append(content_item["image"])
-                    batch_images.extend(images)
+                                batch_images.append(content_item["image"])
 
                 # Process with images
                 if batch_images:
@@ -470,8 +347,6 @@ class TransformersVisionTrainer(VisionTrainer):
 
                 for messages in batch_messages:
                     text_parts = []
-                    images = []
-
                     for message in messages:
                         role = message.get("role", "")
                         for content_item in message.get("content", []):
@@ -479,12 +354,10 @@ class TransformersVisionTrainer(VisionTrainer):
                                 text = content_item.get("text", "")
                                 text_parts.append(f"{role}: {text}")
                             elif content_item.get("type") == "image":
-                                images.append(content_item["image"])
+                                batch_images.append(content_item["image"])
 
                     texts.append("\n".join(text_parts))
-                    batch_images.extend(images)
 
-                # Process
                 if batch_images:
                     inputs = self.processor(
                         text=texts,
@@ -500,7 +373,6 @@ class TransformersVisionTrainer(VisionTrainer):
                     )
 
             # Add labels for causal language modeling
-            # Labels are the same as input_ids (standard practice for CLM)
             if "input_ids" in inputs:
                 inputs["labels"] = inputs["input_ids"].clone()
 
@@ -510,7 +382,7 @@ class TransformersVisionTrainer(VisionTrainer):
         trainer = Trainer(
             model=self.model,
             args=training_args,
-            train_dataset=train_dataset,  # type: ignore
+            train_dataset=dataset,  # type: ignore
             eval_dataset=eval_dataset if isinstance(eval_dataset, Dataset) else None,
             data_collator=collate_fn,
             callbacks=all_callbacks,
@@ -521,22 +393,14 @@ class TransformersVisionTrainer(VisionTrainer):
         console.print("[green]✓[/green] Training completed")
 
         # Stop carbon tracking
-        if carbon_tracker is not None:
-            try:
-                emissions_data = carbon_tracker.stop()
-                if emissions_data:
-                    console.print(
-                        f"[green]💚 Carbon emissions: {emissions_data['emissions']:.4f} kg CO2[/green]"
-                    )
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
+        self._stop_carbon_tracking(carbon_tracker)
 
         # Save the model after training
-        console.print("[cyan]Saving model to: {output_dir}[/cyan]")
+        console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
         if isinstance(self.model, PeftModel):
-            self.model.save_pretrained(output_dir)  # type: ignore
+            self.model.save_pretrained(output_dir)
         else:
-            self.model.save_pretrained(output_dir)  # type: ignore
+            self.model.save_pretrained(output_dir)
         self.processor.save_pretrained(output_dir)
         console.print("[green]✓[/green] Model saved successfully")
 
@@ -548,49 +412,17 @@ class TransformersVisionTrainer(VisionTrainer):
         max_shard_size: str = "5GB",
     ) -> None:
         """Save the fine-tuned vision-language model."""
-        console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
-
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        if save_method == "lora":
-            # Save LoRA adapters only
-            if isinstance(self.model, PeftModel):
-                self.model.save_pretrained(str(output_path))  # type: ignore
-                self.processor.save_pretrained(str(output_path))
-            else:
-                raise ValueError("Model is not a PEFT model, cannot save LoRA adapters")
-        else:
-            # Merge and save full model
-            if isinstance(self.model, PeftModel):
-                console.print("[cyan]Merging LoRA weights...[/cyan]")
-                merged_model = self.model.merge_and_unload()  # type: ignore
-                merged_model.save_pretrained(str(output_path), max_shard_size=max_shard_size)  # type: ignore
-                self.processor.save_pretrained(str(output_path))
-            else:
-                self.model.save_pretrained(str(output_path), max_shard_size=max_shard_size)  # type: ignore
-                self.processor.save_pretrained(str(output_path))
-
-        console.print(f"[green]✓[/green] Model saved to {output_path}")
+        self._save_model_internal(output_dir, save_method, max_shard_size)
 
 
-class TransformersTextTrainer(TextTrainer):
+class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
     """Text trainer using standard HuggingFace Transformers + PEFT."""
 
     def load_model(self) -> None:
         """Load the base model using Transformers."""
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
         console.print("[cyan]Using HuggingFace Transformers (no Unsloth optimizations)[/cyan]")
-
-        # Determine precision
-        if self.load_in_8bit:
-            precision = "8-bit (balanced quality/memory)"
-        elif self.load_in_4bit:
-            precision = "4-bit (memory efficient)"
-        else:
-            precision = "16-bit (full quality)"
-
-        console.print(f"[cyan]Precision: {precision}[/cyan]")
+        console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
 
         with Progress(
             SpinnerColumn(),
@@ -599,19 +431,16 @@ class TransformersTextTrainer(TextTrainer):
         ) as progress:
             progress.add_task(description="Loading model...", total=None)
 
-            # Get HuggingFace token from environment
-            hf_token = os.getenv("HF_TOKEN")
+            hf_token = self._get_hf_token()
 
             # Determine torch dtype
             if not self.load_in_4bit and not self.load_in_8bit:
-                # For 16-bit, use bfloat16 or float16 based on availability
-                torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                torch_dtype = self._get_torch_dtype()
             else:
-                # Let BitsAndBytes handle dtype for quantized models
-                torch_dtype = None
+                torch_dtype = None  # Let BitsAndBytes handle dtype
 
             # Build model loading kwargs
-            model_kwargs = {
+            model_kwargs: dict[str, Any] = {
                 "pretrained_model_name_or_path": self.base_model,
                 "torch_dtype": torch_dtype,
                 "device_map": "auto",
@@ -620,17 +449,9 @@ class TransformersTextTrainer(TextTrainer):
             }
 
             # Add quantization if requested
-            if self.load_in_4bit:
-                from transformers import BitsAndBytesConfig
-
-                model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16
-                    if torch.cuda.is_bf16_supported()
-                    else torch.float16,
-                    bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4",
-                )
+            quant_config = self._get_quantization_config()
+            if quant_config:
+                model_kwargs["quantization_config"] = quant_config
             elif self.load_in_8bit:
                 model_kwargs["load_in_8bit"] = True
 
@@ -664,89 +485,24 @@ class TransformersTextTrainer(TextTrainer):
         loftq_config: dict | None = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning using PEFT."""
-        console.print("[cyan]Configuring LoRA adapters (PEFT)...[/cyan]")
-
-        if target_modules is None:
-            target_modules = [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ]
-
-        # Convert task_type string to TaskType enum
-        task_type_map = {
-            "CAUSAL_LM": TaskType.CAUSAL_LM,
-            "SEQ_2_SEQ_LM": TaskType.SEQ_2_SEQ_LM,
-        }
-        peft_task_type = task_type_map.get(task_type, TaskType.CAUSAL_LM)
-
-        # Create PEFT config
-        peft_config = LoraConfig(
+        self._configure_lora(
             r=r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules=target_modules,
-            bias=cast(Literal["none", "all", "lora_only"], lora_bias),
-            task_type=peft_task_type,
             use_rslora=use_rslora,
+            lora_bias=lora_bias,
+            task_type=task_type,
+            use_gradient_checkpointing=use_gradient_checkpointing,
         )
-
-        # Apply PEFT
-        self.model = get_peft_model(self.model, peft_config)  # type: ignore
-
-        # Enable gradient checkpointing if requested
-        if use_gradient_checkpointing and use_gradient_checkpointing != "false":
-            self.model.enable_input_require_grads()  # type: ignore
-            if hasattr(self.model.base_model, "gradient_checkpointing_enable"):
-                self.model.base_model.gradient_checkpointing_enable()  # type: ignore
-
-        console.print("[green]✓[/green] LoRA adapters configured")
 
     def load_dataset_from_file(self, dataset_path: str) -> Dataset:
         """Load dataset from a local file."""
-        console.print(f"[cyan]Loading dataset from: {dataset_path}[/cyan]")
-
-        path = Path(dataset_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
-
-        # Determine file format
-        suffix = path.suffix.lower()
-        if suffix == ".jsonl":
-            dataset = load_dataset("json", data_files=str(path), split="train")
-        elif suffix == ".json":
-            dataset = load_dataset("json", data_files=str(path), split="train")
-        elif suffix == ".csv":
-            dataset = load_dataset("csv", data_files=str(path), split="train")
-        elif suffix == ".parquet":
-            dataset = load_dataset("parquet", data_files=str(path), split="train")
-        else:
-            raise ValueError(f"Unsupported file format: {suffix}")
-
-        dataset_len = len(dataset)  # type: ignore
-        console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
-        return cast(Dataset, dataset)
+        return self._load_dataset_from_local_file(dataset_path)
 
     def load_dataset_from_hub(self, dataset_name: str, split: str = "train") -> Dataset:
         """Load dataset from HuggingFace Hub."""
-        hf_token = os.getenv("HF_TOKEN")
-
-        # Check if dataset_name includes a specific file
-        if "::" in dataset_name:
-            repo_name, file_name = dataset_name.split("::", 1)
-            console.print(f"[cyan]Loading dataset from Hub: {repo_name} (file: {file_name})[/cyan]")
-            dataset = load_dataset(repo_name, data_files=file_name, split="train", token=hf_token)
-        else:
-            console.print(f"[cyan]Loading dataset from Hub: {dataset_name} (split: {split})[/cyan]")
-            dataset = load_dataset(dataset_name, split=split, token=hf_token)
-
-        dataset_len = len(dataset)  # type: ignore
-        console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
-        return cast(Dataset, dataset)
+        return self._load_dataset_from_hf_hub(dataset_name, split=split)
 
     def format_dataset(
         self,
@@ -822,55 +578,22 @@ class TransformersTextTrainer(TextTrainer):
         """Train the model using Transformers Trainer."""
         console.print("[cyan]Starting training with Transformers backend...[/cyan]")
 
-        # Initialize carbon tracker
+        # Set up carbon tracking
         carbon_tracker = None
         if enable_carbon_tracking:
-            if job_id is None:
-                import time
-
-                job_id = f"training-{int(time.time())}"
-
-            try:
-                carbon_tracker = CarbonTracker(
-                    job_id=job_id,
-                    job_type="training",
-                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
-                )
-                carbon_tracker.start()
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
-                carbon_tracker = None
-
-        # Set evaluation strategy
-        final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
-        eval_steps_value = eval_steps if eval_steps is not None else save_steps
-        final_load_best = load_best_model_at_end and eval_dataset is not None
-        final_metric = metric_for_best_model if eval_dataset is not None else None
-
-        # Detect model dtype and set precision
-        model_dtype = detect_model_dtype(self.model, self.load_in_4bit, self.load_in_8bit)
-        precision_config = get_training_precision_config(
-            self.model, self.load_in_4bit, self.load_in_8bit
-        )
-
-        console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
-        console.print(
-            f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
-        )
+            carbon_tracker = self._setup_carbon_tracking(output_dir, job_id, "training")
 
         # Create training arguments
-        training_args = TrainingArguments(  # type: ignore
+        training_args = self._create_training_args(
             output_dir=output_dir,
+            num_train_epochs=num_train_epochs,
             per_device_train_batch_size=per_device_train_batch_size,
-            per_device_eval_batch_size=per_device_train_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
+            learning_rate=learning_rate,
             warmup_steps=warmup_steps,
             max_steps=max_steps,
-            num_train_epochs=num_train_epochs,
-            learning_rate=learning_rate,
-            fp16=precision_config["fp16"],
-            bf16=precision_config["bf16"],
             logging_steps=logging_steps,
+            save_steps=save_steps,
             optim=optim,
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler_type,
@@ -880,24 +603,15 @@ class TransformersTextTrainer(TextTrainer):
             adam_epsilon=adam_epsilon,
             dataloader_num_workers=dataloader_num_workers,
             dataloader_pin_memory=dataloader_pin_memory,
-            seed=42,
-            save_steps=save_steps,
             save_total_limit=save_total_limit,
-            report_to="none",
-            do_eval=eval_dataset is not None,
-            eval_strategy=final_eval_strategy,
-            eval_steps=eval_steps_value if eval_dataset else None,
-            load_best_model_at_end=final_load_best,
-            metric_for_best_model=final_metric,
+            eval_dataset=eval_dataset,
+            eval_strategy=eval_strategy,
+            eval_steps=eval_steps,
+            load_best_model_at_end=load_best_model_at_end,
+            metric_for_best_model=metric_for_best_model,
         )
 
-        # Add memory monitoring callback
-        memory_monitor = MemoryMonitorCallback()
-        all_callbacks: list[Any] = [memory_monitor]
-        if callbacks:
-            all_callbacks.extend(callbacks)
-
-        console.print("[cyan]💡 Memory monitoring enabled[/cyan]")
+        all_callbacks = self._get_callbacks(callbacks)
 
         # Tokenize datasets
         def tokenize_function(examples):
@@ -917,12 +631,10 @@ class TransformersTextTrainer(TextTrainer):
                 tokenize_function, batched=True, remove_columns=eval_dataset.column_names
             )
 
-        # Create data collator for language modeling (adds labels automatically)
-        from transformers import DataCollatorForLanguageModeling
-
+        # Create data collator for language modeling
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=self.tokenizer,
-            mlm=False,  # We're doing causal LM, not masked LM
+            mlm=False,  # Causal LM, not masked LM
         )
 
         # Create trainer
@@ -940,15 +652,7 @@ class TransformersTextTrainer(TextTrainer):
         console.print("[green]✓[/green] Training completed")
 
         # Stop carbon tracking
-        if carbon_tracker is not None:
-            try:
-                emissions_data = carbon_tracker.stop()
-                if emissions_data:
-                    console.print(
-                        f"[green]🌍 Carbon emissions: {emissions_data['emissions_kg_co2']:.6f} kg CO2[/green]"
-                    )
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
+        self._stop_carbon_tracking(carbon_tracker)
 
         # Save final model
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
@@ -965,33 +669,7 @@ class TransformersTextTrainer(TextTrainer):
         max_shard_size: str = "5GB",
     ) -> None:
         """Save the trained model."""
-        console.print(f"[cyan]Saving model with method: {save_method}[/cyan]")
-
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        if self.model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-        if self.tokenizer is None:
-            raise RuntimeError("Tokenizer not available.")
-
-        if save_method == "lora":
-            # Save only LoRA adapters
-            self.model.save_pretrained(str(output_path))
-            self.tokenizer.save_pretrained(str(output_path))
-        elif save_method in ["merged_16bit", "merged_4bit"]:
-            # Merge LoRA weights into base model
-            console.print("[cyan]Merging LoRA weights...[/cyan]")
-            merged_model = self.model.merge_and_unload()  # type: ignore
-            merged_model.save_pretrained(  # type: ignore
-                str(output_path),
-                max_shard_size=max_shard_size,
-            )
-            self.tokenizer.save_pretrained(str(output_path))
-        else:
-            raise ValueError(f"Unknown save method: {save_method}")
-
-        console.print(f"[green]✓[/green] Model saved to {output_path}")
+        self._save_model_internal(output_dir, save_method, max_shard_size)
 
 
 class TransformersBackend(TrainingBackend):
