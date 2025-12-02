@@ -65,7 +65,7 @@ class TrainingJobInfo(BaseModel):
     model_type: str | None = None
     current_step: int | None = None
     total_steps: int | None = None
-    current_epoch: int | None = None
+    current_epoch: float | None = None
     save_method: str | None = "merged_16bit"
     backend: str | None = "unsloth"
     metrics: dict | None = None  # Training and validation metrics history
