@@ -4,41 +4,41 @@ This backend provides standard HuggingFace Transformers + PEFT training without 
 Use this for maximum compatibility or when Unsloth doesn't support your model.
 """
 
-import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast, Literal
+from typing import Any, Literal, cast
 
 # Configure HuggingFace cache from environment before importing HF libraries
 from dotenv import load_dotenv
+
 load_dotenv()
 
-HF_HOME = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
-os.environ['HF_HOME'] = HF_HOME
-os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
-os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
+HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+os.environ["HF_HOME"] = HF_HOME
+os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
+os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
 
 # Configure PyTorch memory allocator
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
 from datasets import Dataset, load_dataset
-from peft import LoraConfig, get_peft_model, TaskType, PeftModel
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    TrainingArguments,
     Trainer,
+    TrainingArguments,
 )
 
-from model_garden.backends.base import TrainingBackend, TextTrainer, VisionTrainer
+from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
 from model_garden.carbon import CarbonTracker
-from model_garden.training_utils import (
+from model_garden.training.utils import (
+    MemoryMonitorCallback,
     detect_model_dtype,
     get_training_precision_config,
-    MemoryMonitorCallback,
 )
 
 console = Console()
@@ -46,7 +46,7 @@ console = Console()
 
 class TransformersVisionTrainer(VisionTrainer):
     """Vision trainer using standard HuggingFace Transformers + PEFT for vision-language models.
-    
+
     Note: This is a basic implementation that may not support all features of the Unsloth vision trainer.
     For production use with vision models, consider using the Unsloth backend for better performance.
     """
@@ -65,7 +65,7 @@ class TransformersVisionTrainer(VisionTrainer):
 
             console.print(f"[cyan]Loading vision model: {self.base_model}[/cyan]")
             console.print("[yellow]Using HuggingFace Transformers (basic vision support)[/yellow]")
-            
+
             # Determine precision
             if self.load_in_4bit:
                 console.print("[cyan]Precision: 4-bit (memory efficient)[/cyan]")
@@ -76,7 +76,7 @@ class TransformersVisionTrainer(VisionTrainer):
 
             # Prepare model kwargs
             torch_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-            
+
             model_kwargs = {
                 "pretrained_model_name_or_path": self.base_model,
                 "torch_dtype": torch_dtype,
@@ -84,32 +84,40 @@ class TransformersVisionTrainer(VisionTrainer):
                 "token": hf_token,
                 "trust_remote_code": True,
             }
-            
+
             # Add quantization if requested
             if self.load_in_4bit:
                 from transformers import BitsAndBytesConfig
+
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+                    bnb_4bit_compute_dtype=torch.bfloat16
+                    if torch.cuda.is_bf16_supported()
+                    else torch.float16,
                     bnb_4bit_use_double_quant=True,
                     bnb_4bit_quant_type="nf4",
                 )
             elif self.load_in_8bit:
                 model_kwargs["load_in_8bit"] = True
-            
+
             # Load model - use AutoModelForVision2Seq or similar for vision-language models
             # Try to use the appropriate model class based on the model type
             from transformers import AutoModelForVision2Seq
+
             try:
                 self.model = AutoModelForVision2Seq.from_pretrained(**model_kwargs)
             except Exception:
                 # Fallback to generic AutoModel if specific class not available
-                console.print("[yellow]⚠️  AutoModelForVision2Seq not available, trying AutoModel[/yellow]")
+                console.print(
+                    "[yellow]⚠️  AutoModelForVision2Seq not available, trying AutoModel[/yellow]"
+                )
                 from transformers import AutoModel
+
                 self.model = AutoModel.from_pretrained(**model_kwargs)
-            
+
             # Load processor (handles both text and image processing)
             from transformers import AutoProcessor
+
             self.processor = AutoProcessor.from_pretrained(
                 self.base_model,
                 token=hf_token,
@@ -124,13 +132,13 @@ class TransformersVisionTrainer(VisionTrainer):
         r: int = 16,
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
-        target_modules: Optional[List[str]] = None,
+        target_modules: list[str] | None = None,
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
-        use_gradient_checkpointing: Union[str, bool] = "unsloth",
+        use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
-        loftq_config: Optional[Dict] = None,
+        loftq_config: dict | None = None,
         finetune_vision_layers: bool = True,
         finetune_language_layers: bool = True,
         finetune_attention_modules: bool = True,
@@ -164,7 +172,7 @@ class TransformersVisionTrainer(VisionTrainer):
 
         # Apply PEFT
         self.model = get_peft_model(self.model, peft_config)  # type: ignore
-        
+
         # Enable gradient checkpointing if requested
         if use_gradient_checkpointing and use_gradient_checkpointing != "false":
             self.model.enable_input_require_grads()  # type: ignore
@@ -194,9 +202,7 @@ class TransformersVisionTrainer(VisionTrainer):
         console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
         return cast(Dataset, dataset)
 
-    def load_dataset_from_hub(
-        self, dataset_name: str, split: str = "train", **kwargs
-    ) -> Dataset:
+    def load_dataset_from_hub(self, dataset_name: str, split: str = "train", **kwargs) -> Dataset:
         """Load multimodal dataset from HuggingFace Hub."""
         hf_token = os.getenv("HF_TOKEN")
         console.print(f"[cyan]Loading dataset from Hub: {dataset_name}[/cyan]")
@@ -208,38 +214,40 @@ class TransformersVisionTrainer(VisionTrainer):
         dataset: Dataset,
         text_field: str = "text",
         image_field: str = "image",
-        system_message: Optional[str] = None,
-        messages_field: Optional[str] = None,
-    ) -> List[Dict]:
+        system_message: str | None = None,
+        messages_field: str | None = None,
+    ) -> list[dict]:
         """Format dataset for vision-language training.
-        
+
         Note: This is a simplified implementation. For advanced features like selective loss
         and multiple formats, use the Unsloth backend.
         """
         console.print("[cyan]Formatting vision-language dataset...[/cyan]")
-        
+
         if system_message is None:
             system_message = "You are a helpful assistant that can analyze images."
 
         formatted_data = []
-        
+
         for example in dataset:
             # Ensure example is a dict
             if not isinstance(example, dict):
                 continue
-            
+
             # Simple format: {text, image, response}
             text = example.get(text_field, example.get("question", ""))
             response = example.get("response", example.get("answer", ""))
             image_path = example.get(image_field, "")
-            
+
             # Load image
             from PIL import Image
+
             if isinstance(image_path, str):
                 if image_path.startswith("data:image"):
                     # Base64 encoded
                     import base64
                     import io
+
                     image_data = image_path.split(",")[1]
                     pil_image = Image.open(io.BytesIO(base64.b64decode(image_data)))
                 else:
@@ -247,33 +255,35 @@ class TransformersVisionTrainer(VisionTrainer):
                     pil_image = Image.open(image_path).convert("RGB")
             else:
                 pil_image = image_path  # Already a PIL Image
-            
+
             # Format as messages
-            formatted_data.append({
-                "messages": [
-                    {"role": "system", "content": [{"type": "text", "text": system_message}]},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": pil_image},
-                            {"type": "text", "text": text},
-                        ],
-                    },
-                    {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": response}],
-                    },
-                ],
-            })
-        
+            formatted_data.append(
+                {
+                    "messages": [
+                        {"role": "system", "content": [{"type": "text", "text": system_message}]},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": pil_image},
+                                {"type": "text", "text": text},
+                            ],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": response}],
+                        },
+                    ],
+                }
+            )
+
         console.print(f"[green]✓[/green] Formatted {len(formatted_data)} examples")
         return formatted_data
 
     def train(
         self,
-        dataset: Union[Dataset, List[Dict]],
+        dataset: Dataset | list[dict],
         output_dir: str,
-        job_id: Optional[str] = None,
+        job_id: str | None = None,
         enable_carbon_tracking: bool = True,
         num_train_epochs: int = 3,
         per_device_train_batch_size: int = 1,
@@ -296,12 +306,12 @@ class TransformersVisionTrainer(VisionTrainer):
         load_best_model_at_end: bool = True,
         metric_for_best_model: str = "eval_loss",
         save_total_limit: int = 3,
-        callbacks: Optional[List] = None,
-        eval_dataset: Optional[Union[Dataset, List[Dict]]] = None,
-        eval_steps: Optional[int] = None,
+        callbacks: list | None = None,
+        eval_dataset: Dataset | list[dict] | None = None,
+        eval_steps: int | None = None,
         selective_loss: bool = False,
         selective_loss_level: str = "conservative",
-        selective_loss_schema_keys: Optional[List[str]] = None,
+        selective_loss_schema_keys: list[str] | None = None,
         selective_loss_masking_strategy: str = "epoch_based",
         selective_loss_masking_start_epoch: float = 0.0,
         selective_loss_mask_every_n_steps: int = 100,
@@ -310,22 +320,25 @@ class TransformersVisionTrainer(VisionTrainer):
         selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
-        
+
         Note: This is a basic implementation. Advanced features like selective loss
         are not supported. For full feature support, use the Unsloth backend.
         """
         console.print("[cyan]Starting vision training with Transformers backend...[/cyan]")
-        
+
         if selective_loss:
-            console.print("[yellow]⚠️  Selective loss not supported in Transformers backend[/yellow]")
-        
+            console.print(
+                "[yellow]⚠️  Selective loss not supported in Transformers backend[/yellow]"
+            )
+
         # Initialize carbon tracker
         carbon_tracker = None
         if enable_carbon_tracking:
             if job_id is None:
                 import time
+
                 job_id = f"vision-training-{int(time.time())}"
-            
+
             try:
                 carbon_tracker = CarbonTracker(
                     job_id=job_id,
@@ -336,7 +349,7 @@ class TransformersVisionTrainer(VisionTrainer):
             except Exception as e:
                 console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
                 carbon_tracker = None
-        
+
         # Set evaluation strategy
         final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
         eval_steps_value = eval_steps if eval_steps is not None else save_steps
@@ -345,10 +358,14 @@ class TransformersVisionTrainer(VisionTrainer):
 
         # Detect model dtype and set precision
         model_dtype = detect_model_dtype(self.model, self.load_in_4bit, self.load_in_8bit)
-        precision_config = get_training_precision_config(self.model, self.load_in_4bit, self.load_in_8bit)
-        
+        precision_config = get_training_precision_config(
+            self.model, self.load_in_4bit, self.load_in_8bit
+        )
+
         console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
-        console.print(f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]")
+        console.print(
+            f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
+        )
 
         # Create training arguments
         training_args = TrainingArguments(  # type: ignore
@@ -360,8 +377,8 @@ class TransformersVisionTrainer(VisionTrainer):
             max_steps=max_steps,
             num_train_epochs=num_train_epochs,
             learning_rate=learning_rate,
-            fp16=precision_config['fp16'],
-            bf16=precision_config['bf16'],
+            fp16=precision_config["fp16"],
+            bf16=precision_config["bf16"],
             logging_steps=logging_steps,
             optim=optim,
             weight_decay=weight_decay,
@@ -386,12 +403,12 @@ class TransformersVisionTrainer(VisionTrainer):
 
         # Add memory monitoring callback
         memory_monitor = MemoryMonitorCallback()
-        all_callbacks: List[Any] = [memory_monitor]
+        all_callbacks: list[Any] = [memory_monitor]
         if callbacks:
             all_callbacks.extend(callbacks)
-        
+
         console.print("[cyan]💡 Memory monitoring enabled[/cyan]")
-        
+
         # Convert dataset to the format expected by the processor
         # The dataset should already be formatted from format_dataset()
         if isinstance(dataset, list):
@@ -399,20 +416,20 @@ class TransformersVisionTrainer(VisionTrainer):
             train_dataset = dataset
         else:
             train_dataset = dataset
-        
+
         # Create a simple data collator for vision-language models
         # This uses the standard processor API without Unsloth dependencies
         def collate_fn(examples):
             """Simple collator using standard Transformers processor API."""
             # For standard Transformers vision-language models, we can use
             # the processor's built-in message formatting
-            
+
             batch_messages = []
             for example in examples:
                 # Each example has a "messages" field from format_dataset
                 messages = example.get("messages", [])
                 batch_messages.append(messages)
-            
+
             # Use the processor's apply_chat_template if available
             if hasattr(self.processor, "apply_chat_template"):
                 # Modern approach: use chat template
@@ -421,7 +438,7 @@ class TransformersVisionTrainer(VisionTrainer):
                     tokenize=False,
                     add_generation_prompt=False,
                 )
-                
+
                 # Extract images from messages
                 batch_images = []
                 for messages in batch_messages:
@@ -431,7 +448,7 @@ class TransformersVisionTrainer(VisionTrainer):
                             if content_item.get("type") == "image":
                                 images.append(content_item["image"])
                     batch_images.extend(images)
-                
+
                 # Process with images
                 if batch_images:
                     inputs = self.processor(
@@ -450,11 +467,11 @@ class TransformersVisionTrainer(VisionTrainer):
                 # Fallback: manual text construction
                 texts = []
                 batch_images = []
-                
+
                 for messages in batch_messages:
                     text_parts = []
                     images = []
-                    
+
                     for message in messages:
                         role = message.get("role", "")
                         for content_item in message.get("content", []):
@@ -463,10 +480,10 @@ class TransformersVisionTrainer(VisionTrainer):
                                 text_parts.append(f"{role}: {text}")
                             elif content_item.get("type") == "image":
                                 images.append(content_item["image"])
-                    
+
                     texts.append("\n".join(text_parts))
                     batch_images.extend(images)
-                
+
                 # Process
                 if batch_images:
                     inputs = self.processor(
@@ -481,14 +498,14 @@ class TransformersVisionTrainer(VisionTrainer):
                         return_tensors="pt",
                         padding=True,
                     )
-            
+
             # Add labels for causal language modeling
             # Labels are the same as input_ids (standard practice for CLM)
             if "input_ids" in inputs:
                 inputs["labels"] = inputs["input_ids"].clone()
-            
+
             return inputs
-        
+
         # Create trainer
         trainer = Trainer(
             model=self.model,
@@ -502,16 +519,18 @@ class TransformersVisionTrainer(VisionTrainer):
         # Train
         trainer.train()
         console.print("[green]✓[/green] Training completed")
-        
+
         # Stop carbon tracking
         if carbon_tracker is not None:
             try:
                 emissions_data = carbon_tracker.stop()
                 if emissions_data:
-                    console.print(f"[green]💚 Carbon emissions: {emissions_data['emissions']:.4f} kg CO2[/green]")
+                    console.print(
+                        f"[green]💚 Carbon emissions: {emissions_data['emissions']:.4f} kg CO2[/green]"
+                    )
             except Exception as e:
                 console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
-        
+
         # Save the model after training
         console.print("[cyan]Saving model to: {output_dir}[/cyan]")
         if isinstance(self.model, PeftModel):
@@ -530,10 +549,10 @@ class TransformersVisionTrainer(VisionTrainer):
     ) -> None:
         """Save the fine-tuned vision-language model."""
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
-        
+
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        
+
         if save_method == "lora":
             # Save LoRA adapters only
             if isinstance(self.model, PeftModel):
@@ -551,7 +570,7 @@ class TransformersVisionTrainer(VisionTrainer):
             else:
                 self.model.save_pretrained(str(output_path), max_shard_size=max_shard_size)  # type: ignore
                 self.processor.save_pretrained(str(output_path))
-        
+
         console.print(f"[green]✓[/green] Model saved to {output_path}")
 
 
@@ -561,7 +580,7 @@ class TransformersTextTrainer(TextTrainer):
     def load_model(self) -> None:
         """Load the base model using Transformers."""
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
-        console.print(f"[cyan]Using HuggingFace Transformers (no Unsloth optimizations)[/cyan]")
+        console.print("[cyan]Using HuggingFace Transformers (no Unsloth optimizations)[/cyan]")
 
         # Determine precision
         if self.load_in_8bit:
@@ -570,7 +589,7 @@ class TransformersTextTrainer(TextTrainer):
             precision = "4-bit (memory efficient)"
         else:
             precision = "16-bit (full quality)"
-        
+
         console.print(f"[cyan]Precision: {precision}[/cyan]")
 
         with Progress(
@@ -581,8 +600,8 @@ class TransformersTextTrainer(TextTrainer):
             progress.add_task(description="Loading model...", total=None)
 
             # Get HuggingFace token from environment
-            hf_token = os.getenv('HF_TOKEN')
-            
+            hf_token = os.getenv("HF_TOKEN")
+
             # Determine torch dtype
             if not self.load_in_4bit and not self.load_in_8bit:
                 # For 16-bit, use bfloat16 or float16 based on availability
@@ -590,7 +609,7 @@ class TransformersTextTrainer(TextTrainer):
             else:
                 # Let BitsAndBytes handle dtype for quantized models
                 torch_dtype = None
-            
+
             # Build model loading kwargs
             model_kwargs = {
                 "pretrained_model_name_or_path": self.base_model,
@@ -599,29 +618,32 @@ class TransformersTextTrainer(TextTrainer):
                 "token": hf_token,
                 "trust_remote_code": True,
             }
-            
+
             # Add quantization if requested
             if self.load_in_4bit:
                 from transformers import BitsAndBytesConfig
+
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+                    bnb_4bit_compute_dtype=torch.bfloat16
+                    if torch.cuda.is_bf16_supported()
+                    else torch.float16,
                     bnb_4bit_use_double_quant=True,
                     bnb_4bit_quant_type="nf4",
                 )
             elif self.load_in_8bit:
                 model_kwargs["load_in_8bit"] = True
-            
+
             # Load model
             self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
-            
+
             # Load tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.base_model,
                 token=hf_token,
                 trust_remote_code=True,
             )
-            
+
             # Set pad token if not set
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -633,13 +655,13 @@ class TransformersTextTrainer(TextTrainer):
         r: int = 16,
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
-        target_modules: Optional[List[str]] = None,
+        target_modules: list[str] | None = None,
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
-        use_gradient_checkpointing: Union[str, bool] = "unsloth",
+        use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
-        loftq_config: Optional[Dict] = None,
+        loftq_config: dict | None = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning using PEFT."""
         console.print("[cyan]Configuring LoRA adapters (PEFT)...[/cyan]")
@@ -675,7 +697,7 @@ class TransformersTextTrainer(TextTrainer):
 
         # Apply PEFT
         self.model = get_peft_model(self.model, peft_config)  # type: ignore
-        
+
         # Enable gradient checkpointing if requested
         if use_gradient_checkpointing and use_gradient_checkpointing != "false":
             self.model.enable_input_require_grads()  # type: ignore
@@ -711,8 +733,8 @@ class TransformersTextTrainer(TextTrainer):
 
     def load_dataset_from_hub(self, dataset_name: str, split: str = "train") -> Dataset:
         """Load dataset from HuggingFace Hub."""
-        hf_token = os.getenv('HF_TOKEN')
-        
+        hf_token = os.getenv("HF_TOKEN")
+
         # Check if dataset_name includes a specific file
         if "::" in dataset_name:
             repo_name, file_name = dataset_name.split("::", 1)
@@ -721,7 +743,7 @@ class TransformersTextTrainer(TextTrainer):
         else:
             console.print(f"[cyan]Loading dataset from Hub: {dataset_name} (split: {split})[/cyan]")
             dataset = load_dataset(dataset_name, split=split, token=hf_token)
-        
+
         dataset_len = len(dataset)  # type: ignore
         console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
         return cast(Dataset, dataset)
@@ -732,7 +754,7 @@ class TransformersTextTrainer(TextTrainer):
         instruction_field: str = "instruction",
         input_field: str = "input",
         output_field: str = "output",
-        prompt_template: Optional[str] = None,
+        prompt_template: str | None = None,
     ) -> Dataset:
         """Format dataset for instruction fine-tuning."""
         console.print("[cyan]Formatting dataset...[/cyan]")
@@ -770,7 +792,7 @@ class TransformersTextTrainer(TextTrainer):
         self,
         dataset: Dataset,
         output_dir: str,
-        job_id: Optional[str] = None,
+        job_id: str | None = None,
         enable_carbon_tracking: bool = True,
         num_train_epochs: int = 3,
         per_device_train_batch_size: int = 2,
@@ -793,20 +815,21 @@ class TransformersTextTrainer(TextTrainer):
         load_best_model_at_end: bool = True,
         metric_for_best_model: str = "eval_loss",
         save_total_limit: int = 3,
-        callbacks: Optional[List] = None,
-        eval_dataset: Optional[Dataset] = None,
-        eval_steps: Optional[int] = None,
+        callbacks: list | None = None,
+        eval_dataset: Dataset | None = None,
+        eval_steps: int | None = None,
     ) -> None:
         """Train the model using Transformers Trainer."""
         console.print("[cyan]Starting training with Transformers backend...[/cyan]")
-        
+
         # Initialize carbon tracker
         carbon_tracker = None
         if enable_carbon_tracking:
             if job_id is None:
                 import time
+
                 job_id = f"training-{int(time.time())}"
-            
+
             try:
                 carbon_tracker = CarbonTracker(
                     job_id=job_id,
@@ -817,7 +840,7 @@ class TransformersTextTrainer(TextTrainer):
             except Exception as e:
                 console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
                 carbon_tracker = None
-        
+
         # Set evaluation strategy
         final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
         eval_steps_value = eval_steps if eval_steps is not None else save_steps
@@ -826,10 +849,14 @@ class TransformersTextTrainer(TextTrainer):
 
         # Detect model dtype and set precision
         model_dtype = detect_model_dtype(self.model, self.load_in_4bit, self.load_in_8bit)
-        precision_config = get_training_precision_config(self.model, self.load_in_4bit, self.load_in_8bit)
-        
+        precision_config = get_training_precision_config(
+            self.model, self.load_in_4bit, self.load_in_8bit
+        )
+
         console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
-        console.print(f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]")
+        console.print(
+            f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
+        )
 
         # Create training arguments
         training_args = TrainingArguments(  # type: ignore
@@ -841,8 +868,8 @@ class TransformersTextTrainer(TextTrainer):
             max_steps=max_steps,
             num_train_epochs=num_train_epochs,
             learning_rate=learning_rate,
-            fp16=precision_config['fp16'],
-            bf16=precision_config['bf16'],
+            fp16=precision_config["fp16"],
+            bf16=precision_config["bf16"],
             logging_steps=logging_steps,
             optim=optim,
             weight_decay=weight_decay,
@@ -866,12 +893,12 @@ class TransformersTextTrainer(TextTrainer):
 
         # Add memory monitoring callback
         memory_monitor = MemoryMonitorCallback()
-        all_callbacks: List[Any] = [memory_monitor]
+        all_callbacks: list[Any] = [memory_monitor]
         if callbacks:
             all_callbacks.extend(callbacks)
-        
+
         console.print("[cyan]💡 Memory monitoring enabled[/cyan]")
-        
+
         # Tokenize datasets
         def tokenize_function(examples):
             return self.tokenizer(
@@ -880,19 +907,24 @@ class TransformersTextTrainer(TextTrainer):
                 max_length=self.max_seq_length,
                 padding="max_length",
             )
-        
-        tokenized_train = dataset.map(tokenize_function, batched=True, remove_columns=dataset.column_names)
+
+        tokenized_train = dataset.map(
+            tokenize_function, batched=True, remove_columns=dataset.column_names
+        )
         tokenized_eval = None
         if eval_dataset is not None:
-            tokenized_eval = eval_dataset.map(tokenize_function, batched=True, remove_columns=eval_dataset.column_names)
-        
+            tokenized_eval = eval_dataset.map(
+                tokenize_function, batched=True, remove_columns=eval_dataset.column_names
+            )
+
         # Create data collator for language modeling (adds labels automatically)
         from transformers import DataCollatorForLanguageModeling
+
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=self.tokenizer,
             mlm=False,  # We're doing causal LM, not masked LM
         )
-        
+
         # Create trainer
         trainer = Trainer(
             model=self.model,
@@ -906,7 +938,7 @@ class TransformersTextTrainer(TextTrainer):
         # Train
         trainer.train()
         console.print("[green]✓[/green] Training completed")
-        
+
         # Stop carbon tracking
         if carbon_tracker is not None:
             try:
@@ -942,7 +974,7 @@ class TransformersTextTrainer(TextTrainer):
             raise RuntimeError("Model not loaded. Call load_model() first.")
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer not available.")
-            
+
         if save_method == "lora":
             # Save only LoRA adapters
             self.model.save_pretrained(str(output_path))
@@ -964,7 +996,7 @@ class TransformersTextTrainer(TextTrainer):
 
 class TransformersBackend(TrainingBackend):
     """Transformers training backend.
-    
+
     Uses standard HuggingFace Transformers + PEFT without Unsloth optimizations.
     Provides maximum compatibility at the cost of training speed.
     """
@@ -975,7 +1007,9 @@ class TransformersBackend(TrainingBackend):
 
     @property
     def description(self) -> str:
-        return "Standard HuggingFace Transformers + PEFT (maximum compatibility, slower than Unsloth)"
+        return (
+            "Standard HuggingFace Transformers + PEFT (maximum compatibility, slower than Unsloth)"
+        )
 
     def supports_text_training(self) -> bool:
         return True
@@ -989,7 +1023,7 @@ class TransformersBackend(TrainingBackend):
         max_seq_length: int = 2048,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[str] = None,
+        dtype: str | None = None,
     ) -> TextTrainer:
         """Create a Transformers text trainer."""
         return TransformersTextTrainer(
@@ -1006,7 +1040,7 @@ class TransformersBackend(TrainingBackend):
         max_seq_length: int = 16384,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[Any] = None,
+        dtype: Any | None = None,
     ) -> VisionTrainer:
         """Create a Transformers vision trainer."""
         return TransformersVisionTrainer(

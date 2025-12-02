@@ -7,47 +7,45 @@ Note: You may see non-critical warnings:
 
 import json
 import os
-import warnings
 from pathlib import Path
-from typing import Optional, List
 
 # Configure HuggingFace cache from environment before importing HF libraries
 from dotenv import load_dotenv
+
 load_dotenv()
 
-HF_HOME = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
-os.environ['HF_HOME'] = HF_HOME
-os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
-os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
+HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+os.environ["HF_HOME"] = HF_HOME
+os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
+os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
 
 # Suppress non-critical warnings
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 # CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
 # This ensures Unsloth's PyTorch patches are applied correctly for optimal performance
-from unsloth import FastLanguageModel
+from typing import cast
 
 # Then import other ML libraries AFTER unsloth
 from datasets import Dataset, load_dataset
-
-# Import shared training utilities for dtype detection
-from model_garden.training_utils import (
-    detect_model_dtype,
-    get_training_precision_config,
-    MemoryMonitorCallback,
-)
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from trl.trainer.sft_trainer import SFTTrainer
 from transformers import TrainingArguments
-from transformers.trainer_callback import TrainerCallback, TrainerControl
-from typing import cast
+from trl.trainer.sft_trainer import SFTTrainer
+from unsloth import FastLanguageModel
+
+# Import backend base class
+from model_garden.backends.base import TextTrainer
 
 # Import carbon tracking
 from model_garden.carbon import CarbonTracker
 
-# Import backend base class
-from model_garden.backends.base import TextTrainer
+# Import shared training utilities for dtype detection
+from model_garden.training.utils import (
+    MemoryMonitorCallback,
+    detect_model_dtype,
+    get_training_precision_config,
+)
 
 console = Console()
 
@@ -61,7 +59,7 @@ class ModelTrainer(TextTrainer):
         max_seq_length: int = 2048,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[str] = None,
+        dtype: str | None = None,
     ):
         """Initialize the trainer.
 
@@ -71,7 +69,7 @@ class ModelTrainer(TextTrainer):
             load_in_4bit: Whether to load model in 4-bit quantization (memory efficient, ~95% quality)
             load_in_8bit: Whether to load model in 8-bit quantization (balanced, ~98% quality, 2x memory vs 4-bit)
             dtype: Data type (None for auto-detection, used for 16-bit precision when both quantizations are False)
-        
+
         Note on quantization priority:
             - If load_in_8bit=True: Uses 8-bit quantization (overrides load_in_4bit)
             - If load_in_4bit=True and load_in_8bit=False: Uses 4-bit quantization
@@ -87,7 +85,7 @@ class ModelTrainer(TextTrainer):
 
     def load_model(self) -> None:
         """Load the base model with Unsloth optimizations.
-        
+
         Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
         """
         # Determine precision for logging
@@ -97,7 +95,7 @@ class ModelTrainer(TextTrainer):
             precision = "4-bit (memory efficient)"
         else:
             precision = "16-bit (full quality)"
-        
+
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
         console.print(f"[cyan]Precision: {precision}[/cyan]")
 
@@ -109,8 +107,8 @@ class ModelTrainer(TextTrainer):
             progress.add_task(description="Loading model...", total=None)
 
             # Get HuggingFace token from environment for private models
-            hf_token = os.getenv('HF_TOKEN')
-            
+            hf_token = os.getenv("HF_TOKEN")
+
             # Unsloth supports both 4-bit and 8-bit quantization
             # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
             self.model, self.tokenizer = FastLanguageModel.from_pretrained(
@@ -129,13 +127,13 @@ class ModelTrainer(TextTrainer):
         r: int = 16,
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
-        target_modules: Optional[list[str]] = None,
+        target_modules: list[str] | None = None,
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
         use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
-        loftq_config: Optional[dict] = None,
+        loftq_config: dict | None = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning.
 
@@ -230,21 +228,21 @@ class ModelTrainer(TextTrainer):
             Loaded dataset
         """
         # Get HuggingFace token from environment for private datasets
-        hf_token = os.getenv('HF_TOKEN')
-        
+        hf_token = os.getenv("HF_TOKEN")
+
         # Check if dataset_name includes a specific file
         if "::" in dataset_name:
             repo_name, file_name = dataset_name.split("::", 1)
             console.print(f"[cyan]Loading dataset from Hub: {repo_name} (file: {file_name})[/cyan]")
-            
+
             # Load specific file from the repo
             dataset = load_dataset(repo_name, data_files=file_name, split="train", token=hf_token)
         else:
             console.print(f"[cyan]Loading dataset from Hub: {dataset_name} (split: {split})[/cyan]")
-            
+
             # Load standard split
             dataset = load_dataset(dataset_name, split=split, token=hf_token)
-        
+
         # Handle dataset types - cast to Dataset for type safety
         try:
             dataset_len = len(dataset)  # type: ignore
@@ -259,7 +257,7 @@ class ModelTrainer(TextTrainer):
         instruction_field: str = "instruction",
         input_field: str = "input",
         output_field: str = "output",
-        prompt_template: Optional[str] = None,
+        prompt_template: str | None = None,
     ) -> Dataset:
         """Format dataset for instruction fine-tuning.
 
@@ -308,7 +306,7 @@ class ModelTrainer(TextTrainer):
         self,
         dataset: Dataset,
         output_dir: str,
-        job_id: Optional[str] = None,
+        job_id: str | None = None,
         enable_carbon_tracking: bool = True,
         num_train_epochs: int = 3,
         per_device_train_batch_size: int = 2,
@@ -331,9 +329,9 @@ class ModelTrainer(TextTrainer):
         load_best_model_at_end: bool = True,
         metric_for_best_model: str = "eval_loss",
         save_total_limit: int = 3,
-        callbacks: Optional[List] = None,
-        eval_dataset: Optional[Dataset] = None,
-        eval_steps: Optional[int] = None,
+        callbacks: list | None = None,
+        eval_dataset: Dataset | None = None,
+        eval_steps: int | None = None,
     ) -> None:
         """Train the model.
 
@@ -366,7 +364,7 @@ class ModelTrainer(TextTrainer):
             eval_steps: Optional number of steps between evaluations (defaults to save_steps)
         """
         console.print("[cyan]Starting training...[/cyan]")
-        
+
         # Initialize carbon tracker
         carbon_tracker = None
         emissions_data = None
@@ -374,8 +372,9 @@ class ModelTrainer(TextTrainer):
             # Generate job_id if not provided
             if job_id is None:
                 import time
+
                 job_id = f"training-{int(time.time())}"
-            
+
             try:
                 carbon_tracker = CarbonTracker(
                     job_id=job_id,
@@ -387,11 +386,11 @@ class ModelTrainer(TextTrainer):
                 console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
                 console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
                 carbon_tracker = None
-        
+
         # Set evaluation strategy if validation dataset provided
         final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
         eval_steps_value = eval_steps if eval_steps is not None else save_steps
-        
+
         # Determine if we should load best model at end
         final_load_best = load_best_model_at_end and eval_dataset is not None
         final_metric = metric_for_best_model if eval_dataset is not None else None
@@ -399,13 +398,15 @@ class ModelTrainer(TextTrainer):
         # Ensure model is loaded
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
-        
+
         # Detect model dtype and set precision for training
         model_dtype = detect_model_dtype(self.model, self.load_in_4bit, False)
         precision_config = get_training_precision_config(self.model, self.load_in_4bit, False)
-        
+
         console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
-        console.print(f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]")
+        console.print(
+            f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
+        )
 
         training_args = TrainingArguments(
             output_dir=output_dir,
@@ -416,8 +417,8 @@ class ModelTrainer(TextTrainer):
             max_steps=max_steps,
             num_train_epochs=num_train_epochs,
             learning_rate=learning_rate,
-            fp16=precision_config['fp16'],
-            bf16=precision_config['bf16'],
+            fp16=precision_config["fp16"],
+            bf16=precision_config["bf16"],
             logging_steps=logging_steps,
             optim=optim,
             weight_decay=weight_decay,
@@ -447,17 +448,18 @@ class ModelTrainer(TextTrainer):
         # Ensure model is loaded
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
-        
+
         # Add memory monitoring callback (optional but useful for debugging)
-        # Use shared implementation from training_utils to avoid duplication
-        from model_garden.training_utils import MemoryMonitorCallback
+        # Use shared implementation from training.utils to avoid duplication
         memory_monitor = MemoryMonitorCallback()
         all_callbacks = [memory_monitor]
         if callbacks:
             all_callbacks.extend(callbacks)
-        
-        console.print("[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]")
-        
+
+        console.print(
+            "[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]"
+        )
+
         trainer = SFTTrainer(
             model=self.model,
             tokenizer=self.tokenizer,  # type: ignore
@@ -470,7 +472,7 @@ class ModelTrainer(TextTrainer):
         # Train
         trainer.train()
         console.print("[green]✓[/green] Training completed")
-        
+
         # Stop carbon tracking
         if carbon_tracker is not None:
             try:
@@ -485,7 +487,7 @@ class ModelTrainer(TextTrainer):
         # Save final model
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
         trainer.save_model(output_dir)
-        
+
         # Ensure tokenizer is available
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer not available.")
@@ -522,14 +524,16 @@ class ModelTrainer(TextTrainer):
             raise RuntimeError("Model not loaded. Call load_model() first.")
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer not available.")
-            
+
         if save_method == "lora":
             # Save only LoRA adapters
             self.model.save_pretrained(str(output_path))
             self.tokenizer.save_pretrained(str(output_path))
         elif save_method == "merged_16bit":
             # Merge and save in 16-bit
-            console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
+            console.print(
+                f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]"
+            )
             self.model.save_pretrained_merged(
                 str(output_path),
                 self.tokenizer,
@@ -539,8 +543,12 @@ class ModelTrainer(TextTrainer):
             )
         elif save_method == "merged_4bit":
             # Merge and save in 4-bit
-            console.print(f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]")
-            console.print("[yellow]⚠️  Warning: 4-bit merge may reduce accuracy for GGUF conversion[/yellow]")
+            console.print(
+                f"[cyan]Memory settings: max_usage={maximum_memory_usage}, shard_size={max_shard_size}[/cyan]"
+            )
+            console.print(
+                "[yellow]⚠️  Warning: 4-bit merge may reduce accuracy for GGUF conversion[/yellow]"
+            )
             self.model.save_pretrained_merged(
                 str(output_path),
                 self.tokenizer,
@@ -588,14 +596,14 @@ def create_text_trainer(
     max_seq_length: int = 2048,
     load_in_4bit: bool = True,
     load_in_8bit: bool = False,
-    dtype: Optional[str] = None,
+    dtype: str | None = None,
     backend: str = "unsloth",
 ) -> TextTrainer:
     """Create a text trainer using the specified backend.
-    
+
     This is a convenience function that creates a text trainer through the backend system.
     It allows for backend selection while maintaining backward compatibility.
-    
+
     Args:
         base_model: HuggingFace model identifier or local path
         max_seq_length: Maximum sequence length
@@ -603,16 +611,16 @@ def create_text_trainer(
         load_in_8bit: Whether to load model in 8-bit quantization
         dtype: Data type (None for auto-detection)
         backend: Backend to use ('unsloth', etc.)
-    
+
     Returns:
         A text trainer instance
-        
+
     Example:
         >>> trainer = create_text_trainer("unsloth/tinyllama-bnb-4bit", backend="unsloth")
         >>> trainer.load_model()
     """
     from model_garden.backends import get_backend
-    
+
     backend_instance = get_backend(backend)
     return backend_instance.create_text_trainer(
         base_model=base_model,

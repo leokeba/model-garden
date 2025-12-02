@@ -1,4 +1,19 @@
-"""FastAPI backend for Model Garden."""
+"""FastAPI backend for Model Garden.
+
+DEPRECATED: This monolithic module is deprecated and will be removed in a future version.
+Please use the new modular api/ package instead:
+
+    from model_garden.api import app, create_app
+
+The new structure provides:
+- model_garden/api/__init__.py - Package exports and backward compatibility
+- model_garden/api/app.py - FastAPI application factory
+- model_garden/api/models/ - Pydantic request/response models
+- model_garden/api/routes/ - Route handlers organized by domain
+- model_garden/api/storage.py - Storage management
+- model_garden/api/websocket.py - WebSocket connection management
+- model_garden/api/tasks.py - Background task functions
+"""
 
 import asyncio
 import json
@@ -6,10 +21,10 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union
 
 from dotenv import load_dotenv
-from model_garden.job_queue import get_job_queue, JobStatus
+
+from model_garden.job_queue import JobStatus, get_job_queue
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -27,16 +42,17 @@ if "TORCH_COMPILE_WORKER_TIMEOUT" not in os.environ:
 if "TORCH_COMPILE_WORKER_TIMEOUT" not in os.environ:
     os.environ["TORCH_COMPILE_WORKER_TIMEOUT"] = "300"  # 5 minutes
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status, WebSocket, WebSocketDisconnect
 import threading
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
 # IMPORTANT: Don't import transformers here - it initializes tokenizers which causes
 # fork warnings when using background tasks. Import lazily in functions that need it.
 # from transformers import TrainerCallback  # REMOVED - now lazy-loaded
-
 # Memory management utilities
 from model_garden.memory_management import cleanup_training_resources
 
@@ -48,42 +64,48 @@ from model_garden.memory_management import cleanup_training_resources
 # Pydantic models for API
 class ModelInfo(BaseModel):
     """Model information response."""
+
     id: str
     name: str
     base_model: str
     status: str
     created_at: str
     updated_at: str
-    size_bytes: Optional[int] = None
+    size_bytes: int | None = None
     path: str
-    training_job_id: Optional[str] = None
-    config: Optional[Dict] = None
-    metrics: Optional[Dict] = None
+    training_job_id: str | None = None
+    config: dict | None = None
+    metrics: dict | None = None
 
 
 class TrainingJobRequest(BaseModel):
     """Request to create a training job."""
+
     name: str
     base_model: str
     dataset_path: str
-    validation_dataset_path: Optional[str] = None  # Optional validation dataset
+    validation_dataset_path: str | None = None  # Optional validation dataset
     output_dir: str
-    hyperparameters: Optional[Dict] = None
-    lora_config: Optional[Dict] = None
+    hyperparameters: dict | None = None
+    lora_config: dict | None = None
     from_hub: bool = False
     validation_from_hub: bool = False  # Separate flag for validation dataset
     is_vision: bool = False  # Flag for vision-language models
-    model_type: Optional[str] = None  # 'text' or 'vision'
+    model_type: str | None = None  # 'text' or 'vision'
     save_method: str = "merged_16bit"  # How to save: 'lora', 'merged_16bit', 'merged_4bit'
     backend: str = "unsloth"  # Training backend to use
     selective_loss: bool = False  # Enable selective loss for structured outputs
     selective_loss_level: str = "conservative"  # Level: conservative, moderate, aggressive
-    selective_loss_schema_keys: Optional[List[str]] = None  # Schema keys to mask
-    selective_loss_masking_strategy: str = "epoch_based"  # Strategy: epoch_based, alternating, or weighted
+    selective_loss_schema_keys: list[str] | None = None  # Schema keys to mask
+    selective_loss_masking_strategy: str = (
+        "epoch_based"  # Strategy: epoch_based, alternating, or weighted
+    )
     selective_loss_masking_start_epoch: float = 0.0  # [epoch_based] Delay masking until this epoch
     selective_loss_mask_every_n_steps: int = 100  # [alternating] Cycle length in steps
     selective_loss_mask_for_n_steps: int = 50  # [alternating] Steps with masking ON per cycle
-    selective_loss_structural_weight: float = 0.1  # [weighted] Weight for structural tokens (0.0-1.0)
+    selective_loss_structural_weight: float = (
+        0.1  # [weighted] Weight for structural tokens (0.0-1.0)
+    )
     selective_loss_verbose: bool = False  # Print masking statistics
     # Early stopping
     early_stopping_enabled: bool = False  # Enable early stopping
@@ -97,64 +119,67 @@ class TrainingJobRequest(BaseModel):
 
 class TrainingJobInfo(BaseModel):
     """Training job information."""
+
     id: str
     name: str
     status: str
     base_model: str
     dataset_path: str
-    validation_dataset_path: Optional[str] = None
+    validation_dataset_path: str | None = None
     output_dir: str
     created_at: str
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    progress: Optional[Dict] = None
-    error_message: Optional[str] = None
-    hyperparameters: Optional[Dict] = None
-    lora_config: Optional[Dict] = None
-    from_hub: Optional[bool] = False
-    validation_from_hub: Optional[bool] = False
-    is_vision: Optional[bool] = False
-    model_type: Optional[str] = None
-    current_step: Optional[int] = None
-    total_steps: Optional[int] = None
-    current_epoch: Optional[int] = None
-    save_method: Optional[str] = "merged_16bit"
-    backend: Optional[str] = "unsloth"
-    metrics: Optional[Dict] = None  # Training and validation metrics history
+    started_at: str | None = None
+    completed_at: str | None = None
+    progress: dict | None = None
+    error_message: str | None = None
+    hyperparameters: dict | None = None
+    lora_config: dict | None = None
+    from_hub: bool | None = False
+    validation_from_hub: bool | None = False
+    is_vision: bool | None = False
+    model_type: str | None = None
+    current_step: int | None = None
+    total_steps: int | None = None
+    current_epoch: int | None = None
+    save_method: str | None = "merged_16bit"
+    backend: str | None = "unsloth"
+    metrics: dict | None = None  # Training and validation metrics history
     # Selective loss settings
-    selective_loss: Optional[bool] = False
-    selective_loss_level: Optional[str] = "conservative"
-    selective_loss_schema_keys: Optional[List[str]] = None
-    selective_loss_masking_strategy: Optional[str] = "epoch_based"
-    selective_loss_masking_start_epoch: Optional[float] = 0.0
-    selective_loss_mask_every_n_steps: Optional[int] = 100
-    selective_loss_mask_for_n_steps: Optional[int] = 50
-    selective_loss_structural_weight: Optional[float] = 0.1
-    selective_loss_verbose: Optional[bool] = False
+    selective_loss: bool | None = False
+    selective_loss_level: str | None = "conservative"
+    selective_loss_schema_keys: list[str] | None = None
+    selective_loss_masking_strategy: str | None = "epoch_based"
+    selective_loss_masking_start_epoch: float | None = 0.0
+    selective_loss_mask_every_n_steps: int | None = 100
+    selective_loss_mask_for_n_steps: int | None = 50
+    selective_loss_structural_weight: float | None = 0.1
+    selective_loss_verbose: bool | None = False
     # Quality settings
-    quality_mode: Optional[bool] = False
-    load_in_16bit: Optional[bool] = False
-    load_in_8bit: Optional[bool] = False
+    quality_mode: bool | None = False
+    load_in_16bit: bool | None = False
+    load_in_8bit: bool | None = False
     # Early stopping settings
-    early_stopping_enabled: Optional[bool] = False
-    early_stopping_patience: Optional[int] = 3
-    early_stopping_threshold: Optional[float] = 0.0
+    early_stopping_enabled: bool | None = False
+    early_stopping_patience: int | None = 3
+    early_stopping_threshold: float | None = 0.0
     # Rerun metadata
-    rerun_from: Optional[str] = None
-    rerun_from_name: Optional[str] = None
-    queue_position: Optional[int] = None
+    rerun_from: str | None = None
+    rerun_from_name: str | None = None
+    queue_position: int | None = None
 
 
 class APIResponse(BaseModel):
     """Standard API response format."""
+
     success: bool
-    data: Optional[Dict] = None
+    data: dict | None = None
     message: str
 
 
 class PaginatedResponse(BaseModel):
     """Paginated response format."""
-    items: List[Dict]
+
+    items: list[dict]
     total: int
     page: int
     page_size: int
@@ -165,14 +190,14 @@ class PaginatedResponse(BaseModel):
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # Configure storage directories from environment variables
-HF_HOME = os.getenv('HF_HOME', str(Path.home() / '.cache' / 'huggingface'))
-MODELS_DIR = os.getenv('MODELS_DIR', str(PROJECT_ROOT / 'models'))
+HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
+MODELS_DIR = os.getenv("MODELS_DIR", str(PROJECT_ROOT / "models"))
 
 # Set HuggingFace cache environment variables
 # These must be set before importing any HF libraries
-os.environ['HF_HOME'] = HF_HOME
-os.environ['TRANSFORMERS_CACHE'] = str(Path(HF_HOME) / 'hub')
-os.environ['HF_DATASETS_CACHE'] = str(Path(HF_HOME) / 'datasets')
+os.environ["HF_HOME"] = HF_HOME
+os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
+os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
 
 # Ensure directories exist
 Path(HF_HOME).mkdir(parents=True, exist_ok=True)
@@ -181,65 +206,69 @@ Path(MODELS_DIR).mkdir(parents=True, exist_ok=True)
 print(f"📁 HuggingFace cache: {HF_HOME}")
 print(f"📁 Models directory: {MODELS_DIR}")
 
+
 # Storage manager for persistent data
 class StorageManager:
     """Manages persistent storage of training jobs and models."""
-    
+
     def __init__(self, storage_dir: Path):
         self.storage_dir = storage_dir
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.jobs_file = storage_dir / "training_jobs.json"
         self.models_file = storage_dir / "models.json"
-    
-    def load_training_jobs(self) -> Dict[str, Dict]:
+
+    def load_training_jobs(self) -> dict[str, dict]:
         """Load training jobs from disk."""
         if self.jobs_file.exists():
             try:
-                with open(self.jobs_file, 'r') as f:
+                with open(self.jobs_file) as f:
                     data = json.load(f)
                     print(f"✓ Loaded {len(data)} training jobs from {self.jobs_file}")
                     return data
             except Exception as e:
                 print(f"⚠️  Error loading training jobs: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return {}
         else:
             print(f"ℹ️  No training jobs file found at {self.jobs_file}")
         return {}
-    
-    def save_training_jobs(self, jobs: Dict[str, Dict]) -> None:
+
+    def save_training_jobs(self, jobs: dict[str, dict]) -> None:
         """Save training jobs to disk."""
         try:
-            with open(self.jobs_file, 'w') as f:
+            with open(self.jobs_file, "w") as f:
                 json.dump(jobs, f, indent=2)
         except Exception as e:
             print(f"⚠️  Error saving training jobs: {e}")
-    
-    def load_models(self) -> Dict[str, Dict]:
+
+    def load_models(self) -> dict[str, dict]:
         """Load models from disk."""
         if self.models_file.exists():
             try:
-                with open(self.models_file, 'r') as f:
+                with open(self.models_file) as f:
                     data = json.load(f)
                     print(f"✓ Loaded {len(data)} models from {self.models_file}")
                     return data
             except Exception as e:
                 print(f"⚠️  Error loading models: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return {}
         else:
             print(f"ℹ️  No models file found at {self.models_file}")
         return {}
-    
-    def save_models(self, models: Dict[str, Dict]) -> None:
+
+    def save_models(self, models: dict[str, dict]) -> None:
         """Save models to disk."""
         try:
-            with open(self.models_file, 'w') as f:
+            with open(self.models_file, "w") as f:
                 json.dump(models, f, indent=2)
         except Exception as e:
             print(f"⚠️  Error saving models: {e}")
+
 
 # Initialize storage manager
 storage_manager = StorageManager(PROJECT_ROOT / "storage")
@@ -247,8 +276,8 @@ storage_manager = StorageManager(PROJECT_ROOT / "storage")
 # Global variables for managing state (loaded from disk)
 # Note: We store plain dicts for now but convert to Pydantic models on access
 # This allows for easier JSON serialization while maintaining type safety at API boundaries
-training_jobs: Dict[str, Dict] = storage_manager.load_training_jobs()
-models_storage: Dict[str, Dict] = storage_manager.load_models()
+training_jobs: dict[str, dict] = storage_manager.load_training_jobs()
+models_storage: dict[str, dict] = storage_manager.load_models()
 
 print(f"📊 Loaded {len(training_jobs)} training jobs from storage")
 print(f"📊 Loaded {len(models_storage)} models from storage")
@@ -258,21 +287,21 @@ def create_training_job_record(
     job_id: str,
     job_request: TrainingJobRequest,
     dataset_path: str,
-    validation_dataset_path: Optional[str],
+    validation_dataset_path: str | None,
     output_dir: str,
 ) -> TrainingJobInfo:
     """Create a properly typed TrainingJobInfo record from a request.
-    
+
     This function ensures all fields are present and properly typed,
     providing compile-time type safety when using static analyzers.
-    
+
     Args:
         job_id: Unique job identifier
         job_request: The incoming training request
         dataset_path: Resolved dataset path
         validation_dataset_path: Resolved validation dataset path (if any)
         output_dir: Resolved output directory
-        
+
     Returns:
         A validated TrainingJobInfo instance
     """
@@ -324,11 +353,11 @@ def create_training_job_record(
 
 def resolve_path(path_str: str, is_model_dir: bool = False) -> str:
     """Resolve a path relative to the project root if it's not absolute.
-    
+
     Args:
         path_str: Path string (can be relative or absolute)
         is_model_dir: If True, resolve relative to MODELS_DIR instead of PROJECT_ROOT
-        
+
     Returns:
         Absolute path string
     """
@@ -344,34 +373,34 @@ def resolve_path(path_str: str, is_model_dir: bool = False) -> str:
 
 def resolve_model_path(path_str: str) -> str:
     """Resolve a model path, handling both simple names and paths.
-    
+
     This function handles:
     - Simple model names: "my-model" -> MODELS_DIR/my-model
     - Paths with ./models/ prefix: "./models/my-model" -> MODELS_DIR/my-model
     - Absolute paths: "/path/to/model" -> /path/to/model
     - HuggingFace IDs: "org/model" -> org/model (unchanged)
-    
+
     Args:
         path_str: Model path or name
-        
+
     Returns:
         Resolved path string
     """
     # If it's an absolute path, return as-is
     if Path(path_str).is_absolute():
         return path_str
-    
+
     # If it looks like a HuggingFace model ID (contains / but not at start), return as-is
-    if '/' in path_str and not path_str.startswith(('./', '../', '/')):
+    if "/" in path_str and not path_str.startswith(("./", "../", "/")):
         return path_str
-    
+
     # Strip ./models/ or models/ prefix if present
     cleaned_path = path_str
-    if cleaned_path.startswith('./models/'):
-        cleaned_path = cleaned_path[len('./models/'):]
-    elif cleaned_path.startswith('models/'):
-        cleaned_path = cleaned_path[len('models/'):]
-    
+    if cleaned_path.startswith("./models/"):
+        cleaned_path = cleaned_path[len("./models/") :]
+    elif cleaned_path.startswith("models/"):
+        cleaned_path = cleaned_path[len("models/") :]
+
     # Resolve relative to MODELS_DIR
     return str((Path(MODELS_DIR) / cleaned_path).resolve())
 
@@ -379,18 +408,20 @@ def resolve_model_path(path_str: str) -> str:
 # WebSocket connection manager
 class ConnectionManager:
     """Manages WebSocket connections for real-time updates."""
-    
+
     def __init__(self):
-        self.active_connections: Dict[str, List[WebSocket]] = {}
-    
+        self.active_connections: dict[str, list[WebSocket]] = {}
+
     async def connect(self, websocket: WebSocket, job_id: str):
         """Accept and store a new WebSocket connection."""
         await websocket.accept()
         if job_id not in self.active_connections:
             self.active_connections[job_id] = []
         self.active_connections[job_id].append(websocket)
-        print(f"✓ WebSocket connected for job {job_id} (total: {len(self.active_connections[job_id])})")
-    
+        print(
+            f"✓ WebSocket connected for job {job_id} (total: {len(self.active_connections[job_id])})"
+        )
+
     def disconnect(self, websocket: WebSocket, job_id: str):
         """Remove a WebSocket connection."""
         if job_id in self.active_connections:
@@ -399,7 +430,7 @@ class ConnectionManager:
             if not self.active_connections[job_id]:
                 del self.active_connections[job_id]
         print(f"✓ WebSocket disconnected for job {job_id}")
-    
+
     async def send_update(self, job_id: str, message: dict):
         """Send an update to all connections for a specific job."""
         if job_id in self.active_connections:
@@ -410,37 +441,38 @@ class ConnectionManager:
                 except Exception as e:
                     print(f"Error sending to WebSocket: {e}")
                     disconnected.append(connection)
-            
+
             # Remove disconnected clients
             for connection in disconnected:
                 self.disconnect(connection, job_id)
-    
+
     async def broadcast_system_update(self, message: dict):
         """Send a system-wide update to all connections."""
         for job_id in list(self.active_connections.keys()):
             await self.send_update(job_id, message)
+
 
 manager = ConnectionManager()
 
 
 def create_progress_callback(job_id: str, manager: ConnectionManager):
     """Factory function to create a ProgressCallback.
-    
+
     This is defined as a factory to avoid importing TrainerCallback at module level,
     which would initialize tokenizers and cause fork warnings.
-    
+
     Args:
         job_id: Training job ID
         manager: WebSocket connection manager
-        
+
     Returns:
         ProgressCallback instance
     """
     from transformers import TrainerCallback
-    
+
     class ProgressCallback(TrainerCallback):
         """Custom callback to send training progress via WebSocket."""
-        
+
         def __init__(self, job_id: str, manager: ConnectionManager):
             self.job_id = job_id
             self.manager = manager
@@ -448,14 +480,16 @@ def create_progress_callback(job_id: str, manager: ConnectionManager):
             self.validation_metrics = []
             # Optional threading.Event that can be set to request cancellation
             self.cancellation_event = None
-        
+
         def on_step_end(self, args, state, control, **kwargs):
             """Called at the end of each training step."""
             # If cancellation_event is set, stop training
             try:
                 if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
                     if self.cancellation_event.is_set():
-                        print(f"✋ Cancellation requested for job {self.job_id} - stopping training")
+                        print(
+                            f"✋ Cancellation requested for job {self.job_id} - stopping training"
+                        )
                         raise KeyboardInterrupt()
             except Exception:
                 pass
@@ -466,103 +500,121 @@ def create_progress_callback(job_id: str, manager: ConnectionManager):
                 else:
                     # Estimate total steps from num_train_epochs
                     # Use getattr to safely access train_dataloader if available
-                    train_dataloader = getattr(state, 'train_dataloader', None)
-                    if train_dataloader and hasattr(train_dataloader, '__len__'):
+                    train_dataloader = getattr(state, "train_dataloader", None)
+                    if train_dataloader and hasattr(train_dataloader, "__len__"):
                         total_steps = len(train_dataloader) * args.num_train_epochs
                     else:
                         # Fallback: use a reasonable estimate
                         total_steps = 100 * args.num_train_epochs
-                
-                current_epoch = state.epoch if hasattr(state, 'epoch') else 0
-                
+
+                current_epoch = state.epoch if hasattr(state, "epoch") else 0
+
                 # Update job progress
                 if self.job_id in training_jobs:
                     training_jobs[self.job_id]["progress"] = {
                         "current_step": state.global_step,
                         "total_steps": total_steps,
-                        "epoch": int(current_epoch) if current_epoch else 0
+                        "epoch": int(current_epoch) if current_epoch else 0,
                     }
                     training_jobs[self.job_id]["current_step"] = state.global_step
                     training_jobs[self.job_id]["total_steps"] = total_steps
-                    training_jobs[self.job_id]["current_epoch"] = int(current_epoch) if current_epoch else 0
-                
+                    training_jobs[self.job_id]["current_epoch"] = (
+                        int(current_epoch) if current_epoch else 0
+                    )
+
                 # Send WebSocket update (use helper for thread safety)
-                _run_async_in_thread(self.manager.send_update(self.job_id, {
-                    "type": "progress",
-                    "job_id": self.job_id,
-                    "progress": {
-                        "current_step": state.global_step,
-                        "total_steps": total_steps,
-                        "epoch": int(current_epoch) if current_epoch else 0
-                    },
-                    "timestamp": datetime.utcnow().isoformat() + "Z"
-                }))
-        
+                _run_async_in_thread(
+                    self.manager.send_update(
+                        self.job_id,
+                        {
+                            "type": "progress",
+                            "job_id": self.job_id,
+                            "progress": {
+                                "current_step": state.global_step,
+                                "total_steps": total_steps,
+                                "epoch": int(current_epoch) if current_epoch else 0,
+                            },
+                            "timestamp": datetime.utcnow().isoformat() + "Z",
+                        },
+                    )
+                )
+
         def on_log(self, args, state, control, logs=None, **kwargs):
             """Called when logging occurs."""
             # Also check cancellation here in case cancellation happens between steps
             try:
                 if hasattr(self, "cancellation_event") and self.cancellation_event is not None:
                     if self.cancellation_event.is_set():
-                        print(f"✋ Cancellation requested for job {self.job_id} during logging - stopping training")
+                        print(
+                            f"✋ Cancellation requested for job {self.job_id} during logging - stopping training"
+                        )
                         raise KeyboardInterrupt()
             except Exception:
                 pass
-            
+
             # Check for early stopping request (graceful stop)
             try:
                 early_stop_map = globals().get("early_stop_requests", {})
                 if early_stop_map.get(self.job_id, False):
-                    print(f"🛑 Early stopping requested for job {self.job_id} - will stop gracefully")
+                    print(
+                        f"🛑 Early stopping requested for job {self.job_id} - will stop gracefully"
+                    )
                     control.should_training_stop = True
                     # Clear the flag
                     del early_stop_map[self.job_id]
             except Exception:
                 pass
-            
+
             if logs:
                 # Extract metrics from logs
                 current_step = state.global_step
                 timestamp = datetime.utcnow().isoformat() + "Z"
-                
+
                 # Separate training and evaluation logs
-                is_eval = any(k.startswith('eval_') for k in logs.keys())
-                
+                is_eval = any(k.startswith("eval_") for k in logs.keys())
+
                 if is_eval:
                     # Validation metrics
-                    eval_loss = logs.get('eval_loss')
+                    eval_loss = logs.get("eval_loss")
                     metric_point = {
                         "step": current_step,
                         "loss": eval_loss,
                         "timestamp": timestamp,
                     }
-                    
+
                     # Add any additional eval metrics
                     for key, value in logs.items():
-                        if key.startswith('eval_') and key != 'eval_loss':
-                            metric_name = key.replace('eval_', '')
+                        if key.startswith("eval_") and key != "eval_loss":
+                            metric_name = key.replace("eval_", "")
                             metric_point[metric_name] = value
-                    
+
                     self.validation_metrics.append(metric_point)
-                    
+
                     # Update job metrics
                     if self.job_id in training_jobs:
                         if "metrics" not in training_jobs[self.job_id]:
                             training_jobs[self.job_id]["metrics"] = {}
-                        training_jobs[self.job_id]["metrics"]["validation"] = self.validation_metrics
-                    
+                        training_jobs[self.job_id]["metrics"]["validation"] = (
+                            self.validation_metrics
+                        )
+
                     # Send metrics via WebSocket (use helper for thread safety)
-                    _run_async_in_thread(self.manager.send_update(self.job_id, {
-                        "type": "validation_metrics",
-                        "job_id": self.job_id,
-                        "metrics": metric_point,
-                        "timestamp": timestamp
-                    }))
+                    _run_async_in_thread(
+                        self.manager.send_update(
+                            self.job_id,
+                            {
+                                "type": "validation_metrics",
+                                "job_id": self.job_id,
+                                "metrics": metric_point,
+                                "timestamp": timestamp,
+                            },
+                        )
+                    )
                 else:
                     # Training metrics
-                    train_loss = logs.get('loss')
-                    learning_rate = logs.get('learning_rate')
-                    
+                    train_loss = logs.get("loss")
+                    learning_rate = logs.get("learning_rate")
+
                     if train_loss is not None:
                         metric_point = {
                             "step": current_step,
@@ -570,40 +622,57 @@ def create_progress_callback(job_id: str, manager: ConnectionManager):
                             "learning_rate": learning_rate,
                             "timestamp": timestamp,
                         }
-                        
+
                         # Add any additional metrics
                         for key, value in logs.items():
-                            if key not in ['loss', 'learning_rate', 'epoch']:
+                            if key not in ["loss", "learning_rate", "epoch"]:
                                 metric_point[key] = value
-                        
+
                         self.training_metrics.append(metric_point)
-                        
+
                         # Update job metrics
                         if self.job_id in training_jobs:
                             if "metrics" not in training_jobs[self.job_id]:
                                 training_jobs[self.job_id]["metrics"] = {}
-                            training_jobs[self.job_id]["metrics"]["training"] = self.training_metrics
-                        
+                            training_jobs[self.job_id]["metrics"]["training"] = (
+                                self.training_metrics
+                            )
+
                         # Send metrics via WebSocket (use helper for thread safety)
-                        _run_async_in_thread(self.manager.send_update(self.job_id, {
-                            "type": "training_metrics",
-                            "job_id": self.job_id,
-                            "metrics": metric_point,
-                            "timestamp": timestamp
-                        }))
-                
+                        _run_async_in_thread(
+                            self.manager.send_update(
+                                self.job_id,
+                                {
+                                    "type": "training_metrics",
+                                    "job_id": self.job_id,
+                                    "metrics": metric_point,
+                                    "timestamp": timestamp,
+                                },
+                            )
+                        )
+
                 # Send formatted log message
-                log_message = " | ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" 
-                                           for k, v in logs.items() if k != "epoch"])
-                
+                log_message = " | ".join(
+                    [
+                        f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
+                        for k, v in logs.items()
+                        if k != "epoch"
+                    ]
+                )
+
                 # Send log via WebSocket
-                asyncio.run(self.manager.send_update(self.job_id, {
-                    "type": "log",
-                    "job_id": self.job_id,
-                    "message": log_message,
-                    "timestamp": timestamp
-                }))
-    
+                asyncio.run(
+                    self.manager.send_update(
+                        self.job_id,
+                        {
+                            "type": "log",
+                            "job_id": self.job_id,
+                            "message": log_message,
+                            "timestamp": timestamp,
+                        },
+                    )
+                )
+
     # Return instance of the callback
     return ProgressCallback(job_id, manager)
 
@@ -613,25 +682,25 @@ async def run_model_loading(
     model_path: str,
     tensor_parallel_size: int,
     gpu_memory_utilization: float,
-    max_model_len: Optional[int],
+    max_model_len: int | None,
     max_num_seqs: int,
     enforce_eager: bool,
-    limit_mm_per_prompt: Optional[Dict[str, int]],
+    limit_mm_per_prompt: dict[str, int] | None,
     dtype: str,
-    quantization: Optional[str]
+    quantization: str | None,
 ):
     """Execute model loading in the background."""
     from model_garden.inference import InferenceService, set_inference_service
     from model_garden.job_queue import get_job_queue
-    
+
     queue = get_job_queue()
-    
+
     try:
         # Mark job as running
         await queue.start_job(job_id)
-        
+
         print(f"🔄 Loading model: {model_path}")
-        
+
         # Create inference service
         service = InferenceService(
             model_path=model_path,
@@ -644,27 +713,28 @@ async def run_model_loading(
             dtype=dtype,
             quantization=quantization,
         )
-        
+
         # Load the model
         await service.load_model()
-        
+
         # Set as global service
         set_inference_service(service)
-        
+
         # Initialize carbon tracking for this model
         try:
             from model_garden.carbon import init_inference_tracker
+
             init_inference_tracker(model_path)
             print(f"✅ Carbon tracking initialized for {model_path}")
         except Exception as e:
             print(f"⚠️  Failed to initialize carbon tracking: {e}")
-        
+
         # Mark job as completed
         model_info = service.get_model_info()
         await queue.complete_job(job_id, result=model_info)
-        
+
         print(f"✅ Model loaded successfully: {model_path}")
-        
+
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Model loading failed: {error_msg}")
@@ -674,11 +744,11 @@ async def run_model_loading(
 
 def _run_async_in_thread(coro):
     """Helper to run async code in a sync context (thread or main).
-    
+
     When run_training_job is called from a thread (by the queue worker),
     we need to create a new event loop for that thread since asyncio.run()
     can't be called from an existing event loop.
-    
+
     This function safely handles both scenarios:
     - Called from a thread: creates new event loop
     - Called from sync code: uses asyncio.run()
@@ -689,6 +759,7 @@ def _run_async_in_thread(coro):
         # We're in a running loop - this shouldn't happen in training threads
         # but if it does, we need to create a new loop in a thread
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(asyncio.run, coro)
             return future.result()
@@ -709,7 +780,7 @@ def run_training_job(job_id: str):
         # Get queue and mark job as running
         queue = get_job_queue()
         _run_async_in_thread(queue.start_job(job_id))
-        
+
         # Ensure there's a cancellation event map and register an event for this job
         _ce_map = globals().setdefault("cancellation_events", {})
         _ce_map[job_id] = threading.Event()
@@ -719,40 +790,47 @@ def run_training_job(job_id: str):
             # Job not found - might be a test job or orphaned queue entry
             print(f"⚠️  Job {job_id} not found in training_jobs, marking as failed in queue")
             queue = get_job_queue()
-            _run_async_in_thread(queue.fail_job(job_id, "Job configuration not found in training_jobs"))
+            _run_async_in_thread(
+                queue.fail_job(job_id, "Job configuration not found in training_jobs")
+            )
             return
-        
+
         job = training_jobs[job_id]
-        
+
         # Update job status to running
         job["status"] = "running"
         job["started_at"] = datetime.utcnow().isoformat() + "Z"
-        
+
         # Persist status change
         storage_manager.save_training_jobs(training_jobs)
-        
+
         # Notify WebSocket clients
-        _run_async_in_thread(manager.send_update(job_id, {
-            "type": "status_update",
-            "job_id": job_id,
-            "status": "running",
-            "started_at": job["started_at"],
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }))
-        
+        _run_async_in_thread(
+            manager.send_update(
+                job_id,
+                {
+                    "type": "status_update",
+                    "job_id": job_id,
+                    "status": "running",
+                    "started_at": job["started_at"],
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                },
+            )
+        )
+
         print(f"🚀 Starting training job {job_id}: {job['name']}")
-        
+
         # Check if this is a vision-language model
         is_vision = job.get("is_vision", False)
         from_hub = job.get("from_hub", False)
         validation_from_hub = job.get("validation_from_hub", False)
         validation_dataset_path = job.get("validation_dataset_path")
-        
+
         # Handle quality mode settings
         quality_mode = job.get("quality_mode", False)
         load_in_16bit = job.get("load_in_16bit", False)
         load_in_8bit = job.get("load_in_8bit", False)
-        
+
         # Apply quality mode overrides
         if quality_mode:
             print("🎯 Quality mode enabled - using higher precision settings")
@@ -760,7 +838,10 @@ def run_training_job(job_id: str):
             load_in_8bit = False
             # Override lora_config gradient checkpointing if not explicitly set
             lora_config = job.get("lora_config", {})
-            if "use_gradient_checkpointing" not in lora_config or lora_config["use_gradient_checkpointing"] == "unsloth":
+            if (
+                "use_gradient_checkpointing" not in lora_config
+                or lora_config["use_gradient_checkpointing"] == "unsloth"
+            ):
                 lora_config["use_gradient_checkpointing"] = True
             # Override optimizer if not explicitly set
             hyperparams = job.get("hyperparameters", {})
@@ -773,31 +854,33 @@ def run_training_job(job_id: str):
             job["lora_config"] = lora_config
             job["hyperparameters"] = hyperparams
             print("⚠️  Warning: Quality mode uses ~4x more VRAM than default settings")
-        
+
         # Determine quantization (after quality mode overrides)
         load_in_4bit = not (load_in_16bit or load_in_8bit)
-        
+
         # Get backend (default to unsloth for backward compatibility)
         backend = job.get("backend", "unsloth")
         print(f"🔧 Using backend: {backend}")
-        
+
         if is_vision:
             # Use create_vision_trainer with backend support
             from model_garden.vision_training import create_vision_trainer
-            
+
             print(f"🎨 Using VisionLanguageTrainer for {job['base_model']}")
-            
+
             trainer = create_vision_trainer(
                 base_model=job["base_model"],
-                max_seq_length=job["hyperparameters"].get("max_seq_length", 16384),  # Default 16384 for vision models
+                max_seq_length=job["hyperparameters"].get(
+                    "max_seq_length", 16384
+                ),  # Default 16384 for vision models
                 load_in_4bit=load_in_4bit,
                 load_in_8bit=load_in_8bit,
                 backend=backend,
             )
-            
+
             # Load model
             trainer.load_model()
-            
+
             # Prepare for training with LoRA and selective layer fine-tuning
             lora_config = job["lora_config"]
             trainer.prepare_for_training(
@@ -814,7 +897,7 @@ def run_training_job(job_id: str):
                 finetune_attention_modules=lora_config.get("finetune_attention_modules", True),
                 finetune_mlp_modules=lora_config.get("finetune_mlp_modules", True),
             )
-            
+
             # Load and format training dataset
             train_dataset = trainer.load_dataset(
                 dataset_path=job["dataset_path"],
@@ -822,7 +905,7 @@ def run_training_job(job_id: str):
                 split="train",
             )
             formatted_train_dataset = trainer.format_dataset(train_dataset)
-            
+
             # Load and format validation dataset if provided
             formatted_val_dataset = None
             if validation_dataset_path:
@@ -834,30 +917,36 @@ def run_training_job(job_id: str):
                 )
                 formatted_val_dataset = trainer.format_dataset(val_dataset)
                 print(f"✓ Validation dataset loaded ({len(formatted_val_dataset)} examples)")
-            
+
             # Train with progress callback and optional early stopping
             hyperparams = job["hyperparameters"]
             progress_callback = create_progress_callback(job_id, manager)
             # Attach cancellation event so callback/trainer can stop gracefully
-            progress_callback.cancellation_event = globals().get("cancellation_events", {}).get(job_id)
-            
+            progress_callback.cancellation_event = (
+                globals().get("cancellation_events", {}).get(job_id)
+            )
+
             # Build callbacks list
-            from typing import List as TypingList
+
             from transformers import TrainerCallback as BaseCallback
-            callbacks: TypingList[BaseCallback] = [progress_callback]
-            
+
+            callbacks: list[BaseCallback] = [progress_callback]
+
             # Add early stopping if enabled
             if job.get("early_stopping_enabled", False):
                 from model_garden.early_stopping import EarlyStoppingCallback
+
                 early_stopping = EarlyStoppingCallback(
                     patience=job.get("early_stopping_patience", 3),
                     threshold=job.get("early_stopping_threshold", 0.0),
                     metric="eval_loss",
-                    greater_is_better=False
+                    greater_is_better=False,
                 )
                 callbacks.append(early_stopping)
-                print(f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})")
-            
+                print(
+                    f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})"
+                )
+
             trainer.train(
                 dataset=formatted_train_dataset,
                 eval_dataset=formatted_val_dataset,
@@ -873,7 +962,9 @@ def run_training_job(job_id: str):
                 save_steps=hyperparams.get("save_steps", 100),
                 optim=hyperparams.get("optim", "adamw_8bit"),
                 weight_decay=hyperparams.get("weight_decay", 0.01),
-                lr_scheduler_type=hyperparams.get("lr_scheduler_type", "cosine"),  # Cosine better for vision
+                lr_scheduler_type=hyperparams.get(
+                    "lr_scheduler_type", "cosine"
+                ),  # Cosine better for vision
                 max_grad_norm=hyperparams.get("max_grad_norm", 1.0),
                 adam_beta1=hyperparams.get("adam_beta1", 0.9),
                 adam_beta2=hyperparams.get("adam_beta2", 0.999),
@@ -887,29 +978,33 @@ def run_training_job(job_id: str):
                 selective_loss=job.get("selective_loss", False),
                 selective_loss_level=job.get("selective_loss_level", "conservative"),
                 selective_loss_schema_keys=job.get("selective_loss_schema_keys"),
-                selective_loss_masking_strategy=job.get("selective_loss_masking_strategy", "epoch_based"),
-                selective_loss_masking_start_epoch=job.get("selective_loss_masking_start_epoch", 0.0),
+                selective_loss_masking_strategy=job.get(
+                    "selective_loss_masking_strategy", "epoch_based"
+                ),
+                selective_loss_masking_start_epoch=job.get(
+                    "selective_loss_masking_start_epoch", 0.0
+                ),
                 selective_loss_mask_every_n_steps=job.get("selective_loss_mask_every_n_steps", 100),
                 selective_loss_mask_for_n_steps=job.get("selective_loss_mask_for_n_steps", 50),
                 selective_loss_structural_weight=job.get("selective_loss_structural_weight", 0.1),
                 selective_loss_verbose=job.get("selective_loss_verbose", False),
             )
-            
+
             # Save model
             save_method = job.get("save_method", "merged_16bit")
             trainer.save_model(job["output_dir"], save_method=save_method)
-            
+
             # CRITICAL: Clear trainer's dataset references BEFORE cleanup
             # to break circular references and enable garbage collection
             try:
                 val_dataset = None  # Clear local reference
-                if hasattr(trainer, 'train_dataset'):
-                    setattr(trainer, 'train_dataset', None)
-                if hasattr(trainer, 'eval_dataset'):
-                    setattr(trainer, 'eval_dataset', None)
+                if hasattr(trainer, "train_dataset"):
+                    trainer.train_dataset = None
+                if hasattr(trainer, "eval_dataset"):
+                    trainer.eval_dataset = None
             except Exception:
                 pass
-            
+
             # Aggressively free memory after training completes
             cleanup_training_resources(
                 trainer.model,
@@ -919,9 +1014,9 @@ def run_training_job(job_id: str):
                 formatted_train_dataset,
                 formatted_val_dataset,
                 train_dataset,
-                progress_callback
+                progress_callback,
             )
-            
+
             # Clear cancellation event on normal completion
             try:
                 _ce_map = globals().get("cancellation_events")
@@ -932,7 +1027,7 @@ def run_training_job(job_id: str):
         else:
             # Lazy import create_text_trainer to avoid spawning torch workers at API startup
             from model_garden.training import create_text_trainer
-            
+
             # Use create_text_trainer with backend support
             trainer = create_text_trainer(
                 base_model=job["base_model"],
@@ -941,10 +1036,10 @@ def run_training_job(job_id: str):
                 load_in_8bit=load_in_8bit,
                 backend=backend,
             )
-            
+
             # Load model
             trainer.load_model()
-            
+
             # Prepare for training with LoRA
             lora_config = job["lora_config"]
             trainer.prepare_for_training(
@@ -957,13 +1052,13 @@ def run_training_job(job_id: str):
                 random_state=lora_config.get("random_state", 42),
                 loftq_config=lora_config.get("loftq_config"),
             )
-            
+
             # Load training dataset
             if from_hub:
                 train_dataset = trainer.load_dataset_from_hub(job["dataset_path"], split="train")
             else:
                 train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
-            
+
             # Format training dataset
             train_dataset = trainer.format_dataset(
                 train_dataset,
@@ -971,45 +1066,53 @@ def run_training_job(job_id: str):
                 input_field=job["hyperparameters"].get("input_field", "input"),
                 output_field=job["hyperparameters"].get("output_field", "output"),
             )
-            
+
             # Load and format validation dataset if provided
             val_dataset = None
             if validation_dataset_path:
                 print(f"📊 Loading validation dataset: {validation_dataset_path}")
                 if validation_from_hub:
-                    val_dataset = trainer.load_dataset_from_hub(validation_dataset_path, split="validation")
+                    val_dataset = trainer.load_dataset_from_hub(
+                        validation_dataset_path, split="validation"
+                    )
                 else:
                     val_dataset = trainer.load_dataset_from_file(validation_dataset_path)
-                
+
                 val_dataset = trainer.format_dataset(
                     val_dataset,
-                    instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
+                    instruction_field=job["hyperparameters"].get(
+                        "instruction_field", "instruction"
+                    ),
                     input_field=job["hyperparameters"].get("input_field", "input"),
                     output_field=job["hyperparameters"].get("output_field", "output"),
                 )
                 print(f"✓ Validation dataset loaded ({len(val_dataset)} examples)")
-            
+
             # Train with progress callback and optional early stopping
             hyperparams = job["hyperparameters"]
             progress_callback = create_progress_callback(job_id, manager)
-            
+
             # Build callbacks list
-            from typing import List as TypingList
+
             from transformers import TrainerCallback as BaseCallback
-            callbacks: TypingList[BaseCallback] = [progress_callback]
-            
+
+            callbacks: list[BaseCallback] = [progress_callback]
+
             # Add early stopping if enabled
             if job.get("early_stopping_enabled", False):
                 from model_garden.early_stopping import EarlyStoppingCallback
+
                 early_stopping = EarlyStoppingCallback(
                     patience=job.get("early_stopping_patience", 3),
                     threshold=job.get("early_stopping_threshold", 0.0),
                     metric="eval_loss",
-                    greater_is_better=False
+                    greater_is_better=False,
                 )
                 callbacks.append(early_stopping)
-                print(f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})")
-            
+                print(
+                    f"📊 Early stopping enabled (patience={early_stopping.patience}, threshold={early_stopping.threshold})"
+                )
+
             trainer.train(
                 dataset=train_dataset,
                 eval_dataset=val_dataset,
@@ -1037,24 +1140,24 @@ def run_training_job(job_id: str):
                 save_total_limit=hyperparams.get("save_total_limit", 3),
                 callbacks=callbacks,
             )
-            
+
             # Save final model
             save_method = hyperparams.get("save_method", "merged_16bit")
             if save_method != "lora":
                 trainer.save_model(job["output_dir"], save_method=save_method)
-        
+
             # CRITICAL: Clear trainer's dataset references BEFORE cleanup
             # to break circular references and enable garbage collection
             try:
                 val_dataset = None  # Clear local reference
                 train_dataset = None  # Clear local reference
-                if hasattr(trainer, 'train_dataset'):
-                    setattr(trainer, 'train_dataset', None)
-                if hasattr(trainer, 'eval_dataset'):
-                    setattr(trainer, 'eval_dataset', None)
+                if hasattr(trainer, "train_dataset"):
+                    trainer.train_dataset = None
+                if hasattr(trainer, "eval_dataset"):
+                    trainer.eval_dataset = None
             except Exception:
                 pass
-        
+
             # Aggressively free memory after training completes
             cleanup_training_resources(
                 trainer.model,
@@ -1062,38 +1165,45 @@ def run_training_job(job_id: str):
                 trainer,
                 train_dataset,
                 val_dataset,
-                progress_callback
+                progress_callback,
             )
-        
+
         # Update job status to completed
         job["status"] = "completed"
         job["completed_at"] = datetime.utcnow().isoformat() + "Z"
-        
+
         # Preserve actual step counts from training (don't hardcode 100/100)
         current_progress = job.get("progress", {})
         actual_current_step = job.get("current_step", current_progress.get("current_step", 0))
         actual_total_steps = job.get("total_steps", current_progress.get("total_steps", 0))
-        actual_epoch = job.get("current_epoch", current_progress.get("epoch", hyperparams.get("num_epochs", 3)))
-        
+        actual_epoch = job.get(
+            "current_epoch", current_progress.get("epoch", hyperparams.get("num_epochs", 3))
+        )
+
         job["progress"] = {
             "current_step": actual_current_step,
             "total_steps": actual_total_steps,
-            "epoch": actual_epoch
+            "epoch": actual_epoch,
         }
-        
+
         # Persist status change
         storage_manager.save_training_jobs(training_jobs)
-        
+
         # Notify WebSocket clients
-        _run_async_in_thread(manager.send_update(job_id, {
-            "type": "status_update",
-            "job_id": job_id,
-            "status": "completed",
-            "completed_at": job["completed_at"],
-            "progress": job["progress"],
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }))
-        
+        _run_async_in_thread(
+            manager.send_update(
+                job_id,
+                {
+                    "type": "status_update",
+                    "job_id": job_id,
+                    "status": "completed",
+                    "completed_at": job["completed_at"],
+                    "progress": job["progress"],
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                },
+            )
+        )
+
         # Add model to storage
         model_id = Path(job["output_dir"]).name
         models_storage[model_id] = {
@@ -1107,63 +1217,76 @@ def run_training_job(job_id: str):
             "training_job_id": job_id,
             "size_bytes": calculate_dir_size(Path(job["output_dir"])),
         }
-        
+
         # Persist model storage
         storage_manager.save_models(models_storage)
-        
+
         # Mark job as completed in queue
         queue = get_job_queue()
-        _run_async_in_thread(queue.complete_job(job_id, result={
-            "model_id": model_id,
-            "output_dir": job["output_dir"]
-        }))
-        
+        _run_async_in_thread(
+            queue.complete_job(
+                job_id, result={"model_id": model_id, "output_dir": job["output_dir"]}
+            )
+        )
+
         print(f"✅ Training job {job_id} completed successfully!")
-        
+
     except KeyboardInterrupt:
         import traceback
+
         print(f"✋ Training job {job_id} cancelled by user")
-        
+
         # Cleanup training resources
         try:
             # Collect objects that need cleanup (use locals() to safely get defined variables)
             cleanup_objects = []
-            for var_name in ['trainer', 'formatted_train_dataset', 'formatted_val_dataset', 
-                           'train_dataset', 'val_dataset', 'progress_callback']:
+            for var_name in [
+                "trainer",
+                "formatted_train_dataset",
+                "formatted_val_dataset",
+                "train_dataset",
+                "val_dataset",
+                "progress_callback",
+            ]:
                 if var_name in locals():
                     obj = locals()[var_name]
                     if obj is not None:
                         cleanup_objects.append(obj)
-            
+
             if cleanup_objects:
                 cleanup_training_resources(*cleanup_objects)
         except Exception as cleanup_error:
             print(f"⚠️  Error during cleanup: {cleanup_error}")
-        
+
         # Update job status to cancelled - ensure job exists
         if job_id in training_jobs:
             job = training_jobs[job_id]
             job["status"] = "cancelled"
             job["completed_at"] = datetime.utcnow().isoformat() + "Z"
             job["error_message"] = "Training cancelled by user"
-        
+
             # Persist status change
             storage_manager.save_training_jobs(training_jobs)
-            
+
             # Mark job as cancelled in queue
             queue = get_job_queue()
             _run_async_in_thread(queue.cancel_job(job_id))
-            
+
             # Notify WebSocket clients
-            _run_async_in_thread(manager.send_update(job_id, {
-                "type": "status_update",
-                "job_id": job_id,
-                "status": "cancelled",
-                "completed_at": job["completed_at"],
-                "error_message": "Training cancelled by user",
-                "timestamp": datetime.utcnow().isoformat() + "Z"
-            }))
-        
+            _run_async_in_thread(
+                manager.send_update(
+                    job_id,
+                    {
+                        "type": "status_update",
+                        "job_id": job_id,
+                        "status": "cancelled",
+                        "completed_at": job["completed_at"],
+                        "error_message": "Training cancelled by user",
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    },
+                )
+            )
+
         # Clear cancellation event
         try:
             _ce_map = globals().get("cancellation_events")
@@ -1171,56 +1294,68 @@ def run_training_job(job_id: str):
                 del _ce_map[job_id]
         except Exception:
             pass
-        
+
     except Exception as e:
         import traceback
+
         print(f"❌ Training job {job_id} failed: {e}")
-        
+
         # Cleanup training resources even on failure
         try:
             # Collect objects that need cleanup (use locals() to safely get defined variables)
             cleanup_objects = []
-            for var_name in ['trainer', 'formatted_train_dataset', 'formatted_val_dataset', 
-                           'train_dataset', 'val_dataset', 'progress_callback']:
+            for var_name in [
+                "trainer",
+                "formatted_train_dataset",
+                "formatted_val_dataset",
+                "train_dataset",
+                "val_dataset",
+                "progress_callback",
+            ]:
                 if var_name in locals():
                     obj = locals()[var_name]
                     if obj is not None:
                         cleanup_objects.append(obj)
-            
+
             if cleanup_objects:
                 cleanup_training_resources(*cleanup_objects)
         except Exception as cleanup_error:
             print(f"⚠️  Error during cleanup: {cleanup_error}")
-        
+
         # Update job status to failed - ensure job exists
         if job_id in training_jobs:
             job = training_jobs[job_id]
             job["status"] = "failed"
             job["completed_at"] = datetime.utcnow().isoformat() + "Z"
             job["error_message"] = str(e)
-        
+
             # Persist status change
             storage_manager.save_training_jobs(training_jobs)
-            
+
             # Mark job as failed in queue
             queue = get_job_queue()
             _run_async_in_thread(queue.fail_job(job_id, str(e)))
-            
+
             # Notify WebSocket clients
-            _run_async_in_thread(manager.send_update(job_id, {
-                "type": "status_update",
-                "job_id": job_id,
-                "status": "failed",
-                "completed_at": job["completed_at"],
-                "error_message": str(e),
-                "timestamp": datetime.utcnow().isoformat() + "Z"
-            }))
+            _run_async_in_thread(
+                manager.send_update(
+                    job_id,
+                    {
+                        "type": "status_update",
+                        "job_id": job_id,
+                        "status": "failed",
+                        "completed_at": job["completed_at"],
+                        "error_message": str(e),
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                    },
+                )
+            )
         else:
             print(f"❌ Training job {job_id} failed but job not found in storage: {e}")
-        
+
         # Print full traceback for debugging
         traceback.print_exc()
-        
+
         # Clear cancellation event
         try:
             _ce_map = globals().get("cancellation_events")
@@ -1228,55 +1363,65 @@ def run_training_job(job_id: str):
                 del _ce_map[job_id]
         except Exception:
             pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
     # Startup
     print("🌱 Model Garden API starting up...")
-    
+
     # Initialize storage directories
     storage_root = Path("./storage")
     models_dir = storage_root / "models"
     datasets_dir = storage_root / "datasets"
     logs_dir = storage_root / "logs"
-    
+
     for directory in [models_dir, datasets_dir, logs_dir]:
         directory.mkdir(parents=True, exist_ok=True)
-    
+
     # Scan for existing models
     scan_existing_models()
-    
+
     print(f"✓ Found {len(models_storage)} existing models")
-    
+
     # Start queue worker for autonomous job processing
     print("🔧 Initializing queue worker...", flush=True)
     from model_garden.queue_worker import get_queue_worker
+
     worker = get_queue_worker()
-    print(f"🔧 Queue worker created: enabled={worker.enabled}, max_concurrent={worker.max_concurrent}", flush=True)
+    print(
+        f"🔧 Queue worker created: enabled={worker.enabled}, max_concurrent={worker.max_concurrent}",
+        flush=True,
+    )
     await worker.start()
     print("✓ Queue worker startup completed", flush=True)
-    
+
     # Auto-load inference model if specified
     autoload_model = os.getenv("MODEL_GARDEN_AUTOLOAD_MODEL")
     if autoload_model:
         print(f"🔄 Auto-loading inference model: {autoload_model}")
         try:
             from model_garden.inference import InferenceService, set_inference_service
-            
+
             # Get optional config from environment
             base_model = os.getenv("MODEL_GARDEN_BASE_MODEL")
             tensor_parallel_size = int(os.getenv("MODEL_GARDEN_TENSOR_PARALLEL_SIZE", "1"))
-            gpu_memory_utilization = float(os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.0"))  # Default to auto
-            quantization = os.getenv("MODEL_GARDEN_QUANTIZATION", "auto")  # Default to auto-detection
+            gpu_memory_utilization = float(
+                os.getenv("MODEL_GARDEN_GPU_MEMORY_UTILIZATION", "0.0")
+            )  # Default to auto
+            quantization = os.getenv(
+                "MODEL_GARDEN_QUANTIZATION", "auto"
+            )  # Default to auto-detection
             max_model_len_str = os.getenv("MODEL_GARDEN_MAX_MODEL_LEN")
             max_model_len = int(max_model_len_str) if max_model_len_str else None
             dtype = os.getenv("MODEL_GARDEN_DTYPE", "auto")
-            
+
             # LoRA parameters
             enable_lora = os.getenv("MODEL_GARDEN_ENABLE_LORA", "true").lower() == "true"
             max_loras = int(os.getenv("MODEL_GARDEN_MAX_LORAS", "1"))
             max_lora_rank = int(os.getenv("MODEL_GARDEN_MAX_LORA_RANK", "64"))
-            
+
             inference_service = InferenceService(
                 model_path=autoload_model,
                 tensor_parallel_size=tensor_parallel_size,
@@ -1286,54 +1431,55 @@ async def lifespan(app: FastAPI):
                 dtype=dtype,
                 enable_lora=enable_lora,
                 max_loras=max_loras,
-                max_lora_rank=max_lora_rank
+                max_lora_rank=max_lora_rank,
             )
-            
+
             # If base_model is explicitly provided, override auto-detection
             if base_model:
                 print(f"  Using explicit base model: {base_model}")
                 inference_service.base_model_path = base_model
                 inference_service.is_adapter = True
                 inference_service.adapter_path = autoload_model
-            
+
             await inference_service.load_model()
             set_inference_service(inference_service)  # Register globally
-            
+
             # Initialize carbon tracking for this model
             try:
                 from model_garden.carbon import init_inference_tracker
+
                 init_inference_tracker(autoload_model)
                 print(f"✅ Carbon tracking initialized for {autoload_model}")
             except Exception as e:
                 print(f"⚠️  Failed to initialize carbon tracking: {e}")
-            
+
             print(f"✅ Inference model loaded: {autoload_model}")
         except Exception as e:
             print(f"❌ Failed to auto-load model: {e}")
             import traceback
+
             traceback.print_exc()
-    
+
     print("🚀 Model Garden API ready!")
-    
+
     yield
-    
+
     # Shutdown
     print("🌱 Model Garden API shutting down...")
-    
+
     # Stop queue worker
     from model_garden.queue_worker import get_queue_worker
+
     worker = get_queue_worker()
     await worker.stop()
-    
+
     # Cleanup torch compile workers to free memory
     try:
-        import signal
         import subprocess
+
         print("🧹 Cleaning up PyTorch compile workers...")
         result = subprocess.run(
-            ["pkill", "-9", "-f", "torch._inductor.compile_worker"],
-            capture_output=True,
-            text=True
+            ["pkill", "-9", "-f", "torch._inductor.compile_worker"], capture_output=True, text=True
         )
         if result.returncode == 0:
             print("✓ PyTorch compile workers terminated")
@@ -1341,9 +1487,10 @@ async def lifespan(app: FastAPI):
             print("  (No compile workers found)")
     except Exception as e:
         print(f"Warning: Error cleaning up compile workers: {e}")
-    
+
     # Cleanup inference service if loaded
     from model_garden.inference import get_inference_service, set_inference_service
+
     inference_service = get_inference_service()
     if inference_service is not None:
         try:
@@ -1358,11 +1505,13 @@ def scan_existing_models():
     models_dir = Path(MODELS_DIR)
     if not models_dir.exists():
         return
-    
+
     for model_path in models_dir.iterdir():
         if model_path.is_dir():
             # Check if it's a valid model directory
-            if (model_path / "config.json").exists() or (model_path / "adapter_config.json").exists():
+            if (model_path / "config.json").exists() or (
+                model_path / "adapter_config.json"
+            ).exists():
                 model_id = model_path.name
                 models_storage[model_id] = {
                     "id": model_id,
@@ -1405,33 +1554,38 @@ app.add_middleware(
 
 # Add validation error handler to debug 422 errors
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     """Log and return validation errors."""
     print(f"🔴 Validation Error on {request.method} {request.url.path}")
-    
+
     # Get error details but truncate any large input values
     errors = exc.errors()
     truncated_errors = []
     for error in errors:
         error_copy = error.copy()
         # Truncate large input values in the error
-        if 'input' in error_copy and isinstance(error_copy['input'], str) and len(error_copy['input']) > 200:
-            error_copy['input'] = f"{error_copy['input'][:200]}... [truncated {len(error_copy['input'])} chars]"
+        if (
+            "input" in error_copy
+            and isinstance(error_copy["input"], str)
+            and len(error_copy["input"]) > 200
+        ):
+            error_copy["input"] = (
+                f"{error_copy['input'][:200]}... [truncated {len(error_copy['input'])} chars]"
+            )
         truncated_errors.append(error_copy)
-    
+
     print(f"   Error count: {len(truncated_errors)}")
     for i, error in enumerate(truncated_errors[:3]):  # Only show first 3 errors
-        print(f"   Error {i+1}: {error}")
+        print(f"   Error {i + 1}: {error}")
     if len(truncated_errors) > 3:
         print(f"   ... and {len(truncated_errors) - 3} more errors")
-    
+
     # Don't include the full body or large inputs in the response
     return JSONResponse(
-        status_code=422,
-        content={"detail": truncated_errors, "error_count": len(truncated_errors)}
+        status_code=422, content={"detail": truncated_errors, "error_count": len(truncated_errors)}
     )
 
 
@@ -1451,78 +1605,70 @@ async def get_config():
             "hf_user": os.getenv("HF_USER", ""),
             "models_dir": MODELS_DIR,
             "hf_home": HF_HOME,
-        }
+        },
     }
 
 
 @app.get("/api/v1/backends")
 async def list_available_backends():
     """List all available training backends.
-    
+
     Returns:
         List of available backends with their capabilities.
     """
     try:
         from model_garden.backends import list_backends
-        
+
         backends = list_backends()
-        
+
         return {
             "success": True,
             "data": backends,
-            "message": f"Found {len(backends)} available backend(s)"
+            "message": f"Found {len(backends)} available backend(s)",
         }
     except Exception as e:
-        return {
-            "success": False,
-            "data": [],
-            "message": f"Error listing backends: {str(e)}"
-        }
+        return {"success": False, "data": [], "message": f"Error listing backends: {str(e)}"}
 
 
 # Model Registry endpoints
 @app.get("/api/v1/registry/models")
-async def get_registry_models(category: Optional[str] = None):
+async def get_registry_models(category: str | None = None):
     """Get all supported models from the registry.
-    
+
     Args:
         category: Optional category filter (text-llm, vision-vlm)
-    
+
     Returns:
         List of supported models with their configurations
     """
     from model_garden.model_registry import get_registry
-    
+
     registry = get_registry()
     models = registry.get_model_list_for_ui(category=category)
-    
-    return {
-        "success": True,
-        "data": models,
-        "total": len(models)
-    }
+
+    return {"success": True, "data": models, "total": len(models)}
 
 
 @app.get("/api/v1/registry/models/{model_id:path}")
 async def get_registry_model(model_id: str):
     """Get detailed information about a specific model from the registry.
-    
+
     Args:
         model_id: Model identifier (HuggingFace model ID, can include slashes)
-    
+
     Returns:
         Complete model information including defaults and capabilities
     """
     from model_garden.model_registry import get_model
-    
+
     model = get_model(model_id)
-    
+
     if model is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model '{model_id}' not found in registry"
+            detail=f"Model '{model_id}' not found in registry",
         )
-    
+
     return {
         "success": True,
         "data": {
@@ -1554,86 +1700,69 @@ async def get_registry_model(model_id: str):
             "training_defaults": model.training_defaults,
             "inference_defaults": model.get_inference_config(),
             "urls": model.urls,
-        }
+        },
     }
 
 
 @app.get("/api/v1/registry/categories")
 async def get_registry_categories():
     """Get all available model categories.
-    
+
     Returns:
         List of categories with their metadata
     """
     from model_garden.model_registry import get_registry
-    
+
     registry = get_registry()
     categories = registry.get_categories()
-    
-    return {
-        "success": True,
-        "data": categories
-    }
+
+    return {"success": True, "data": categories}
 
 
 @app.post("/api/v1/registry/validate/training")
-async def validate_training_model(request: Dict):
+async def validate_training_model(request: dict):
     """Validate if a model can be used for training.
-    
+
     Args:
         request: Dict with 'model_id' key
-    
+
     Returns:
         Validation result with error message if invalid
     """
     from model_garden.model_registry import validate_model_for_training
-    
+
     model_id = request.get("model_id")
     if not model_id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing 'model_id' in request"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing 'model_id' in request"
         )
-    
+
     is_valid, error_message = validate_model_for_training(model_id)
-    
-    return {
-        "success": True,
-        "data": {
-            "is_valid": is_valid,
-            "error_message": error_message
-        }
-    }
+
+    return {"success": True, "data": {"is_valid": is_valid, "error_message": error_message}}
 
 
 @app.post("/api/v1/registry/validate/inference")
-async def validate_inference_model(request: Dict):
+async def validate_inference_model(request: dict):
     """Validate if a model can be used for inference.
-    
+
     Args:
         request: Dict with 'model_id' key
-    
+
     Returns:
         Validation result with error message if invalid
     """
     from model_garden.model_registry import validate_model_for_inference
-    
+
     model_id = request.get("model_id")
     if not model_id:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing 'model_id' in request"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing 'model_id' in request"
         )
-    
+
     is_valid, error_message = validate_model_for_inference(model_id)
-    
-    return {
-        "success": True,
-        "data": {
-            "is_valid": is_valid,
-            "error_message": error_message
-        }
-    }
+
+    return {"success": True, "data": {"is_valid": is_valid, "error_message": error_message}}
 
 
 # Models endpoints
@@ -1641,18 +1770,18 @@ async def validate_inference_model(request: Dict):
 async def list_models(
     page: int = 1,
     page_size: int = 20,
-    status: Optional[str] = None,
-    base_model: Optional[str] = None,
+    status: str | None = None,
+    base_model: str | None = None,
 ):
     """List all available models."""
     # Filter models
     filtered_models = list(models_storage.values())
-    
+
     # Add file_exists flag to each model
     for model in filtered_models:
         model_path = Path(model.get("path", ""))
         model["file_exists"] = model_path.exists() if model_path else False
-        
+
         # Add file count if directory exists
         if model["file_exists"]:
             try:
@@ -1662,21 +1791,21 @@ async def list_models(
                 model["file_count"] = 0
         else:
             model["file_count"] = 0
-    
+
     if status:
         filtered_models = [m for m in filtered_models if m["status"] == status]
-    
+
     if base_model:
         filtered_models = [m for m in filtered_models if m["base_model"] == base_model]
-    
+
     # Pagination
     total = len(filtered_models)
     start_idx = (page - 1) * page_size
     end_idx = start_idx + page_size
     items = filtered_models[start_idx:end_idx]
-    
+
     pages = (total + page_size - 1) // page_size
-    
+
     return PaginatedResponse(
         items=items,
         total=total,
@@ -1691,10 +1820,9 @@ async def get_model(model_id: str):
     """Get details for a specific model."""
     if model_id not in models_storage:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Model {model_id} not found"
         )
-    
+
     model_data = models_storage[model_id]
     return ModelInfo(**model_data)
 
@@ -1704,27 +1832,25 @@ async def delete_model(model_id: str):
     """Delete a model."""
     if model_id not in models_storage:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Model {model_id} not found"
         )
-    
+
     # Remove from storage (in production, also delete files)
     model_path = Path(models_storage[model_id]["path"])
     if model_path.exists():
         import shutil
+
         shutil.rmtree(model_path)
-    
+
     del models_storage[model_id]
-    
-    return APIResponse(
-        success=True,
-        message=f"Model {model_id} deleted successfully"
-    )
+
+    return APIResponse(success=True, message=f"Model {model_id} deleted successfully")
 
 
 # Pydantic model for rename requests
 class ModelRenameRequest(BaseModel):
     """Request body for renaming a model."""
+
     new_name: str
 
 
@@ -1739,23 +1865,22 @@ async def rename_model(model_id: str, request: ModelRenameRequest):
     """
     if model_id not in models_storage:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Model {model_id} not found"
         )
 
     new_name = request.new_name.strip()
     # Basic validation: new_name must be a simple directory name
-    if not new_name or '/' in new_name or '\\' in new_name:
+    if not new_name or "/" in new_name or "\\" in new_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid new_name. Provide a single directory name without path separators."
+            detail="Invalid new_name. Provide a single directory name without path separators.",
         )
 
     # Prevent clobbering an existing model id
     if new_name in models_storage:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"A model with name '{new_name}' already exists"
+            detail=f"A model with name '{new_name}' already exists",
         )
 
     # Resolve paths
@@ -1764,14 +1889,13 @@ async def rename_model(model_id: str, request: ModelRenameRequest):
     if not old_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model directory not found on disk: {old_path}"
+            detail=f"Model directory not found on disk: {old_path}",
         )
 
     new_path = old_path.parent / new_name
     if new_path.exists():
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Target path already exists: {new_path}"
+            status_code=status.HTTP_409_CONFLICT, detail=f"Target path already exists: {new_path}"
         )
 
     import shutil
@@ -1841,10 +1965,10 @@ async def rename_model(model_id: str, request: ModelRenameRequest):
             print("⚠️  Failed to persist restored storage after rollback")
 
         import traceback
+
         traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to rename model: {e}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to rename model: {e}"
         )
 
 
@@ -1854,7 +1978,7 @@ async def upload_model_to_hub(
     request: dict,
 ):
     """Upload a model to HuggingFace Hub.
-    
+
     Args:
         model_id: The ID of the model to upload
         request: JSON body containing:
@@ -1862,26 +1986,25 @@ async def upload_model_to_hub(
             - private: Whether the repository should be private (default: False)
             - commit_message: Optional commit message (default: "Upload model from Model Garden")
             - repo_description: Optional repository description
-    
+
     Returns:
         Success response with repository URL
     """
     if model_id not in models_storage:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model {model_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Model {model_id} not found"
         )
-    
+
     model_data = models_storage[model_id]
     model_path = Path(model_data["path"])
-    
+
     if not model_path.exists():
         # Check if it's a training job that hasn't saved the model yet
         training_job_id = model_data.get("training_job_id")
         training_status = "unknown"
         if training_job_id and training_job_id in training_jobs:
             training_status = training_jobs[training_job_id].get("status", "unknown")
-        
+
         error_detail = {
             "error": "Model directory not found",
             "model_id": model_id,
@@ -1891,71 +2014,65 @@ async def upload_model_to_hub(
                 "The model may not have been saved to disk yet",
                 "Check if the training job completed successfully",
                 f"Expected path: {model_path}",
-                "Try listing models to see which ones have files available"
-            ]
+                "Try listing models to see which ones have files available",
+            ],
         }
-        
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model directory not found: {model_path}. Training status: {training_status}. The model files may not have been saved to disk."
+            detail=f"Model directory not found: {model_path}. Training status: {training_status}. The model files may not have been saved to disk.",
         )
-    
+
     # Extract request parameters
     repo_id = request.get("repo_id")
     if not repo_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="repo_id is required"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="repo_id is required")
+
     # Validate repo_id format (should be username/repo-name)
     if "/" not in repo_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="repo_id must be in the format 'username/repo-name'"
+            detail="repo_id must be in the format 'username/repo-name'",
         )
-    
+
     private = request.get("private", False)
     commit_message = request.get("commit_message", "Upload model from Model Garden")
-    repo_description = request.get("repo_description", f"Model fine-tuned with Model Garden. Base model: {model_data.get('base_model', 'unknown')}")
-    
+    repo_description = request.get(
+        "repo_description",
+        f"Model fine-tuned with Model Garden. Base model: {model_data.get('base_model', 'unknown')}",
+    )
+
     try:
-        from huggingface_hub import HfApi, create_repo, upload_folder
         import os
-        
+
+        from huggingface_hub import HfApi, create_repo, upload_folder
+
         # Get HuggingFace token
         hf_token = os.getenv("HF_TOKEN")
         if not hf_token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="HF_TOKEN environment variable not set. Please configure your HuggingFace token."
+                detail="HF_TOKEN environment variable not set. Please configure your HuggingFace token.",
             )
-        
+
         api = HfApi(token=hf_token)
-        
+
         # Create the repository if it doesn't exist
         print(f"Creating repository: {repo_id} (private={private})")
         try:
             create_repo(
-                repo_id=repo_id,
-                token=hf_token,
-                private=private,
-                exist_ok=True,
-                repo_type="model"
+                repo_id=repo_id, token=hf_token, private=private, exist_ok=True, repo_type="model"
             )
-            
+
             # Update repo description if provided
             if repo_description:
-                api.update_repo_visibility(
-                    repo_id=repo_id,
-                    private=private,
-                    token=hf_token
-                )
+                api.update_repo_visibility(repo_id=repo_id, private=private, token=hf_token)
         except Exception as e:
             print(f"Repository creation note: {e}")
-        
+
         # Upload the entire model directory with retries/backoff for transient HF errors
         import time
+
         import requests
 
         print(f"Uploading model from {model_path} to {repo_id}...")
@@ -1971,7 +2088,7 @@ async def upload_model_to_hub(
                     repo_id=repo_id,
                     token=hf_token,
                     commit_message=commit_message,
-                    repo_type="model"
+                    repo_type="model",
                 )
                 print(f"✓ Model uploaded successfully to {url} (attempt {attempt})")
                 break
@@ -1984,13 +2101,17 @@ async def upload_model_to_hub(
                 is_transient = False
                 if status_code in (502, 503, 504):
                     is_transient = True
-                if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+                if isinstance(
+                    exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+                ):
                     is_transient = True
 
                 # If we should retry, sleep with exponential backoff
                 if attempt < max_retries and is_transient:
                     sleep_time = backoff_base ** (attempt - 1)
-                    print(f"Upload attempt {attempt} failed with transient error (status={status_code}): {exc}. Retrying in {sleep_time}s...")
+                    print(
+                        f"Upload attempt {attempt} failed with transient error (status={status_code}): {exc}. Retrying in {sleep_time}s..."
+                    )
                     time.sleep(sleep_time)
                     continue
 
@@ -2001,30 +2122,30 @@ async def upload_model_to_hub(
         if not url:
             # Shouldn't happen because exceptions above are re-raised, but guard anyway
             raise RuntimeError("Failed to upload model to HuggingFace Hub: no URL returned")
-        
+
         # Create a README if it doesn't exist
         readme_path = model_path / "README.md"
         if not readme_path.exists():
             try:
                 readme_content = f"""---
 license: apache-2.0
-base_model: {model_data.get('base_model', 'unknown')}
+base_model: {model_data.get("base_model", "unknown")}
 tags:
   - model-garden
   - fine-tuned
-  - {model_data.get('model_type', 'language-model')}
+  - {model_data.get("model_type", "language-model")}
 ---
 
-# {model_data.get('name', model_id)}
+# {model_data.get("name", model_id)}
 
 {repo_description}
 
 ## Model Details
 
-- **Base Model**: {model_data.get('base_model', 'unknown')}
+- **Base Model**: {model_data.get("base_model", "unknown")}
 - **Fine-tuned with**: [Model Garden](https://github.com/leokeba/model-garden)
-- **Training Date**: {model_data.get('created_at', 'unknown')}
-- **Model Type**: {model_data.get('model_type', 'unknown')}
+- **Training Date**: {model_data.get("created_at", "unknown")}
+- **Model Type**: {model_data.get("model_type", "unknown")}
 
 ## Usage
 
@@ -2058,13 +2179,13 @@ print(tokenizer.decode(outputs[0]))
 
 This model was fine-tuned using Model Garden with the following configuration:
 
-- **Dataset**: {model_data.get('training_dataset', 'custom')}
-- **Training Steps**: {model_data.get('training_steps', 'unknown')}
-- **LoRA Rank**: {model_data.get('lora_rank', 'unknown')}
+- **Dataset**: {model_data.get("training_dataset", "custom")}
+- **Training Steps**: {model_data.get("training_steps", "unknown")}
+- **LoRA Rank**: {model_data.get("lora_rank", "unknown")}
 
 ## Carbon Footprint
 
-Training emissions: {model_data.get('carbon_emissions_g', 'unknown')} gCO2eq
+Training emissions: {model_data.get("carbon_emissions_g", "unknown")} gCO2eq
 
 ---
 
@@ -2076,33 +2197,34 @@ Training emissions: {model_data.get('carbon_emissions_g', 'unknown')} gCO2eq
                     path_in_repo="README.md",
                     repo_id=repo_id,
                     token=hf_token,
-                    commit_message="Add model card"
+                    commit_message="Add model card",
                 )
                 print("✓ README.md created and uploaded")
             except Exception as e:
                 print(f"Warning: Could not create README: {e}")
-        
+
         # Update model storage with Hub URL
         models_storage[model_id]["hub_url"] = f"https://huggingface.co/{repo_id}"
         models_storage[model_id]["hub_repo_id"] = repo_id
         storage_manager.save_models(models_storage)
-        
+
         return {
             "success": True,
-            "message": f"Model uploaded successfully to HuggingFace Hub",
+            "message": "Model uploaded successfully to HuggingFace Hub",
             "repo_id": repo_id,
             "url": f"https://huggingface.co/{repo_id}",
-            "commit_url": url
+            "commit_url": url,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload model: {str(e)}"
+            detail=f"Failed to upload model: {str(e)}",
         )
 
 
@@ -2111,26 +2233,26 @@ Training emissions: {model_data.get('carbon_emissions_g', 'unknown')} gCO2eq
 async def list_training_jobs(
     page: int = 1,
     page_size: int = 20,
-    status: Optional[str] = None,
+    status: str | None = None,
 ):
     """List all training jobs."""
     # Filter jobs
     filtered_jobs = list(training_jobs.values())
-    
+
     if status:
         filtered_jobs = [j for j in filtered_jobs if j["status"] == status]
-    
+
     # Sort by created_at in descending order (newest first)
     filtered_jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-    
+
     # Pagination
     total = len(filtered_jobs)
     start_idx = (page - 1) * page_size
     end_idx = start_idx + page_size
     items = filtered_jobs[start_idx:end_idx]
-    
+
     pages = (total + page_size - 1) // page_size
-    
+
     return PaginatedResponse(
         items=items,
         total=total,
@@ -2144,24 +2266,26 @@ async def list_training_jobs(
 async def create_training_job(job_request: TrainingJobRequest, background_tasks: BackgroundTasks):
     """Create a new training job."""
     import uuid
-    
+
     job_id = str(uuid.uuid4())
-    
+
     # Only resolve paths for local files, not HuggingFace Hub datasets
-    dataset_path = job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
-    
+    dataset_path = (
+        job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
+    )
+
     # Resolve output directory for models
     output_dir = resolve_model_path(job_request.output_dir)
-    
+
     # Handle validation dataset path
     validation_dataset_path = None
     if job_request.validation_dataset_path:
         validation_dataset_path = (
-            job_request.validation_dataset_path 
-            if job_request.validation_from_hub 
+            job_request.validation_dataset_path
+            if job_request.validation_from_hub
             else resolve_path(job_request.validation_dataset_path)
         )
-    
+
     # Create job record using type-safe helper function
     # This ensures all fields are present and validated at creation time
     job_info_model = create_training_job_record(
@@ -2171,39 +2295,31 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
         validation_dataset_path=validation_dataset_path,
         output_dir=output_dir,
     )
-    
+
     # Convert to dict for storage (JSON serialization)
     # Using model_dump() ensures we get all fields, including defaults
-    job_info = job_info_model.model_dump(mode='json', exclude_none=False)
-    
+    job_info = job_info_model.model_dump(mode="json", exclude_none=False)
+
     training_jobs[job_id] = job_info
-    
+
     # Persist to disk
     storage_manager.save_training_jobs(training_jobs)
-    
+
     # Add to job queue
     queue = get_job_queue()
-    await queue.add_job(
-        job_id=job_id,
-        job_type="training",
-        job_config=job_info,
-        priority=0
-    )
-    
+    await queue.add_job(job_id=job_id, job_type="training", job_config=job_info, priority=0)
+
     # Get queue position
     position = await queue.get_queue_position(job_id)
     position_msg = f" (position in queue: {position})" if position and position > 1 else ""
-    
+
     # Queue worker will automatically start the job when ready
     # (no need to use background_tasks.add_task anymore)
-    
+
     return APIResponse(
         success=True,
-        data={
-            "job_id": job_id,
-            "queue_position": position
-        },
-        message=f"Training job {job_id} created and queued for execution{position_msg}"
+        data={"job_id": job_id, "queue_position": position},
+        message=f"Training job {job_id} created and queued for execution{position_msg}",
     )
 
 
@@ -2212,71 +2328,72 @@ async def get_training_job(job_id: str):
     """Get details for a specific training job."""
     if job_id not in training_jobs:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Training job {job_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Training job {job_id} not found"
         )
-    
+
     job_data = training_jobs[job_id].copy()
-    
+
     # Add queue information if job is queued
     if job_data["status"] == "queued":
         queue = get_job_queue()
         position = await queue.get_queue_position(job_id)
         if position:
             job_data["queue_position"] = position
-    
+
     return TrainingJobInfo(**job_data)
 
 
 @app.delete("/api/v1/training/jobs/{job_id}", response_model=APIResponse)
 async def delete_or_cancel_training_job(job_id: str):
     """Delete or cancel a training job.
-    
+
     - For running/queued jobs: cancels the job
     - For completed/failed/cancelled jobs: removes the job from the list
     """
     if job_id not in training_jobs:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Training job {job_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Training job {job_id} not found"
         )
-    
+
     job = training_jobs[job_id]
-    
+
     # If job is finished (completed/failed/cancelled), delete it from the list
     if job["status"] in ["completed", "failed", "cancelled"]:
         del training_jobs[job_id]
         storage_manager.save_training_jobs(training_jobs)
-        
+
         # Notify WebSocket clients about deletion
-        await manager.send_update(job_id, {
-            "type": "job_deleted",
-            "job_id": job_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        })
-        
-        return APIResponse(
-            success=True,
-            message=f"Training job {job_id} deleted successfully"
+        await manager.send_update(
+            job_id,
+            {
+                "type": "job_deleted",
+                "job_id": job_id,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
         )
-    
+
+        return APIResponse(success=True, message=f"Training job {job_id} deleted successfully")
+
     # Try to cancel in queue (only works if job is queued, not running)
     queue = get_job_queue()
     cancelled_in_queue = await queue.cancel_job(job_id)
-    
+
     # If job is running/queued, cancel it
     job["status"] = "cancelled"
     job["completed_at"] = datetime.utcnow().isoformat() + "Z"
     storage_manager.save_training_jobs(training_jobs)
-    
+
     # Notify WebSocket clients
-    await manager.send_update(job_id, {
-        "type": "status_update",
-        "job_id": job_id,
-        "status": "cancelled",
-        "completed_at": job["completed_at"],
-        "timestamp": datetime.utcnow().isoformat() + "Z"
-    })
+    await manager.send_update(
+        job_id,
+        {
+            "type": "status_update",
+            "job_id": job_id,
+            "status": "cancelled",
+            "completed_at": job["completed_at"],
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        },
+    )
     # If a cancellation event exists for this job, set it to signal the training loop
     try:
         _ce_map = globals().get("cancellation_events")
@@ -2284,97 +2401,97 @@ async def delete_or_cancel_training_job(job_id: str):
             _ce_map[job_id].set()
     except Exception:
         pass
-    
-    status_msg = "cancelled from queue" if cancelled_in_queue else "cancellation requested (job may be running)"
-    
-    return APIResponse(
-        success=True,
-        message=f"Training job {job_id} {status_msg}"
+
+    status_msg = (
+        "cancelled from queue"
+        if cancelled_in_queue
+        else "cancellation requested (job may be running)"
     )
+
+    return APIResponse(success=True, message=f"Training job {job_id} {status_msg}")
 
 
 @app.post("/api/v1/training/jobs/{job_id}/stop", response_model=APIResponse)
 async def request_early_stop(job_id: str):
     """Request early stopping for a running training job.
-    
+
     This will gracefully stop training at the next evaluation, allowing the model
     to be saved properly. Different from cancellation which stops immediately.
     """
     if job_id not in training_jobs:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Training job {job_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Training job {job_id} not found"
         )
-    
+
     job = training_jobs[job_id]
-    
+
     # Only allow early stopping for running jobs
     if job["status"] != "running":
         return APIResponse(
             success=False,
-            message=f"Cannot request early stopping for job with status: {job['status']}"
+            message=f"Cannot request early stopping for job with status: {job['status']}",
         )
-    
+
     # Set a flag that the ProgressCallback can check
     try:
         early_stop_map = globals().setdefault("early_stop_requests", {})
         early_stop_map[job_id] = True
         print(f"🛑 Early stopping requested for job {job_id}")
-        
+
         # Notify WebSocket clients
-        await manager.send_update(job_id, {
-            "type": "early_stop_requested",
-            "job_id": job_id,
-            "message": "Early stopping requested - will stop at next evaluation",
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        })
-        
+        await manager.send_update(
+            job_id,
+            {
+                "type": "early_stop_requested",
+                "job_id": job_id,
+                "message": "Early stopping requested - will stop at next evaluation",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
+        )
+
         return APIResponse(
-            success=True,
-            message="Early stopping requested - training will stop at next evaluation"
+            success=True, message="Early stopping requested - training will stop at next evaluation"
         )
     except Exception as e:
-        return APIResponse(
-            success=False,
-            message=f"Failed to request early stopping: {str(e)}"
-        )
+        return APIResponse(success=False, message=f"Failed to request early stopping: {str(e)}")
 
 
 @app.post("/api/v1/training/jobs/{job_id}/rerun", response_model=APIResponse)
 async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
     """Rerun a past training job with the same configuration.
-    
+
     This creates a new training job with the same parameters as the original job.
     Useful for retrying failed jobs or retraining with the same settings.
     """
     if job_id not in training_jobs:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Training job {job_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Training job {job_id} not found"
         )
-    
+
     original_job = training_jobs[job_id]
-    
+
     # Only allow rerunning completed, failed, or cancelled jobs
     if original_job["status"] in ["running", "queued"]:
         return APIResponse(
             success=False,
-            message=f"Cannot rerun a job that is currently {original_job['status']}. Cancel it first."
+            message=f"Cannot rerun a job that is currently {original_job['status']}. Cancel it first.",
         )
-    
+
     import uuid
+
     new_job_id = str(uuid.uuid4())
-    
+
     # Clone all relevant configuration from the original job
     # Create a new job with a timestamp suffix to distinguish it
     from datetime import datetime as dt
+
     timestamp_suffix = dt.utcnow().strftime("%Y%m%d_%H%M%S")
     new_job_name = f"{original_job['name']}_rerun_{timestamp_suffix}"
-    
+
     # Resolve output directory with new name
     original_output = Path(original_job["output_dir"])
     new_output_dir = str(original_output.parent / new_job_name)
-    
+
     # Create new job record with cloned configuration
     new_job = {
         "id": new_job_id,
@@ -2401,11 +2518,19 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
         "selective_loss": original_job.get("selective_loss", False),
         "selective_loss_level": original_job.get("selective_loss_level", "conservative"),
         "selective_loss_schema_keys": original_job.get("selective_loss_schema_keys"),
-        "selective_loss_masking_strategy": original_job.get("selective_loss_masking_strategy", "epoch_based"),
-        "selective_loss_masking_start_epoch": original_job.get("selective_loss_masking_start_epoch", 0.0),
-        "selective_loss_mask_every_n_steps": original_job.get("selective_loss_mask_every_n_steps", 100),
+        "selective_loss_masking_strategy": original_job.get(
+            "selective_loss_masking_strategy", "epoch_based"
+        ),
+        "selective_loss_masking_start_epoch": original_job.get(
+            "selective_loss_masking_start_epoch", 0.0
+        ),
+        "selective_loss_mask_every_n_steps": original_job.get(
+            "selective_loss_mask_every_n_steps", 100
+        ),
         "selective_loss_mask_for_n_steps": original_job.get("selective_loss_mask_for_n_steps", 50),
-        "selective_loss_structural_weight": original_job.get("selective_loss_structural_weight", 0.1),
+        "selective_loss_structural_weight": original_job.get(
+            "selective_loss_structural_weight", 0.1
+        ),
         "selective_loss_verbose": original_job.get("selective_loss_verbose", False),
         # Clone quality settings
         "quality_mode": original_job.get("quality_mode", False),
@@ -2419,37 +2544,32 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
         "rerun_from": job_id,
         "rerun_from_name": original_job["name"],
     }
-    
+
     training_jobs[new_job_id] = new_job
-    
+
     # Persist to disk
     storage_manager.save_training_jobs(training_jobs)
-    
+
     # Add to job queue
     queue = get_job_queue()
-    await queue.add_job(
-        job_id=new_job_id,
-        job_type="training",
-        job_config=new_job,
-        priority=0
-    )
-    
+    await queue.add_job(job_id=new_job_id, job_type="training", job_config=new_job, priority=0)
+
     # Get queue position
     position = await queue.get_queue_position(new_job_id)
     position_msg = f" (position in queue: {position})" if position and position > 1 else ""
-    
+
     # Queue worker will automatically start the job when ready
     # (no need to use background_tasks.add_task anymore)
-    
+
     return APIResponse(
         success=True,
         data={
             "job_id": new_job_id,
             "original_job_id": job_id,
             "queue_position": position,
-            "name": new_job_name
+            "name": new_job_name,
         },
-        message=f"Training job rerun created and queued for execution{position_msg}"
+        message=f"Training job rerun created and queued for execution{position_msg}",
     )
 
 
@@ -2457,13 +2577,13 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
 async def get_training_queue():
     """Get current training job queue status."""
     queue = get_job_queue()
-    
+
     # Get all queued jobs
     queued_jobs = await queue.list_jobs(status=JobStatus.QUEUED, job_type="training")
-    
+
     # Get running jobs
     running_jobs = await queue.list_jobs(status=JobStatus.RUNNING, job_type="training")
-    
+
     return APIResponse(
         success=True,
         data={
@@ -2475,7 +2595,7 @@ async def get_training_queue():
                     "name": j["job_config"].get("name", "Unnamed"),
                     "position": i + 1,
                     "queued_at": j["queued_at"],
-                    "priority": j["priority"]
+                    "priority": j["priority"],
                 }
                 for i, j in enumerate(queued_jobs)
             ],
@@ -2484,59 +2604,62 @@ async def get_training_queue():
                     "job_id": j["job_id"],
                     "name": j["job_config"].get("name", "Unnamed"),
                     "started_at": j["started_at"],
-                    "status_message": j["status_message"]
+                    "status_message": j["status_message"],
                 }
                 for j in running_jobs
-            ]
+            ],
         },
-        message=f"{len(queued_jobs)} jobs queued, {len(running_jobs)} running"
+        message=f"{len(queued_jobs)} jobs queued, {len(running_jobs)} running",
     )
 
 
 @app.websocket("/ws/training/{job_id}")
 async def websocket_training_updates(websocket: WebSocket, job_id: str):
     """WebSocket endpoint for real-time training job updates.
-    
+
     Sends updates about:
     - Job status changes (queued -> running -> completed/failed)
     - Training progress (steps, epochs, loss)
     - Logs and error messages
     """
     await manager.connect(websocket, job_id)
-    
+
     try:
         # Send initial job status
         if job_id in training_jobs:
-            await websocket.send_json({
-                "type": "initial_state",
-                "job": training_jobs[job_id],
-                "timestamp": datetime.utcnow().isoformat() + "Z"
-            })
+            await websocket.send_json(
+                {
+                    "type": "initial_state",
+                    "job": training_jobs[job_id],
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+            )
         else:
-            await websocket.send_json({
-                "type": "error",
-                "message": f"Training job {job_id} not found",
-                "timestamp": datetime.utcnow().isoformat() + "Z"
-            })
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": f"Training job {job_id} not found",
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                }
+            )
             await websocket.close()
             return
-        
+
         # Keep connection alive and handle incoming messages
         while True:
             try:
                 # Wait for messages from client (e.g., ping/pong for keepalive)
                 data = await websocket.receive_text()
                 if data == "ping":
-                    await websocket.send_json({
-                        "type": "pong",
-                        "timestamp": datetime.utcnow().isoformat() + "Z"
-                    })
+                    await websocket.send_json(
+                        {"type": "pong", "timestamp": datetime.utcnow().isoformat() + "Z"}
+                    )
             except WebSocketDisconnect:
                 break
             except Exception as e:
                 print(f"WebSocket error: {e}")
                 break
-    
+
     finally:
         manager.disconnect(websocket, job_id)
 
@@ -2545,66 +2668,66 @@ async def websocket_training_updates(websocket: WebSocket, job_id: str):
 # Inference Endpoints
 # ============================================================================
 
+
 class InferenceRequest(BaseModel):
     """Request for text generation."""
+
     prompt: str
-    max_tokens: Optional[int] = None  # None = auto-determine (8192 for structured, 512 otherwise)
+    max_tokens: int | None = None  # None = auto-determine (8192 for structured, 512 otherwise)
     temperature: float = 0.7
     top_p: float = 0.95
     top_k: int = -1
-    frequency_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
-    stop: Optional[List[str]] = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    stop: list[str] | None = None
     stream: bool = False
 
 
 class ChatMessage(BaseModel):
     """Chat message with support for both text and multimodal content."""
+
     role: str  # system, user, assistant
-    content: Union[str, List[Dict], Dict]  # Can be string or structured content for vision
-    name: Optional[str] = None
-    
+    content: str | list[dict] | dict  # Can be string or structured content for vision
+    name: str | None = None
+
     class Config:
         extra = "allow"  # Allow extra fields like 'image' for compatibility
 
 
 class ResponseFormat(BaseModel):
     """OpenAI-compatible response format for structured outputs."""
+
     type: str  # "json_object" or "json_schema" or "text"
-    json_schema: Optional[Dict] = None  # JSON schema for structured output
+    json_schema: dict | None = None  # JSON schema for structured output
 
 
-def convert_response_format_to_structured_outputs(response_format: Optional[ResponseFormat]) -> Optional[Dict]:
+def convert_response_format_to_structured_outputs(
+    response_format: ResponseFormat | None,
+) -> dict | None:
     """Convert OpenAI response_format to vLLM structured_outputs parameters.
-    
+
     Args:
         response_format: OpenAI-style response format specification
-        
+
     Returns:
         Dictionary with structured output parameters for vLLM, or None if not applicable
     """
     if not response_format:
         return None
-    
+
     if response_format.type == "text":
         # No structured output needed
         return None
-    
+
     elif response_format.type == "json_object":
         # Generic JSON object - use a permissive JSON schema
-        return {
-            "json": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True
-            }
-        }
-    
+        return {"json": {"type": "object", "properties": {}, "additionalProperties": True}}
+
     elif response_format.type == "json_schema":
         # Specific JSON schema provided
         if not response_format.json_schema:
             raise ValueError("json_schema must be provided when type is 'json_schema'")
-        
+
         # Extract the schema from the OpenAI format
         # OpenAI format: {"name": "schema_name", "schema": {...}, "strict": true}
         schema = response_format.json_schema
@@ -2614,11 +2737,11 @@ def convert_response_format_to_structured_outputs(response_format: Optional[Resp
                 actual_schema = schema["schema"]
             else:
                 actual_schema = schema
-            
+
             return {"json": actual_schema}
-        
+
         return {"json": schema}
-    
+
     else:
         # Unknown type, return None
         return None
@@ -2626,56 +2749,62 @@ def convert_response_format_to_structured_outputs(response_format: Optional[Resp
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
-    model: Optional[str] = None  # Model name (optional, we use the loaded model)
-    messages: List[ChatMessage]
-    max_tokens: Optional[int] = None  # None = auto-determine based on response_format
-    temperature: Optional[float] = 0.7
-    top_p: Optional[float] = 0.95
-    top_k: Optional[int] = -1
-    frequency_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
-    repetition_penalty: Optional[float] = None
-    stream: Optional[bool] = False
-    stop: Optional[Union[str, List[str]]] = None
-    n: Optional[int] = 1  # Number of completions to generate
-    best_of: Optional[int] = None
-    logprobs: Optional[int] = None
-    echo: Optional[bool] = False
-    user: Optional[str] = None  # User identifier
-    response_format: Optional[ResponseFormat] = None  # Structured output format
-    
+
+    model: str | None = None  # Model name (optional, we use the loaded model)
+    messages: list[ChatMessage]
+    max_tokens: int | None = None  # None = auto-determine based on response_format
+    temperature: float | None = 0.7
+    top_p: float | None = 0.95
+    top_k: int | None = -1
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    repetition_penalty: float | None = None
+    stream: bool | None = False
+    stop: str | list[str] | None = None
+    n: int | None = 1  # Number of completions to generate
+    best_of: int | None = None
+    logprobs: int | None = None
+    echo: bool | None = False
+    user: str | None = None  # User identifier
+    response_format: ResponseFormat | None = None  # Structured output format
+
     class Config:
         extra = "allow"  # Allow extra fields for compatibility
 
 
 class LoadModelRequest(BaseModel):
     """Request to load a model for inference."""
+
     model_path: str
     tensor_parallel_size: int = 1
     gpu_memory_utilization: float = 0.0  # 0 = auto mode
-    max_model_len: Optional[int] = None
-    max_num_seqs: Optional[int] = None  # Max concurrent sequences (None = use registry default or 16)
-    enforce_eager: Optional[bool] = None  # Disable CUDA graphs (None = use registry default or False)
-    limit_mm_per_prompt: Optional[Dict[str, int]] = None  # Limit multimodal inputs e.g. {"image": 2, "video": 0}
+    max_model_len: int | None = None
+    max_num_seqs: int | None = None  # Max concurrent sequences (None = use registry default or 16)
+    enforce_eager: bool | None = None  # Disable CUDA graphs (None = use registry default or False)
+    limit_mm_per_prompt: dict[str, int] | None = (
+        None  # Limit multimodal inputs e.g. {"image": 2, "video": 0}
+    )
     dtype: str = "auto"
-    quantization: Optional[str] = None
+    quantization: str | None = None
 
 
 @app.post("/api/v1/inference/load", response_model=APIResponse)
 async def load_inference_model(request: LoadModelRequest, background_tasks: BackgroundTasks):
     """Load a model for inference (queued if another model is loading).
-    
+
     If parameters are not specified, defaults from the model registry are applied.
     """
-    from model_garden.inference import InferenceService, get_inference_service, set_inference_service
-    from model_garden.job_queue import get_job_queue, JobType, JobStatus
+    from model_garden.inference import (
+        get_inference_service,
+    )
+    from model_garden.job_queue import JobType, get_job_queue
     from model_garden.model_registry import get_model
-    
+
     queue = get_job_queue()
-    
+
     # Resolve model path (handles simple names, ./models/ prefix, and HF IDs)
     model_path = resolve_model_path(request.model_path)
-    
+
     # Try to get model defaults from registry
     model_info = None
     try:
@@ -2684,7 +2813,7 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
             print(f"📋 Found model in registry: {model_info.name}")
     except Exception as e:
         print(f"ℹ️  Model not in registry, using provided parameters: {e}")
-    
+
     # Apply defaults from registry if parameters not specified
     max_model_len = request.max_model_len
     max_num_seqs = request.max_num_seqs
@@ -2694,63 +2823,63 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
     gpu_memory_utilization = request.gpu_memory_utilization
     quantization = request.quantization
     tensor_parallel_size = request.tensor_parallel_size
-    
+
     if model_info:
         # Apply defaults for unspecified parameters
         if max_model_len is None:
             max_model_len = model_info.inference_defaults.max_model_len
             print(f"  Using registry default max_model_len: {max_model_len}")
-        
+
         if max_num_seqs is None:
             max_num_seqs = model_info.inference_defaults.max_num_seqs
             print(f"  Using registry default max_num_seqs: {max_num_seqs}")
-        
+
         if enforce_eager is None:
             enforce_eager = model_info.inference_defaults.enforce_eager
             print(f"  Using registry default enforce_eager: {enforce_eager}")
-        
+
         if limit_mm_per_prompt is None and model_info.inference_defaults.limit_mm_per_prompt:
             limit_mm_per_prompt = model_info.inference_defaults.limit_mm_per_prompt
             print(f"  Using registry default limit_mm_per_prompt: {limit_mm_per_prompt}")
-        
+
         if dtype == "auto":
             dtype = model_info.inference_defaults.dtype
             print(f"  Using registry default dtype: {dtype}")
-        
+
         if gpu_memory_utilization == 0.0:
             gpu_memory_utilization = model_info.inference_defaults.gpu_memory_utilization
             print(f"  Using registry default gpu_memory_utilization: {gpu_memory_utilization}")
-        
+
         if quantization is None and model_info.inference_defaults.quantization:
             quantization = model_info.inference_defaults.quantization
             print(f"  Using registry default quantization: {quantization}")
-        
+
         if tensor_parallel_size == 1 and model_info.inference_defaults.tensor_parallel_size > 1:
             tensor_parallel_size = model_info.inference_defaults.tensor_parallel_size
             print(f"  Using registry default tensor_parallel_size: {tensor_parallel_size}")
-    
+
     # Apply final defaults for parameters not in registry
     if max_num_seqs is None:
         max_num_seqs = 16  # Safe default for most GPUs
     if enforce_eager is None:
         enforce_eager = False  # Default to CUDA graphs for performance
-    
+
     # Check if a model is already loaded
     current_service = get_inference_service()
     if current_service and current_service.is_loaded:
         return APIResponse(
             success=False,
-            message=f"Model already loaded: {current_service.model_path}. Unload it first."
+            message=f"Model already loaded: {current_service.model_path}. Unload it first.",
         )
-    
+
     # Check if a model is currently loading
     loading_job = await queue.get_running_job(JobType.MODEL_LOADING)
     if loading_job:
         return APIResponse(
             success=False,
-            message=f"A model is already loading: {loading_job.get('job_config', {}).get('model_path', 'unknown')}. Please wait or cancel it first."
+            message=f"A model is already loading: {loading_job.get('job_config', {}).get('model_path', 'unknown')}. Please wait or cancel it first.",
         )
-    
+
     # Check if there are queued model loading jobs
     has_queued = await queue.has_running_job(JobType.MODEL_LOADING)
     if has_queued:
@@ -2770,20 +2899,20 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
                 "dtype": dtype,
                 "quantization": quantization,
             },
-            priority=0
+            priority=0,
         )
-        
+
         position = await queue.get_queue_position(job_id)
-        
+
         return APIResponse(
             success=True,
             data={"job_id": job_id, "status": "queued", "queue_position": position},
-            message=f"Model loading queued (position: {position})"
+            message=f"Model loading queued (position: {position})",
         )
-    
+
     # No model loading in progress, start immediately
     job_id = f"model-loading-{int(datetime.now().timestamp())}"
-    
+
     # Add to queue as running
     await queue.add_job(
         job_id=job_id,
@@ -2799,9 +2928,9 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
             "dtype": dtype,
             "quantization": quantization,
         },
-        priority=0
+        priority=0,
     )
-    
+
     # Start loading in background
     background_tasks.add_task(
         run_model_loading,
@@ -2814,52 +2943,48 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
         enforce_eager,
         limit_mm_per_prompt,
         dtype,
-        quantization
+        quantization,
     )
-    
+
     return APIResponse(
         success=True,
         data={"job_id": job_id, "status": "loading"},
-        message=f"Model loading started: {request.model_path}"
+        message=f"Model loading started: {request.model_path}",
     )
 
 
 @app.post("/api/v1/inference/unload", response_model=APIResponse)
 async def unload_inference_model():
     """Unload the currently loaded model."""
-    from model_garden.inference import get_inference_service, set_inference_service
     from model_garden.carbon import stop_inference_tracker
-    
+    from model_garden.inference import get_inference_service, set_inference_service
+
     service = get_inference_service()
     if not service or not service.is_loaded:
-        return APIResponse(
-            success=False,
-            message="No model currently loaded"
-        )
-    
+        return APIResponse(success=False, message="No model currently loaded")
+
     try:
         # Stop carbon tracking and save emissions
         try:
             emissions_data = stop_inference_tracker()
             if emissions_data:
-                print(f"✅ Inference emissions saved: {emissions_data['emissions_kg_co2']:.6f} kg CO2")
+                print(
+                    f"✅ Inference emissions saved: {emissions_data['emissions_kg_co2']:.6f} kg CO2"
+                )
                 print(f"   Requests: {emissions_data.get('request_count', 0)}")
                 print(f"   Tokens: {emissions_data.get('total_tokens', 0)}")
         except Exception as e:
             print(f"⚠️  Failed to stop inference carbon tracking: {e}")
-        
+
         await service.unload_model()
         set_inference_service(None)
-        
-        return APIResponse(
-            success=True,
-            message="Model unloaded successfully"
-        )
-        
+
+        return APIResponse(success=True, message="Model unloaded successfully")
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to unload model: {str(e)}"
+            detail=f"Failed to unload model: {str(e)}",
         )
 
 
@@ -2867,30 +2992,32 @@ async def unload_inference_model():
 async def get_inference_status():
     """Get inference service status including queue information."""
     from model_garden.inference import get_inference_service
-    from model_garden.job_queue import get_job_queue, JobType
-    
+    from model_garden.job_queue import JobType, get_job_queue
+
     queue = get_job_queue()
-    
+
     # Check for running or queued model loading jobs
     loading_job = await queue.get_running_job(JobType.MODEL_LOADING)
-    queued_jobs = await queue.list_jobs(status=JobStatus.QUEUED, job_type=JobType.MODEL_LOADING.value)
-    
+    queued_jobs = await queue.list_jobs(
+        status=JobStatus.QUEUED, job_type=JobType.MODEL_LOADING.value
+    )
+
     service = get_inference_service()
-    
+
     response = {
         "loaded": service is not None and service.is_loaded,
         "model_info": service.get_model_info() if service and service.is_loaded else None,
     }
-    
+
     # Add loading status if a model is being loaded
     if loading_job:
         response["loading"] = {
             "job_id": loading_job["job_id"],
             "model_path": loading_job["job_config"].get("model_path"),
             "started_at": loading_job["started_at"],
-            "status_message": loading_job["status_message"]
+            "status_message": loading_job["status_message"],
         }
-    
+
     # Add queue information if models are queued
     if queued_jobs:
         response["queue"] = {
@@ -2900,30 +3027,30 @@ async def get_inference_status():
                     "job_id": job["job_id"],
                     "model_path": job["job_config"].get("model_path"),
                     "queued_at": job["queued_at"],
-                    "position": i + 1
+                    "position": i + 1,
                 }
                 for i, job in enumerate(queued_jobs)
-            ]
+            ],
         }
-    
+
     return response
 
 
 @app.get("/api/v1/inference/queue")
 async def get_model_loading_queue():
     """Get model loading queue status."""
-    from model_garden.job_queue import get_job_queue, JobType, JobStatus
-    
+    from model_garden.job_queue import JobStatus, JobType, get_job_queue
+
     queue = get_job_queue()
-    
+
     # Get all model loading jobs
     all_jobs = await queue.list_jobs(job_type=JobType.MODEL_LOADING.value)
-    
+
     running = [j for j in all_jobs if j["status"] == JobStatus.RUNNING]
     queued = [j for j in all_jobs if j["status"] == JobStatus.QUEUED]
     completed = [j for j in all_jobs if j["status"] == JobStatus.COMPLETED][:10]  # Last 10
     failed = [j for j in all_jobs if j["status"] == JobStatus.FAILED][:10]  # Last 10
-    
+
     return {
         "running": running,
         "queued": queued,
@@ -2934,24 +3061,26 @@ async def get_model_loading_queue():
             "queued_count": len(queued),
             "total_completed": len([j for j in all_jobs if j["status"] == JobStatus.COMPLETED]),
             "total_failed": len([j for j in all_jobs if j["status"] == JobStatus.FAILED]),
-        }
+        },
     }
 
 
 @app.post("/api/v1/inference/generate")
 async def generate_text(request: InferenceRequest):
     """Generate text from a prompt."""
-    from model_garden.inference import get_inference_service
-    from fastapi.responses import StreamingResponse
     import json
-    
+
+    from fastapi.responses import StreamingResponse
+
+    from model_garden.inference import get_inference_service
+
     service = get_inference_service()
     if not service or not service.is_loaded:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No model loaded. Load a model first using /api/v1/inference/load"
+            detail="No model loaded. Load a model first using /api/v1/inference/load",
         )
-    
+
     try:
         if request.stream:
             # Streaming response
@@ -2967,12 +3096,12 @@ async def generate_text(request: InferenceRequest):
                     stop=request.stop,
                     stream=True,
                 )
-                
+
                 async for chunk in stream:  # type: ignore
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
-                
+
                 yield "data: [DONE]\n\n"
-            
+
             return StreamingResponse(generate_stream(), media_type="text/event-stream")
         else:
             # Complete response
@@ -2987,47 +3116,49 @@ async def generate_text(request: InferenceRequest):
                 stop=request.stop,
                 stream=False,
             )
-            
+
             return {
                 "text": text,
                 "model": service.model_path,
             }
-            
+
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Generation failed: {str(e)}"
         )
 
 
 @app.post("/api/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """OpenAI-compatible chat completions endpoint with vision support."""
-    from model_garden.inference import get_inference_service
-    from fastapi.responses import StreamingResponse
     import json
-    import base64
     import re
-    
+
+    from fastapi.responses import StreamingResponse
+
+    from model_garden.inference import get_inference_service
+
     # Log the incoming request for debugging
-    print(f"📨 Received chat completion request: model={request.model}, messages={len(request.messages)}, stream={request.stream}")
-    
+    print(
+        f"📨 Received chat completion request: model={request.model}, messages={len(request.messages)}, stream={request.stream}"
+    )
+
     service = get_inference_service()
     if not service or not service.is_loaded:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No model loaded. Load a model first using /api/v1/inference/load"
+            detail="No model loaded. Load a model first using /api/v1/inference/load",
         )
-    
+
     try:
         # Process messages and extract multimodal content
         processed_messages = []
         image_data = None
-        
+
         for msg in request.messages:
             msg_dict = msg.dict()
             content = msg_dict.get("content", "")
-            
+
             # Handle multimodal content (OpenAI format)
             if isinstance(content, list):
                 # Content is an array of content parts (text + images)
@@ -3043,21 +3174,23 @@ async def chat_completions(request: ChatCompletionRequest):
                                 url = image_url.get("url", "")
                             else:
                                 url = image_url
-                            
+
                             # Check if it's a base64 data URL
                             if url.startswith("data:image/"):
                                 # Extract base64 data
                                 match = re.match(r"data:image/[^;]+;base64,(.+)", url)
                                 if match:
                                     image_data = match.group(1)
-                                    print(f"🖼️  Extracted base64 image data ({len(image_data)} chars)")
+                                    print(
+                                        f"🖼️  Extracted base64 image data ({len(image_data)} chars)"
+                                    )
                             else:
                                 # It's a regular URL
                                 image_data = url
                                 print(f"🖼️  Using image URL: {url[:100]}...")
                     else:
                         text_parts.append(str(part))
-                
+
                 # Combine text parts
                 msg_dict["content"] = " ".join(text_parts)
             elif isinstance(content, dict):
@@ -3070,7 +3203,7 @@ async def chat_completions(request: ChatCompletionRequest):
                         url = image_url.get("url", "")
                     else:
                         url = image_url
-                    
+
                     if url.startswith("data:image/"):
                         match = re.match(r"data:image/[^;]+;base64,(.+)", url)
                         if match:
@@ -3078,14 +3211,14 @@ async def chat_completions(request: ChatCompletionRequest):
                     else:
                         image_data = url
             # else: content is already a string, keep as-is
-            
+
             # Check for 'image' field in message (custom format)
             if "image" in msg_dict and msg_dict["image"]:
                 image_data = msg_dict["image"]
-                print(f"🖼️  Found image in custom 'image' field")
-            
+                print("🖼️  Found image in custom 'image' field")
+
             processed_messages.append(msg_dict)
-        
+
         # Prepare generation parameters
         gen_params = {
             "messages": processed_messages,
@@ -3094,57 +3227,60 @@ async def chat_completions(request: ChatCompletionRequest):
             "top_p": request.top_p,
             "stream": request.stream or False,
         }
-        
+
         # Add image if found
         if image_data:
             gen_params["image"] = image_data
-            print(f"✅ Added image to generation parameters")
-        
+            print("✅ Added image to generation parameters")
+
         # Add stop sequences if provided
         if request.stop:
             gen_params["stop"] = request.stop if isinstance(request.stop, list) else [request.stop]
-        
+
         # Add structured output parameters if response_format is provided
         if request.response_format:
-            structured_outputs = convert_response_format_to_structured_outputs(request.response_format)
+            structured_outputs = convert_response_format_to_structured_outputs(
+                request.response_format
+            )
             if structured_outputs:
                 gen_params["structured_outputs"] = structured_outputs
                 print(f"✅ Added structured output parameters: {list(structured_outputs.keys())}")
-                
+
                 # Let InferenceService.generate() handle max_tokens defaults
                 # It will auto-set to 8192 for structured outputs if not specified
                 # No need to override here - the inference layer knows best
-        
+
         # IMPORTANT: Do NOT set max_tokens here!
         # The inference layer (inference.py) handles smart defaults:
         # - 8192 for structured outputs
         # - 512 for regular generation
         # If we set it here, the inference layer can't detect "not specified"
-        
+
         if request.stream:
             # Streaming response
             async def generate_stream():
                 total_tokens = 0
                 stream = await service.chat_completion(**gen_params)
-                
+
                 async for chunk in stream:  # type: ignore
                     # Count tokens if available
-                    if isinstance(chunk, dict) and 'usage' in chunk:
-                        total_tokens = chunk['usage'].get('completion_tokens', 0)
-                    
+                    if isinstance(chunk, dict) and "usage" in chunk:
+                        total_tokens = chunk["usage"].get("completion_tokens", 0)
+
                     yield f"data: {json.dumps(chunk)}\n\n"
-                
+
                 # Record request in carbon tracker
                 try:
                     from model_garden.carbon import get_inference_tracker
+
                     tracker = get_inference_tracker()
                     if tracker:
                         tracker.record_request(tokens_generated=total_tokens)
                 except Exception:
                     pass  # Silently ignore tracking errors
-                
+
                 yield "data: [DONE]\n\n"
-            
+
             return StreamingResponse(generate_stream(), media_type="text/event-stream")
         else:
             # Complete response - track emissions for THIS request using delta measurement
@@ -3152,42 +3288,54 @@ async def chat_completions(request: ChatCompletionRequest):
             before_emissions = None
             request_start_time = None
             session_tracker = None
-            
+
             try:
                 # Get emissions snapshot BEFORE request
-                from model_garden.carbon import get_inference_tracker
                 import time
-                
+
+                from model_garden.carbon import get_inference_tracker
+
                 session_tracker = get_inference_tracker()
                 if session_tracker:
                     before_emissions = session_tracker.get_request_emissions()
                     request_start_time = time.time()
             except Exception as e:
                 print(f"Warning: Could not capture before emissions: {e}")
-            
+
             # Execute the request
             response = await service.chat_completion(**gen_params)
-            
+
             # Calculate per-request emissions using delta
             try:
                 import time
+
                 if session_tracker and before_emissions:
                     # Get emissions snapshot AFTER request
                     after_emissions = session_tracker.get_request_emissions()
                     request_duration = time.time() - request_start_time if request_start_time else 0
-                    
+
                     if after_emissions:
                         # Calculate delta (this request only)
-                        delta_emissions_kg = after_emissions.get('emissions_kg_co2', 0.0) - before_emissions.get('emissions_kg_co2', 0.0)
-                        delta_energy_kwh = after_emissions.get('energy_consumed_kwh', 0.0) - before_emissions.get('energy_consumed_kwh', 0.0)
-                        delta_cpu_kwh = after_emissions.get('cpu_energy_kwh', 0.0) - before_emissions.get('cpu_energy_kwh', 0.0)
-                        delta_gpu_kwh = after_emissions.get('gpu_energy_kwh', 0.0) - before_emissions.get('gpu_energy_kwh', 0.0)
-                        delta_ram_kwh = after_emissions.get('ram_energy_kwh', 0.0) - before_emissions.get('ram_energy_kwh', 0.0)
-                        
+                        delta_emissions_kg = after_emissions.get(
+                            "emissions_kg_co2", 0.0
+                        ) - before_emissions.get("emissions_kg_co2", 0.0)
+                        delta_energy_kwh = after_emissions.get(
+                            "energy_consumed_kwh", 0.0
+                        ) - before_emissions.get("energy_consumed_kwh", 0.0)
+                        delta_cpu_kwh = after_emissions.get(
+                            "cpu_energy_kwh", 0.0
+                        ) - before_emissions.get("cpu_energy_kwh", 0.0)
+                        delta_gpu_kwh = after_emissions.get(
+                            "gpu_energy_kwh", 0.0
+                        ) - before_emissions.get("gpu_energy_kwh", 0.0)
+                        delta_ram_kwh = after_emissions.get(
+                            "ram_energy_kwh", 0.0
+                        ) - before_emissions.get("ram_energy_kwh", 0.0)
+
                         tokens = 0
-                        if isinstance(response, dict) and 'usage' in response:
-                            tokens = response['usage'].get('completion_tokens', 0)
-                        
+                        if isinstance(response, dict) and "usage" in response:
+                            tokens = response["usage"].get("completion_tokens", 0)
+
                         carbon_data = {
                             "emissions_g_co2": delta_emissions_kg * 1000,
                             "energy_consumed_wh": delta_energy_kwh * 1000,
@@ -3195,39 +3343,41 @@ async def chat_completions(request: ChatCompletionRequest):
                             "gpu_energy_wh": delta_gpu_kwh * 1000,
                             "ram_energy_wh": delta_ram_kwh * 1000,
                             "duration_seconds": request_duration,
-                            "cpu_power_watts": after_emissions.get('cpu_power_watts', 0.0),
-                            "gpu_power_watts": after_emissions.get('gpu_power_watts', 0.0),
-                            "ram_power_watts": after_emissions.get('ram_power_watts', 0.0),
+                            "cpu_power_watts": after_emissions.get("cpu_power_watts", 0.0),
+                            "gpu_power_watts": after_emissions.get("gpu_power_watts", 0.0),
+                            "ram_power_watts": after_emissions.get("ram_power_watts", 0.0),
                             "completion_tokens": tokens,
                             "measured": True,
                             "tracking_active": True,
                         }
-                        
+
                         # Update session tracker for aggregate stats
                         session_tracker.record_request(tokens_generated=tokens)
                         stats = session_tracker.get_current_stats()
                         if stats:
-                            carbon_data["session_total_kg_co2"] = stats.get('emissions_kg_co2', 0.0)
-                            carbon_data["session_requests"] = stats.get('request_count', 0)
-                            carbon_data["session_tokens"] = stats.get('total_tokens', 0)
+                            carbon_data["session_total_kg_co2"] = stats.get("emissions_kg_co2", 0.0)
+                            carbon_data["session_requests"] = stats.get("request_count", 0)
+                            carbon_data["session_tokens"] = stats.get("total_tokens", 0)
             except Exception as e:
                 print(f"Warning: Could not finalize carbon tracking: {e}")
                 import traceback
+
                 traceback.print_exc()
-            
+
             # Add carbon data to response if available
             if carbon_data and isinstance(response, dict):
-                response['x_carbon_trace'] = carbon_data
-            
+                response["x_carbon_trace"] = carbon_data
+
             return response
-            
+
     except Exception as e:
         import traceback
+
         print(f"❌ Chat completion error: {str(e)}")
         print(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Chat completion failed: {str(e)}"
+            detail=f"Chat completion failed: {str(e)}",
         )
 
 
@@ -3242,30 +3392,30 @@ async def openai_chat_completions(request: ChatCompletionRequest):
 # ============================================================================
 # Dataset endpoints
 # ============================================================================
-from fastapi import UploadFile, File
-import json
 import pandas as pd
+from fastapi import File, UploadFile
+
 
 @app.get("/api/v1/datasets")
 async def list_datasets():
     """List all available datasets."""
     datasets_dir = Path("./storage/datasets")
     datasets_dir.mkdir(parents=True, exist_ok=True)
-    
+
     datasets = []
     for dataset_file in datasets_dir.iterdir():
         if dataset_file.is_file():
             # Get file stats
             stat = dataset_file.stat()
-            
+
             # Try to count examples
             example_count = 0
             try:
                 if dataset_file.suffix == ".jsonl":
-                    with open(dataset_file, "r") as f:
+                    with open(dataset_file) as f:
                         example_count = sum(1 for _ in f)
                 elif dataset_file.suffix == ".json":
-                    with open(dataset_file, "r") as f:
+                    with open(dataset_file) as f:
                         data = json.load(f)
                         example_count = len(data) if isinstance(data, list) else 1
                 elif dataset_file.suffix == ".csv":
@@ -3276,20 +3426,22 @@ async def list_datasets():
                     example_count = len(df)
             except Exception as e:
                 print(f"Warning: Could not count examples in {dataset_file.name}: {e}")
-            
-            datasets.append({
-                "name": dataset_file.name,
-                "path": str(dataset_file),
-                "size": stat.st_size,
-                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat() + "Z",
-                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z",
-                "format": dataset_file.suffix.lstrip('.'),
-                "examples": example_count,
-            })
-    
+
+            datasets.append(
+                {
+                    "name": dataset_file.name,
+                    "path": str(dataset_file),
+                    "size": stat.st_size,
+                    "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat() + "Z",
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z",
+                    "format": dataset_file.suffix.lstrip("."),
+                    "examples": example_count,
+                }
+            )
+
     # Sort by modified date (newest first)
     datasets.sort(key=lambda x: x["modified_at"], reverse=True)
-    
+
     return {"datasets": datasets}
 
 
@@ -3297,49 +3449,45 @@ async def list_datasets():
 async def upload_dataset(file: UploadFile = File(...)):
     """Upload a dataset file."""
     from model_garden.dataset_validator import DatasetValidator
-    
+
     datasets_dir = Path("./storage/datasets")
     datasets_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Validate file extension
     allowed_extensions = [".json", ".jsonl", ".csv", ".txt", ".parquet"]
-    
+
     if not file.filename:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File must have a name"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must have a name")
+
     file_ext = Path(file.filename).suffix.lower()
-    
+
     if file_ext not in allowed_extensions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file format. Allowed formats: {', '.join(allowed_extensions)}"
+            detail=f"Invalid file format. Allowed formats: {', '.join(allowed_extensions)}",
         )
-    
+
     # Save file
     file_path = datasets_dir / file.filename
-    
+
     # Check if file already exists
     if file_path.exists():
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Dataset {file.filename} already exists"
+            status_code=status.HTTP_409_CONFLICT, detail=f"Dataset {file.filename} already exists"
         )
-    
+
     try:
         # Write file in chunks
         with open(file_path, "wb") as f:
             while chunk := await file.read(8192):  # Read 8KB at a time
                 f.write(chunk)
-        
+
         # Validate dataset with new validator
         validation_stats = None
         if file_ext in [".json", ".jsonl", ".csv"]:
             try:
                 validation_stats = DatasetValidator.validate_dataset(file_path)
-                
+
                 # If there are critical errors, delete the file and fail
                 if validation_stats.validation_errors:
                     file_path.unlink()
@@ -3348,17 +3496,17 @@ async def upload_dataset(file: UploadFile = File(...)):
                         detail={
                             "message": "Dataset validation failed",
                             "errors": validation_stats.validation_errors,
-                            "warnings": validation_stats.warnings
-                        }
+                            "warnings": validation_stats.warnings,
+                        },
                     )
             except HTTPException:
                 raise
             except Exception as e:
                 print(f"Warning: Dataset validation failed: {e}")
-        
+
         # Get file stats
         stat = file_path.stat()
-        
+
         # Use validation stats if available, otherwise fallback to old counting
         example_count = 0
         if validation_stats:
@@ -3366,23 +3514,25 @@ async def upload_dataset(file: UploadFile = File(...)):
         else:
             try:
                 if file_ext == ".jsonl":
-                    with open(file_path, "r") as f:
+                    with open(file_path) as f:
                         example_count = sum(1 for _ in f)
                 elif file_ext == ".json":
-                    with open(file_path, "r") as f:
+                    with open(file_path) as f:
                         data = json.load(f)
                         example_count = len(data) if isinstance(data, list) else 1
                 elif file_ext == ".csv":
                     import pandas as pd
+
                     df = pd.read_csv(file_path)
                     example_count = len(df)
                 elif file_ext == ".parquet":
                     import pandas as pd
+
                     df = pd.read_parquet(file_path)
                     example_count = len(df)
             except Exception as e:
                 print(f"Warning: Could not count examples: {e}")
-        
+
         response_data = {
             "success": True,
             "message": f"Dataset {file.filename} uploaded successfully",
@@ -3390,15 +3540,17 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "name": file.filename,
                 "path": str(file_path),
                 "size": stat.st_size,
-                "format": file_ext.lstrip('.'),
+                "format": file_ext.lstrip("."),
                 "examples": example_count,
-            }
+            },
         }
-        
+
         # Add validation details if available
         if validation_stats:
             response_data["validation"] = {
-                "schema_type": DatasetValidator.detect_schema_type(validation_stats.sample_rows) if validation_stats.sample_rows else "unknown",
+                "schema_type": DatasetValidator.detect_schema_type(validation_stats.sample_rows)
+                if validation_stats.sample_rows
+                else "unknown",
                 "fields": validation_stats.fields,
                 "warnings": validation_stats.warnings,
                 "has_images": validation_stats.has_images,
@@ -3407,19 +3559,19 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "avg_output_length": validation_stats.avg_output_length,
                 "total_tokens_estimate": validation_stats.total_tokens_estimate,
             }
-        
+
         return response_data
-        
+
     except HTTPException:
         raise
     except Exception as e:
         # Clean up on error
         if file_path.exists():
             file_path.unlink()
-        
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload dataset: {str(e)}"
+            detail=f"Failed to upload dataset: {str(e)}",
         )
 
 
@@ -3427,19 +3579,18 @@ async def upload_dataset(file: UploadFile = File(...)):
 async def get_dataset_stats(dataset_name: str):
     """Get detailed statistics for a dataset."""
     from model_garden.dataset_validator import DatasetValidator
-    
+
     datasets_dir = Path("./storage/datasets")
     file_path = datasets_dir / dataset_name
-    
+
     if not file_path.exists():
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Dataset {dataset_name} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Dataset {dataset_name} not found"
         )
-    
+
     try:
         stats = DatasetValidator.validate_dataset(file_path)
-        
+
         return {
             "name": dataset_name,
             "total_rows": stats.total_rows,
@@ -3451,22 +3602,28 @@ async def get_dataset_stats(dataset_name: str):
             "validation_errors": stats.validation_errors,
             "warnings": stats.warnings,
             "sample_rows": stats.sample_rows,
-            "schema_type": DatasetValidator.detect_schema_type(stats.sample_rows) if stats.sample_rows else "unknown",
+            "schema_type": DatasetValidator.detect_schema_type(stats.sample_rows)
+            if stats.sample_rows
+            else "unknown",
             "text_stats": {
                 "avg_input_length": stats.avg_input_length,
                 "avg_output_length": stats.avg_output_length,
                 "total_tokens_estimate": stats.total_tokens_estimate,
-            } if stats.avg_input_length is not None else None,
+            }
+            if stats.avg_input_length is not None
+            else None,
             "vision_stats": {
                 "has_images": stats.has_images,
                 "image_count": stats.image_count,
                 "sample_image_paths": stats.image_paths,
-            } if stats.has_images else None,
+            }
+            if stats.has_images
+            else None,
         }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to analyze dataset: {str(e)}"
+            detail=f"Failed to analyze dataset: {str(e)}",
         )
 
 
@@ -3475,19 +3632,18 @@ async def preview_dataset(dataset_name: str, limit: int = 10):
     """Preview samples from a dataset."""
     datasets_dir = Path("./storage/datasets")
     file_path = datasets_dir / dataset_name
-    
+
     if not file_path.exists():
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Dataset {dataset_name} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Dataset {dataset_name} not found"
         )
-    
+
     try:
         samples = []
         file_ext = file_path.suffix.lower()
-        
+
         if file_ext == ".jsonl":
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 for i, line in enumerate(f):
                     if i >= limit:
                         break
@@ -3495,42 +3651,41 @@ async def preview_dataset(dataset_name: str, limit: int = 10):
                         samples.append(json.loads(line))
                     except json.JSONDecodeError:
                         samples.append({"_error": "Invalid JSON", "_raw": line})
-        
+
         elif file_ext == ".json":
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     samples = data[:limit]
                 else:
                     samples = [data]
-        
+
         elif file_ext == ".csv":
             df = pd.read_csv(file_path, nrows=limit)
-            samples = df.to_dict('records')
-        
+            samples = df.to_dict("records")
+
         elif file_ext == ".parquet":
             df = pd.read_parquet(file_path)
-            samples = df.head(limit).to_dict('records')
-        
+            samples = df.head(limit).to_dict("records")
+
         elif file_ext == ".txt":
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 for i, line in enumerate(f):
                     if i >= limit:
                         break
                     samples.append({"text": line.strip()})
-        
+
         else:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot preview {file_ext} files"
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot preview {file_ext} files"
             )
-        
+
         return {"samples": samples, "count": len(samples)}
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to preview dataset: {str(e)}"
+            detail=f"Failed to preview dataset: {str(e)}",
         )
 
 
@@ -3539,23 +3694,19 @@ async def delete_dataset(dataset_name: str):
     """Delete a dataset."""
     datasets_dir = Path("./storage/datasets")
     file_path = datasets_dir / dataset_name
-    
+
     if not file_path.exists():
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Dataset {dataset_name} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Dataset {dataset_name} not found"
         )
-    
+
     try:
         file_path.unlink()
-        return {
-            "success": True,
-            "message": f"Dataset {dataset_name} deleted successfully"
-        }
+        return {"success": True, "message": f"Dataset {dataset_name} deleted successfully"}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete dataset: {str(e)}"
+            detail=f"Failed to delete dataset: {str(e)}",
         )
 
 
@@ -3563,54 +3714,54 @@ async def delete_dataset(dataset_name: str):
 async def load_dataset_from_hub(request: dict):
     """Load a dataset from HuggingFace Hub."""
     try:
-        from datasets import load_dataset
         import json
-        
+
+        from datasets import load_dataset
+
         dataset_id = request.get("dataset_id")
         split = request.get("split", "train")
-        
+
         if not dataset_id:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="dataset_id is required"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="dataset_id is required"
             )
-        
+
         print(f"📥 Loading dataset {dataset_id} from HuggingFace Hub...")
-        
+
         # Load dataset from Hub
         dataset = load_dataset(dataset_id, split=split)
-        
+
         # Save to storage
         datasets_dir = Path("./storage/datasets")
         datasets_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create a safe filename from dataset_id
         safe_name = dataset_id.replace("/", "_") + ".jsonl"
         output_path = datasets_dir / safe_name
-        
+
         # Convert to JSONL format and count examples
         example_count = 0
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             for item in dataset:
-                f.write(json.dumps(item) + '\n')
+                f.write(json.dumps(item) + "\n")
                 example_count += 1
-        
+
         print(f"✓ Dataset saved to {output_path}")
         print(f"✓ Total examples: {example_count}")
-        
+
         return {
             "success": True,
             "message": f"Dataset {dataset_id} loaded successfully",
             "dataset_name": safe_name,
             "examples": example_count,
-            "path": str(output_path)
+            "path": str(output_path),
         }
-        
+
     except Exception as e:
         print(f"✗ Failed to load dataset: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to load dataset from Hub: {str(e)}"
+            detail=f"Failed to load dataset from Hub: {str(e)}",
         )
 
 
@@ -3620,14 +3771,12 @@ async def load_dataset_from_hub(request: dict):
 
 from model_garden.carbon import get_emissions_db
 
+
 @app.get("/api/v1/carbon/emissions")
-async def list_emissions(
-    job_type: Optional[str] = None,
-    limit: Optional[int] = None
-):
+async def list_emissions(job_type: str | None = None, limit: int | None = None):
     """
     List all carbon emissions records.
-    
+
     Args:
         job_type: Filter by job type ('training', 'inference', or None for all)
         limit: Maximum number of records to return
@@ -3636,7 +3785,7 @@ async def list_emissions(
         # Get emissions from persistent database
         db = get_emissions_db()
         emissions_records = db.get_all_emissions(job_type=job_type, limit=limit)
-        
+
         # Convert to API format (matching frontend expectations)
         formatted_emissions = []
         for record in emissions_records:
@@ -3644,39 +3793,42 @@ async def list_emissions(
             job_name = record.get("job_id", "Unknown")
             if record["job_id"] in training_jobs:
                 job_name = training_jobs[record["job_id"]].get("name", job_name)
-            
+
             # Get model name
             model_name = record.get("model_name", "Unknown")
             if not model_name or model_name == "Unknown":
                 if record["job_id"] in training_jobs:
                     model_name = training_jobs[record["job_id"]].get("base_model", "Unknown")
-            
-            formatted_emissions.append({
-                "id": f"emission-{record['job_id']}",
-                "job_id": record["job_id"],
-                "job_name": job_name,
-                "stage": record.get("job_type", "training"),  # 'training' or 'inference'
-                "model_name": model_name,
-                "timestamp": record.get("timestamp", ""),
-                "duration": record.get("duration_seconds", 0.0),
-                "energy_consumed": record.get("energy_consumed_kwh", 0.0),
-                "emissions_kg": record.get("emissions_kg_co2", 0.0),
-                "emissions_rate": record.get("emissions_rate_kg_per_sec", 0.0),
-                "cpu_energy": record.get("cpu_energy_kwh", 0.0),
-                "gpu_energy": record.get("gpu_energy_kwh", 0.0),
-                "ram_energy": record.get("ram_energy_kwh", 0.0),
-                "carbon_intensity": record.get("carbon_intensity_g_per_kwh", 0.0),
-                "country": record.get("country_name", "Unknown"),
-                "region": record.get("region", "Unknown"),
-                "equivalents": record.get("equivalents", {}),
-                "boamps_report": True  # Indicate BoAmps report is available
-            })
-        
+
+            formatted_emissions.append(
+                {
+                    "id": f"emission-{record['job_id']}",
+                    "job_id": record["job_id"],
+                    "job_name": job_name,
+                    "stage": record.get("job_type", "training"),  # 'training' or 'inference'
+                    "model_name": model_name,
+                    "timestamp": record.get("timestamp", ""),
+                    "duration": record.get("duration_seconds", 0.0),
+                    "energy_consumed": record.get("energy_consumed_kwh", 0.0),
+                    "emissions_kg": record.get("emissions_kg_co2", 0.0),
+                    "emissions_rate": record.get("emissions_rate_kg_per_sec", 0.0),
+                    "cpu_energy": record.get("cpu_energy_kwh", 0.0),
+                    "gpu_energy": record.get("gpu_energy_kwh", 0.0),
+                    "ram_energy": record.get("ram_energy_kwh", 0.0),
+                    "carbon_intensity": record.get("carbon_intensity_g_per_kwh", 0.0),
+                    "country": record.get("country_name", "Unknown"),
+                    "region": record.get("region", "Unknown"),
+                    "equivalents": record.get("equivalents", {}),
+                    "boamps_report": True,  # Indicate BoAmps report is available
+                }
+            )
+
         return {"emissions": formatted_emissions, "count": len(formatted_emissions)}
-        
+
     except Exception as e:
         # Fallback to empty list if there's an error
         import logging
+
         logging.warning(f"Could not load emissions data: {e}")
         return {"emissions": [], "count": 0}
 
@@ -3690,6 +3842,7 @@ async def get_emissions_summary_endpoint():
         return summary
     except Exception as e:
         import logging
+
         logging.warning(f"Could not load emissions summary: {e}")
         return {
             "total_emissions_kg_co2": 0.0,
@@ -3697,7 +3850,7 @@ async def get_emissions_summary_endpoint():
             "total_duration_seconds": 0.0,
             "total_count": 0,
             "by_type": {},
-            "equivalents": {}
+            "equivalents": {},
         }
 
 
@@ -3706,42 +3859,37 @@ async def get_inference_stats():
     """Get current inference carbon tracking statistics."""
     try:
         from model_garden.carbon import get_inference_tracker
+
         tracker = get_inference_tracker()
-        
+
         if tracker:
             stats = tracker.get_current_stats()
-            return {
-                "tracking": True,
-                **stats
-            }
+            return {"tracking": True, **stats}
         else:
             return {
                 "tracking": False,
-                "message": "No inference tracking active. Load a model to start tracking."
+                "message": "No inference tracking active. Load a model to start tracking.",
             }
     except Exception as e:
-        return {
-            "tracking": False,
-            "error": str(e)
-        }
+        return {"tracking": False, "error": str(e)}
 
 
 @app.get("/api/v1/carbon/boamps/{job_id}")
 async def get_boamps_report(job_id: str):
     """Get BoAmps report for a specific job."""
     try:
-        from model_garden.carbon import get_emissions_db, get_boamps_generator
-        
+        from model_garden.carbon import get_boamps_generator, get_emissions_db
+
         # Get emissions data from database
         db = get_emissions_db()
         emission_data = db.get_emission(job_id)
-        
+
         if not emission_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No emissions data found for job {job_id}"
+                detail=f"No emissions data found for job {job_id}",
             )
-        
+
         # Get job config if available
         job_config = {}
         if job_id in training_jobs:
@@ -3750,26 +3898,24 @@ async def get_boamps_report(job_id: str):
                 "base_model": job.get("base_model"),
                 "dataset_path": job.get("dataset_path"),
                 "hyperparameters": job.get("hyperparameters"),
-                "lora_config": job.get("lora_config")
+                "lora_config": job.get("lora_config"),
             }
-        
+
         # Generate BoAmps report
         generator = get_boamps_generator()
         report = generator.generate_report(
-            emissions_data=emission_data,
-            job_config=job_config,
-            report_status="final"
+            emissions_data=emission_data, job_config=job_config, report_status="final"
         )
-        
+
         return report
-        
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"Error generating BoAmps report: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate BoAmps report: {str(e)}"
+            detail=f"Failed to generate BoAmps report: {str(e)}",
         )
 
 
@@ -3781,29 +3927,30 @@ async def system_status():
     """Get system status information."""
     import psutil
     import torch
-    
+
     # GPU information with detailed metrics
     gpu_info = {}
     if torch.cuda.is_available():
         try:
             # Try to use pynvml for detailed GPU metrics
             import pynvml
+
             pynvml.nvmlInit()
-            
+
             device_count = torch.cuda.device_count()
             gpus = []
-            
+
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                
+
                 # Get GPU info
                 name = pynvml.nvmlDeviceGetName(handle)
                 if isinstance(name, bytes):
-                    name = name.decode('utf-8')
-                
+                    name = name.decode("utf-8")
+
                 # Memory info
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                
+
                 # Utilization info
                 try:
                     utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
@@ -3812,13 +3959,15 @@ async def system_status():
                 except:
                     gpu_util = None
                     mem_util = None
-                
+
                 # Temperature
                 try:
-                    temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    temperature = pynvml.nvmlDeviceGetTemperature(
+                        handle, pynvml.NVML_TEMPERATURE_GPU
+                    )
                 except:
                     temperature = None
-                
+
                 # Power usage
                 try:
                     power_usage = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0  # Convert mW to W
@@ -3826,35 +3975,41 @@ async def system_status():
                 except:
                     power_usage = None
                     power_limit = None
-                
-                gpus.append({
-                    "id": i,
-                    "name": name,
-                    "memory": {
-                        "total": mem_info.total,
-                        "used": mem_info.used,
-                        "free": mem_info.free,
-                        "used_percent": round((float(mem_info.used) / float(mem_info.total)) * 100, 1),
-                    },
-                    "utilization": {
-                        "gpu": gpu_util,
-                        "memory": mem_util,
-                    },
-                    "temperature": temperature,
-                    "power": {
-                        "usage": power_usage,
-                        "limit": power_limit,
-                    } if power_usage is not None else None,
-                })
-            
+
+                gpus.append(
+                    {
+                        "id": i,
+                        "name": name,
+                        "memory": {
+                            "total": mem_info.total,
+                            "used": mem_info.used,
+                            "free": mem_info.free,
+                            "used_percent": round(
+                                (float(mem_info.used) / float(mem_info.total)) * 100, 1
+                            ),
+                        },
+                        "utilization": {
+                            "gpu": gpu_util,
+                            "memory": mem_util,
+                        },
+                        "temperature": temperature,
+                        "power": {
+                            "usage": power_usage,
+                            "limit": power_limit,
+                        }
+                        if power_usage is not None
+                        else None,
+                    }
+                )
+
             pynvml.nvmlShutdown()
-            
+
             gpu_info = {
                 "available": True,
                 "device_count": device_count,
                 "devices": gpus,
             }
-            
+
         except Exception as e:
             # Fallback to basic torch info if pynvml fails
             print(f"Failed to get detailed GPU info: {e}")
@@ -3868,7 +4023,7 @@ async def system_status():
             }
     else:
         gpu_info = {"available": False}
-    
+
     return {
         "system": {
             "cpu_count": psutil.cpu_count(),
@@ -3888,7 +4043,9 @@ async def system_status():
         "storage": {
             "models_count": len(models_storage),
             "training_jobs_count": len(training_jobs),
-            "active_jobs": len([j for j in training_jobs.values() if j["status"] in ["running", "queued"]]),
+            "active_jobs": len(
+                [j for j in training_jobs.values() if j["status"] in ["running", "queued"]]
+            ),
         },
     }
 
@@ -3896,57 +4053,58 @@ async def system_status():
 @app.post("/api/v1/system/cleanup")
 async def cleanup_gpu_memory():
     """Force cleanup of GPU memory and Python garbage collection.
-    
+
     This endpoint is useful when GPU memory isn't properly released
     after model operations. It performs:
     - Garbage collection
     - CUDA cache clearing
     - Memory synchronization
-    
+
     Note: This doesn't unload models, use /inference/unload for that.
     """
     import gc
-    
+
     result = {
         "success": True,
         "actions": [],
         "gpu_memory_before": None,
         "gpu_memory_after": None,
     }
-    
+
     try:
         # Get initial GPU memory if available
         import torch
+
         mem_before = 0.0  # Initialize to avoid unbound variable
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-            mem_before = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+            mem_before = torch.cuda.memory_allocated() / (1024**3)  # GB
             result["gpu_memory_before"] = f"{mem_before:.2f} GB"
-        
+
         # Force garbage collection
         collected = gc.collect()
         result["actions"].append(f"Garbage collection: {collected} objects collected")
-        
+
         # Clear CUDA cache
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
             result["actions"].append("CUDA cache cleared")
-            
+
             # Get final GPU memory
-            mem_after = torch.cuda.memory_allocated() / (1024 ** 3)  # GB
+            mem_after = torch.cuda.memory_allocated() / (1024**3)  # GB
             result["gpu_memory_after"] = f"{mem_after:.2f} GB"
             result["actions"].append(f"Freed: {mem_before - mem_after:.2f} GB")
         else:
             result["actions"].append("CUDA not available")
-        
+
         result["message"] = "GPU memory cleanup completed"
-        
+
     except Exception as e:
         result["success"] = False
         result["message"] = f"Cleanup failed: {str(e)}"
         result["actions"].append(f"Error: {str(e)}")
-    
+
     return result
 
 
@@ -3954,15 +4112,17 @@ async def cleanup_gpu_memory():
 frontend_build_path = Path(__file__).parent.parent / "frontend" / "build"
 if frontend_build_path.exists():
     # Serve static assets
-    app.mount("/_app", StaticFiles(directory=str(frontend_build_path / "_app")), name="static-assets")
-    
+    app.mount(
+        "/_app", StaticFiles(directory=str(frontend_build_path / "_app")), name="static-assets"
+    )
+
     # Catch-all route for SvelteKit client-side routing (must be last!)
     from fastapi.responses import FileResponse
-    
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
         """Serve the SvelteKit SPA for all non-API routes.
-        
+
         Note: This route is defined last so API routes take priority.
         FastAPI matches routes in the order they're defined.
         """
@@ -3970,14 +4130,14 @@ if frontend_build_path.exists():
         html_file = frontend_build_path / f"{full_path}.html"
         if html_file.exists():
             return FileResponse(html_file)
-        
+
         # Check if it's a directory with an index.html
         dir_path = frontend_build_path / full_path
         if dir_path.is_dir():
             index_file = dir_path / "index.html"
             if index_file.exists():
                 return FileResponse(index_file)
-        
+
         # Fallback to main index.html for client-side routing
         return FileResponse(frontend_build_path / "index.html")
 else:
@@ -3986,4 +4146,5 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

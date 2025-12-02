@@ -9,20 +9,19 @@ import asyncio
 import logging
 import os
 import threading
-from typing import Optional
 
-from model_garden.job_queue import get_job_queue, JobType, JobStatus
+from .job_queue import JobStatus, JobType, get_job_queue
 
 logger = logging.getLogger(__name__)
 
 
 class QueueWorker:
     """Background worker that processes jobs from the queue sequentially.
-    
+
     The worker runs as an asyncio task and continuously monitors the job queue.
     When a job completes, it automatically starts the next queued job, ensuring
     only a limited number of jobs run concurrently (default: 1 for training jobs).
-    
+
     Features:
     - Sequential execution (one training job at a time by default)
     - Automatic job processing without manual intervention
@@ -30,15 +29,15 @@ class QueueWorker:
     - Configurable concurrency limits
     - Support for different job types
     """
-    
+
     def __init__(
-        self, 
+        self,
         max_concurrent_training_jobs: int = 1,
         poll_interval: float = 5.0,
-        enabled: bool = True
+        enabled: bool = True,
     ):
         """Initialize queue worker.
-        
+
         Args:
             max_concurrent_training_jobs: Maximum number of training jobs to run concurrently
             poll_interval: Seconds to wait between queue checks
@@ -48,111 +47,128 @@ class QueueWorker:
         self.poll_interval = poll_interval
         self.enabled = enabled
         self.running = False
-        self.worker_task: Optional[asyncio.Task] = None
-        
+        self.worker_task: asyncio.Task | None = None
+
         logger.info(
             f"QueueWorker initialized: max_concurrent={max_concurrent_training_jobs}, "
             f"poll_interval={poll_interval}s, enabled={enabled}"
         )
-    
+
     async def start(self):
         """Start the queue worker.
-        
+
         Creates and starts the background asyncio task that processes the queue.
         If the worker is already running or disabled, this is a no-op.
         """
         if not self.enabled:
-            logger.info("⚠️  Queue worker is disabled (set MODEL_GARDEN_QUEUE_WORKER_ENABLED=true to enable)")
-            print("⚠️  Queue worker is disabled (set MODEL_GARDEN_QUEUE_WORKER_ENABLED=true to enable)", flush=True)
+            logger.info(
+                "⚠️  Queue worker is disabled (set MODEL_GARDEN_QUEUE_WORKER_ENABLED=true to enable)"
+            )
+            print(
+                "⚠️  Queue worker is disabled (set MODEL_GARDEN_QUEUE_WORKER_ENABLED=true to enable)",
+                flush=True,
+            )
             return
-        
+
         if self.running:
             logger.warning("Queue worker already running")
             print("⚠️  Queue worker already running", flush=True)
             return
-        
+
         self.running = True
         self.worker_task = asyncio.create_task(self._worker_loop())
         logger.info("🚀 Queue worker started")
         print("🚀 Queue worker started", flush=True)
-    
+
     async def stop(self):
         """Stop the queue worker gracefully.
-        
+
         Cancels the background task and waits for it to complete. Running jobs
         will continue to completion, but no new jobs will be started.
         """
         if not self.running:
             return
-        
+
         logger.info("🛑 Stopping queue worker...")
         print("🛑 Stopping queue worker...")
         self.running = False
-        
+
         if self.worker_task:
             self.worker_task.cancel()
             try:
                 await self.worker_task
             except asyncio.CancelledError:
                 pass
-        
+
         logger.info("✓ Queue worker stopped")
         print("✓ Queue worker stopped")
-    
+
     async def _worker_loop(self):
         """Main worker loop that processes queued jobs.
-        
+
         This loop continuously:
         1. Checks how many training jobs are currently running
         2. Detects and cleans up orphaned jobs (jobs in queue but not in training database)
         3. If under the limit, gets the next queued job
         4. Starts the job in a background thread
         5. Waits before checking again
-        
+
         The loop runs until stop() is called.
         """
         queue = get_job_queue()
         logger.info("🔄 Queue worker loop started")
         print("🔄 Queue worker loop started", flush=True)
-        
+
         while self.running:
             try:
                 # Check if we can start a new training job
                 running_jobs = await queue.list_jobs(
-                    status=JobStatus.RUNNING, 
-                    job_type=JobType.TRAINING.value
+                    status=JobStatus.RUNNING, job_type=JobType.TRAINING.value
                 )
-                
+
                 # Detect orphaned jobs (exist in queue but not in training database)
                 # Import here to avoid circular dependency
                 from model_garden.api import training_jobs
-                
+
                 for running_job in running_jobs:
                     job_id = running_job["job_id"]
                     if job_id not in training_jobs:
                         # Job was deleted from training database but still marked as running in queue
-                        logger.warning(f"⚠️  Detected orphaned job in queue: {job_id} - marking as cancelled")
-                        print(f"⚠️  Detected orphaned job in queue: {job_id} - marking as cancelled", flush=True)
+                        logger.warning(
+                            f"⚠️  Detected orphaned job in queue: {job_id} - marking as cancelled"
+                        )
+                        print(
+                            f"⚠️  Detected orphaned job in queue: {job_id} - marking as cancelled",
+                            flush=True,
+                        )
                         await queue.cancel_job(job_id)
-                    elif training_jobs[job_id].get("status") in ["completed", "failed", "cancelled"]:
+                    elif training_jobs[job_id].get("status") in [
+                        "completed",
+                        "failed",
+                        "cancelled",
+                    ]:
                         # Job finished but queue wasn't updated
                         final_status = training_jobs[job_id]["status"]
-                        logger.warning(f"⚠️  Job {job_id} is {final_status} but queue shows running - updating queue")
-                        print(f"⚠️  Job {job_id} is {final_status} but queue shows running - updating queue", flush=True)
+                        logger.warning(
+                            f"⚠️  Job {job_id} is {final_status} but queue shows running - updating queue"
+                        )
+                        print(
+                            f"⚠️  Job {job_id} is {final_status} but queue shows running - updating queue",
+                            flush=True,
+                        )
                         if final_status == "completed":
                             await queue.complete_job(job_id, result={"auto_synced": True})
                         elif final_status == "failed":
                             await queue.fail_job(job_id, error="Auto-synced from training database")
                         else:  # cancelled
                             await queue.cancel_job(job_id)
-                
+
                 # Refresh running jobs list after cleanup
                 running_jobs = await queue.list_jobs(
-                    status=JobStatus.RUNNING, 
-                    job_type=JobType.TRAINING.value
+                    status=JobStatus.RUNNING, job_type=JobType.TRAINING.value
                 )
                 running_count = len(running_jobs)
-                
+
                 if running_count >= self.max_concurrent:
                     # Wait for current jobs to complete
                     if running_count > 0:
@@ -162,39 +178,39 @@ class QueueWorker:
                         )
                     await asyncio.sleep(self.poll_interval)
                     continue
-                
+
                 # Get next queued training job
                 next_job = await queue.get_next_job_by_type(JobType.TRAINING)
-                
+
                 if next_job is None:
                     # No jobs in queue, wait
                     logger.debug("Queue worker: No jobs in queue")
                     await asyncio.sleep(self.poll_interval)
                     continue
-                
+
                 # Start the job
                 job_id = next_job["job_id"]
                 job_name = next_job.get("job_config", {}).get("name", "Unnamed Job")
                 logger.info(f"🎯 Queue worker starting job: {job_id} ({job_name})")
                 print(f"🎯 Queue worker starting job: {job_id} ({job_name})")
-                
+
                 # Import here to avoid circular dependency
                 from model_garden.api import run_training_job
-                
+
                 # Run in a separate daemon thread to avoid blocking the worker
                 # The thread will execute the training job independently
                 thread = threading.Thread(
-                    target=run_training_job, 
+                    target=run_training_job,
                     args=(job_id,),
                     daemon=True,
-                    name=f"training-job-{job_id}"
+                    name=f"training-job-{job_id}",
                 )
                 thread.start()
-                
+
                 # Wait a bit before checking queue again to allow job to transition
                 # from QUEUED to RUNNING in the job execution code
                 await asyncio.sleep(2)
-                
+
             except asyncio.CancelledError:
                 # Worker is being stopped
                 logger.info("Queue worker loop cancelled")
@@ -203,19 +219,19 @@ class QueueWorker:
                 logger.error(f"❌ Queue worker error: {e}", exc_info=True)
                 # Wait before retrying to avoid tight error loop
                 await asyncio.sleep(self.poll_interval)
-        
+
         logger.info("Queue worker loop exited")
 
 
 # Global worker instance
-_queue_worker: Optional[QueueWorker] = None
+_queue_worker: QueueWorker | None = None
 
 
 def get_queue_worker() -> QueueWorker:
     """Get the global queue worker instance.
-    
+
     Creates the worker on first access with configuration from environment variables.
-    
+
     Returns:
         The global QueueWorker instance
     """
@@ -225,10 +241,10 @@ def get_queue_worker() -> QueueWorker:
         max_concurrent = int(os.getenv("MODEL_GARDEN_MAX_CONCURRENT_TRAINING_JOBS", "1"))
         poll_interval = float(os.getenv("MODEL_GARDEN_QUEUE_POLL_INTERVAL", "5.0"))
         enabled = os.getenv("MODEL_GARDEN_QUEUE_WORKER_ENABLED", "true").lower() == "true"
-        
+
         _queue_worker = QueueWorker(
             max_concurrent_training_jobs=max_concurrent,
             poll_interval=poll_interval,
-            enabled=enabled
+            enabled=enabled,
         )
     return _queue_worker
