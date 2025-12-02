@@ -24,7 +24,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from model_garden.job_queue import JobStatus, get_job_queue
+from model_garden.queue import JobStatus, get_job_queue
 
 # Load environment variables from .env file FIRST
 load_dotenv()
@@ -54,7 +54,7 @@ from pydantic import BaseModel
 # fork warnings when using background tasks. Import lazily in functions that need it.
 # from transformers import TrainerCallback  # REMOVED - now lazy-loaded
 # Memory management utilities
-from model_garden.memory_management import cleanup_training_resources
+from model_garden.utils.memory import cleanup_training_resources
 
 # Don't import training modules at module level - they import unsloth which spawns workers!
 # Import them lazily in the functions that need them (run_training_job)
@@ -691,7 +691,7 @@ async def run_model_loading(
 ):
     """Execute model loading in the background."""
     from model_garden.inference import InferenceService, set_inference_service
-    from model_garden.job_queue import get_job_queue
+    from model_garden.queue import get_job_queue
 
     queue = get_job_queue()
 
@@ -864,7 +864,7 @@ def run_training_job(job_id: str):
 
         if is_vision:
             # Use create_vision_trainer with backend support
-            from model_garden.vision_training import create_vision_trainer
+            from model_garden.training import create_vision_trainer
 
             print(f"🎨 Using VisionLanguageTrainer for {job['base_model']}")
 
@@ -1387,7 +1387,7 @@ async def lifespan(app: FastAPI):
 
     # Start queue worker for autonomous job processing
     print("🔧 Initializing queue worker...", flush=True)
-    from model_garden.queue_worker import get_queue_worker
+    from model_garden.queue import get_queue_worker
 
     worker = get_queue_worker()
     print(
@@ -1468,7 +1468,7 @@ async def lifespan(app: FastAPI):
     print("🌱 Model Garden API shutting down...")
 
     # Stop queue worker
-    from model_garden.queue_worker import get_queue_worker
+    from model_garden.queue import get_queue_worker
 
     worker = get_queue_worker()
     await worker.stop()
@@ -2797,8 +2797,8 @@ async def load_inference_model(request: LoadModelRequest, background_tasks: Back
     from model_garden.inference import (
         get_inference_service,
     )
-    from model_garden.job_queue import JobType, get_job_queue
     from model_garden.model_registry import get_model
+    from model_garden.queue import JobType, get_job_queue
 
     queue = get_job_queue()
 
@@ -2992,7 +2992,7 @@ async def unload_inference_model():
 async def get_inference_status():
     """Get inference service status including queue information."""
     from model_garden.inference import get_inference_service
-    from model_garden.job_queue import JobType, get_job_queue
+    from model_garden.queue import JobType, get_job_queue
 
     queue = get_job_queue()
 
@@ -3039,7 +3039,7 @@ async def get_inference_status():
 @app.get("/api/v1/inference/queue")
 async def get_model_loading_queue():
     """Get model loading queue status."""
-    from model_garden.job_queue import JobStatus, JobType, get_job_queue
+    from model_garden.queue import JobStatus, JobType, get_job_queue
 
     queue = get_job_queue()
 
@@ -3448,7 +3448,7 @@ async def list_datasets():
 @app.post("/api/v1/datasets/upload")
 async def upload_dataset(file: UploadFile = File(...)):
     """Upload a dataset file."""
-    from model_garden.dataset_validator import DatasetValidator
+    from model_garden.utils import DatasetValidator
 
     datasets_dir = Path("./storage/datasets")
     datasets_dir.mkdir(parents=True, exist_ok=True)
@@ -3578,7 +3578,7 @@ async def upload_dataset(file: UploadFile = File(...)):
 @app.get("/api/v1/datasets/{dataset_name}/stats")
 async def get_dataset_stats(dataset_name: str):
     """Get detailed statistics for a dataset."""
-    from model_garden.dataset_validator import DatasetValidator
+    from model_garden.utils import DatasetValidator
 
     datasets_dir = Path("./storage/datasets")
     file_path = datasets_dir / dataset_name

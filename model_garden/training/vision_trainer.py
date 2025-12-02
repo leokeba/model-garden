@@ -535,7 +535,7 @@ class VisionLanguageTrainer(VisionTrainer):
         )
         return Image.new("RGB", (224, 224))
 
-    def _convert_messages_to_simple_format(self, messages: list[dict]) -> dict[str, str]:
+    def _convert_messages_to_simple_format(self, messages: list[dict]) -> dict[str, str | None]:
         """Convert OpenAI messages format to simple format.
 
         Extracts the system message, first image and text from user message, and assistant's response.
@@ -547,7 +547,7 @@ class VisionLanguageTrainer(VisionTrainer):
         Returns:
             Dict with 'text', 'image', 'response', and 'system' keys
         """
-        result = {"text": "", "image": None, "response": "", "system": ""}
+        result: dict[str, str | None] = {"text": "", "image": None, "response": "", "system": ""}
 
         for msg in messages:
             role = msg.get("role", "")
@@ -1233,7 +1233,7 @@ class VisionLanguageTrainer(VisionTrainer):
         # Choose trainer based on masking strategy
         if selective_loss and selective_loss_masking_strategy == "weighted":
             # Use WeightedLossTrainer for weighted masking
-            from model_garden.weighted_loss_trainer import WeightedLossTrainer
+            from model_garden.training.weighted_loss import WeightedLossTrainer
 
             console.print("[cyan]🎯 Using WeightedLossTrainer for weighted masking strategy[/cyan]")
 

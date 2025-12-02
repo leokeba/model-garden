@@ -12,8 +12,10 @@ Routes for inference and model serving:
 
 import json
 import re
+from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -385,16 +387,19 @@ async def generate_text(request: InferenceRequest):
         if request.stream:
 
             async def generate_stream():
-                stream = await service.generate(
-                    prompt=request.prompt,
-                    max_tokens=request.max_tokens,
-                    temperature=request.temperature,
-                    top_p=request.top_p,
-                    top_k=request.top_k,
-                    frequency_penalty=request.frequency_penalty,
-                    presence_penalty=request.presence_penalty,
-                    stop=request.stop,
-                    stream=True,
+                stream = cast(
+                    AsyncIterator[str],
+                    await service.generate(
+                        prompt=request.prompt,
+                        max_tokens=request.max_tokens,
+                        temperature=request.temperature,
+                        top_p=request.top_p,
+                        top_k=request.top_k,
+                        frequency_penalty=request.frequency_penalty,
+                        presence_penalty=request.presence_penalty,
+                        stop=request.stop,
+                        stream=True,
+                    ),
                 )
 
                 async for chunk in stream:
@@ -530,7 +535,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
             async def generate_stream():
                 total_tokens = 0
-                stream = await service.chat_completion(**gen_params)
+                stream = cast(AsyncIterator[dict], await service.chat_completion(**gen_params))
 
                 async for chunk in stream:
                     if isinstance(chunk, dict) and "usage" in chunk:
@@ -568,7 +573,7 @@ async def chat_completions(request: ChatCompletionRequest):
             except Exception:
                 pass
 
-            response = await service.chat_completion(**gen_params)
+            response = cast(dict, await service.chat_completion(**gen_params))
 
             # Calculate carbon emissions
             try:

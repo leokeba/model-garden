@@ -50,7 +50,7 @@ class TransformersTrainerMixin:
         """Get appropriate torch dtype based on hardware support."""
         return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
-    def _get_quantization_config(self) -> dict | None:
+    def _get_quantization_config(self) -> Any:
         """Get quantization configuration if needed."""
         if self.load_in_4bit:
             from transformers import BitsAndBytesConfig

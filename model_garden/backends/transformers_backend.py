@@ -6,7 +6,7 @@ Use this for maximum compatibility or when Unsloth doesn't support your model.
 
 import os
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 # Configure HuggingFace cache from environment before importing HF libraries
 from dotenv import load_dotenv
@@ -21,7 +21,6 @@ os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
 # Configure PyTorch memory allocator
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
-import torch
 from datasets import Dataset
 from peft import PeftModel
 from rich.console import Console
@@ -305,6 +304,8 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         # Create a simple data collator for vision-language models
         def collate_fn(examples):
             """Simple collator using standard Transformers processor API."""
+            assert self.processor is not None, "Processor must be loaded before training"
+
             batch_messages = []
             for example in examples:
                 messages = example.get("messages", [])
