@@ -292,6 +292,32 @@ uv run model-garden train-vision --help
 
 # Start the API server
 uv run model-garden serve --help
+
+# Carbon emissions tracking
+uv run model-garden carbon --help
+```
+
+### 🌱 Carbon Emissions CLI
+
+Track and analyze the environmental impact of your ML workloads:
+
+```bash
+# View summary of all carbon emissions
+uv run model-garden carbon summary
+
+# View recent emissions records
+uv run model-garden carbon report
+
+# View detailed report for a specific job
+uv run model-garden carbon report <job-id>
+
+# Export data in various formats
+uv run model-garden carbon export -o emissions.json
+uv run model-garden carbon export --format csv -o emissions.csv
+uv run model-garden carbon export --format boamps -o report.json
+
+# Clear old emissions data
+uv run model-garden carbon clear --older-than 30
 ```
 
 ---
@@ -392,7 +418,7 @@ pre-commit run --all-files
 
 **Current Status**: Phase 1 complete! Ready for production testing.
 
-### Phase 2: Core Features 🚧 (96% Complete!)
+### Phase 2: Core Features ✅ (Complete!)
 - [x] **vLLM inference integration with streaming**
 - [x] **OpenAI-compatible inference API endpoints**
 - [x] **CLI commands for inference (serve, generate, chat)**
@@ -408,10 +434,12 @@ pre-commit run --all-files
 - [x] **BoAmps real data integration** ✨ - Real hardware metrics in all report sections
 - [x] **Job queue for training & model loading** ✨ - Priority-based queue with API endpoints
 - [x] **Dataset validation and statistics** ✨ - Schema detection, format support, quality checks
-- [ ] **Automatic Chat Template Detection** - Use `tokenizer.apply_chat_template()` instead of hardcoding Qwen markers ([details](./CHAT_TEMPLATE_AUTOMATION.md))
-- [ ] **Carbon CLI commands** - Add `carbon report`, `carbon summary`, `carbon export` commands (deferred)
-- [ ] **Real-time training monitoring via WebSocket** - Live loss/accuracy charts
-- [ ] **Advanced carbon analytics dashboard** - Trends, comparisons, recommendations
+- [x] **Automatic Chat Template Detection** ✨ - Uses `tokenizer.apply_chat_template()` for any model
+- [x] **Real-time training monitoring via WebSocket** ✨ - Live loss/accuracy charts with reconnection
+
+### Phase 2.5: Polish & CLI Enhancement ✅ (Complete!)
+- [x] **Carbon CLI commands** ✨ - `carbon report`, `carbon summary`, `carbon export`, `carbon clear`
+- [x] **Advanced carbon analytics dashboard** ✨ - Trends, comparisons, recommendations with Chart.js visualizations
 
 ### Phase 3: Production Features 📋
 - [ ] User authentication and authorization

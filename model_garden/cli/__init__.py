@@ -5,6 +5,7 @@ This package provides the CLI commands organized into logical groups:
 - inference: Inference commands (serve-model, inference-generate, inference-chat)
 - dataset: Dataset commands (create-dataset, create-vision-dataset)
 - serve: Server commands (serve)
+- carbon: Carbon emissions commands (report, summary, export)
 """
 
 import click
@@ -50,6 +51,11 @@ main.add_command(create_vision_dataset, name="create-vision-dataset")
 from model_garden.cli.server import serve
 
 main.add_command(serve)
+
+# Carbon emissions commands
+from model_garden.cli.carbon import carbon
+
+main.add_command(carbon)
 
 # Utility commands
 from model_garden.cli.utils import generate, list_backends_cmd
