@@ -2,6 +2,8 @@
 
 These tests verify the BoAmps emissions report generator creates
 properly formatted reports compliant with the BoAmps v1.1.0 spec.
+
+BoAmps Specification: https://github.com/Boavizta/BoAmps
 """
 
 import json
@@ -71,7 +73,7 @@ class TestBoAmpsReportGenerator:
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_generate_report_structure(self, mock_hw_detector):
-        """Test that generated report has correct structure."""
+        """Test that generated report has correct structure per BoAmps spec."""
         from model_garden.carbon.boamps import BoAmpsReportGenerator
 
         mock_hw_detector.return_value = create_mock_hardware_detector()
@@ -89,7 +91,7 @@ class TestBoAmpsReportGenerator:
 
         report = generator.generate_report(emissions_data)
 
-        # Check top-level sections exist
+        # Check top-level sections exist per BoAmps spec
         assert "header" in report
         assert "task" in report
         assert "measures" in report
@@ -97,10 +99,11 @@ class TestBoAmpsReportGenerator:
         assert "system" in report
         assert "software" in report
         assert "environment" in report
+        assert "quality" in report  # BoAmps quality field
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_generate_header(self, mock_hw_detector):
-        """Test header section generation."""
+        """Test header section generation with BoAmps compliant datetime format."""
         mock_hw_detector.return_value = create_mock_hardware_detector()
 
         from model_garden.carbon.boamps import BoAmpsReportGenerator
@@ -117,10 +120,13 @@ class TestBoAmpsReportGenerator:
         assert header["licensing"] == "Creative Commons 4.0"
         assert header["formatVersion"] == "1.1.0"
         assert header["reportId"] == "job-abc"
-        assert header["reportDatetime"] == "2024-06-15T12:00:00Z"
+        # BoAmps requires YYYY-MM-DD HH:MM:SS format
+        assert header["reportDatetime"] == "2024-06-15 12:00:00"
         assert header["reportStatus"] == "draft"
         assert header["publisher"]["name"] == "Test Publisher"
         assert header["publisher"]["division"] == "Test Division"
+        # BoAmps requires formatVersionSpecificationUri
+        assert "formatVersionSpecificationUri" in header
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_generate_task_training(self, mock_hw_detector):
@@ -151,6 +157,9 @@ class TestBoAmpsReportGenerator:
         assert "taskStage" in task
         assert task["taskStage"] == "training"
         assert "algorithms" in task
+        # BoAmps uses singular "dataset" (not "datasets")
+        assert "dataset" in task
+        assert isinstance(task["dataset"], list)
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_generate_task_inference(self, mock_hw_detector):
@@ -201,6 +210,94 @@ class TestBoAmpsReportGenerator:
         assert "measurementMethod" in measure
         assert "powerConsumption" in measure
         assert "measurementDuration" in measure
+        # BoAmps requires string format for measurementDateTime
+        assert "measurementDateTime" in measure
+        assert isinstance(measure["measurementDateTime"], str)
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_infrastructure_components_have_component_type(self, mock_hw_detector):
+        """Test that infrastructure components have required componentType field."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "test-job",
+            "gpu_energy_kwh": 0.5,
+            "cpu_energy_kwh": 0.3,
+            "energy_consumed_kwh": 0.8,
+        }
+
+        report = generator.generate_report(emissions_data)
+        components = report["infrastructure"]["components"]
+
+        # Each component must have componentType (required by BoAmps schema)
+        for component in components:
+            assert "componentType" in component
+            assert component["componentType"] in ["gpu", "cpu", "ram"]
+            assert "nbComponent" in component
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_dataset_valid_enum_values(self, mock_hw_detector):
+        """Test that dataset uses valid BoAmps enum values."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "test"}
+        job_config = {
+            "dataset_path": "/data/train.jsonl",
+            "from_hub": True,
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        dataset = report["task"]["dataset"]
+
+        assert len(dataset) > 0
+        # dataUsage must be "input" or "output"
+        assert dataset[0]["dataUsage"] in ["input", "output"]
+        # dataType must be valid BoAmps enum
+        valid_data_types = [
+            "tabular",
+            "audio",
+            "boolean",
+            "image",
+            "video",
+            "object",
+            "text",
+            "token",
+            "word",
+            "other",
+        ]
+        assert dataset[0]["dataType"] in valid_data_types
+        # source must be valid BoAmps enum
+        assert dataset[0]["source"] in ["public", "private", "other"]
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_quantization_is_string(self, mock_hw_detector):
+        """Test that quantization is a string per BoAmps schema."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "test"}
+        job_config = {
+            "load_in_4bit": True,
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        algorithms = report["task"]["algorithms"]
+
+        assert len(algorithms) > 0
+        if "quantization" in algorithms[0]:
+            # BoAmps requires string like "fp32", "fp16", "int8", "q4", etc.
+            assert isinstance(algorithms[0]["quantization"], str)
 
 
 class TestBoAmpsReportValidation:
@@ -248,6 +345,24 @@ class TestBoAmpsReportValidation:
         report = generator.generate_report(emissions_data)
         assert isinstance(report, dict)
 
+        # Required BoAmps fields should still be present
+        assert "task" in report
+        assert "measures" in report
+        assert "infrastructure" in report
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_quality_field_values(self, mock_hw_detector):
+        """Test that quality field has valid BoAmps enum value."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+        report = generator.generate_report({})
+
+        # quality must be "high", "medium", or "low"
+        assert report["quality"] in ["high", "medium", "low"]
+
 
 class TestBoAmpsVersionCompliance:
     """Tests for BoAmps version compliance."""
@@ -263,3 +378,10 @@ class TestBoAmpsVersionCompliance:
         from model_garden.carbon.boamps import BoAmpsReportGenerator
 
         assert BoAmpsReportGenerator.LICENSING == "Creative Commons 4.0"
+
+    def test_spec_uri_constant(self):
+        """Test that specification URI is set."""
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        assert hasattr(BoAmpsReportGenerator, "BOAMPS_SPEC_URI")
+        assert "Boavizta/BoAmps" in BoAmpsReportGenerator.BOAMPS_SPEC_URI
