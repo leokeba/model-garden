@@ -10,7 +10,6 @@ Routes for model registry management:
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from typing import Any
 
 from model_garden.model_registry import get_registry
 

@@ -48,7 +48,7 @@ def load_image(
     image_data: Any,
     fallback_size: tuple[int, int] = (224, 224),
     convert_to_rgb: bool = True,
-) -> Image.Image:
+) -> tuple[Image.Image, bool]:
     """Load image from various sources (file path, base64, PIL Image, etc.).
 
     This function handles multiple input formats and returns a consistent
@@ -64,61 +64,85 @@ def load_image(
         convert_to_rgb: Whether to convert image to RGB format
 
     Returns:
-        PIL Image object (in RGB format if convert_to_rgb is True)
+        Tuple of (PIL Image object, success boolean)
+        - success=True: Image was loaded successfully
+        - success=False: Fallback blank image was returned
 
     Note:
         Images are loaded fully into memory (no lazy loading) to ensure
         consistent behavior across different use cases.
 
     Example:
-        >>> img = load_image("/path/to/image.jpg")
+        >>> img, success = load_image("/path/to/image.jpg")
         >>> img.mode
         'RGB'
-        >>> img = load_image("data:image/png;base64,...")
-        >>> img.size
-        (100, 100)
+        >>> img, success = load_image("data:image/png;base64,...")
+        >>> success
+        True
     """
     # Already a PIL Image
     if isinstance(image_data, Image.Image):
         if convert_to_rgb and image_data.mode != "RGB":
-            return image_data.convert("RGB")
-        return image_data
+            return image_data.convert("RGB"), True
+        return image_data, True
 
     # Check for PIL.Image subclasses (PngImageFile, JpegImageFile, etc.)
     if image_data is not None and hasattr(image_data, "mode") and hasattr(image_data, "convert"):
         # It's an image-like object
         if convert_to_rgb and image_data.mode != "RGB":
-            return image_data.convert("RGB")
-        return image_data
+            return image_data.convert("RGB"), True
+        return image_data, True
 
     # String input - could be file path or base64
     if isinstance(image_data, str):
-        # Check if it looks like base64 data
-        is_data_uri = image_str.startswith("data:image") if (image_str := image_data) else False
-        is_long_string = len(image_data) > 100 and not os.path.exists(image_data)
+        # Check if it looks like base64 data (data URI or very long string without file extension)
+        is_data_uri = image_data.startswith("data:image")
 
-        if is_data_uri or is_long_string:
-            # Looks like base64
+        # Check for file path first - it's more common and avoids false positives
+        # Try both the path as-is and with common base directories
+        if not is_data_uri:
+            # Check if file exists (absolute or relative to cwd)
+            if os.path.exists(image_data):
+                try:
+                    img = Image.open(image_data)
+                    if convert_to_rgb and img.mode != "RGB":
+                        img = img.convert("RGB")
+                    img.load()
+                    return img, True
+                except Exception:
+                    pass  # Fall through to other methods
+
+            # Try common base directories for relative paths
+            # This handles cases where the service runs from a different directory
+            common_bases = [
+                os.getcwd(),
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # model_garden root
+                "/home/leo/Dev/model-garden",  # Fallback absolute path
+            ]
+            for base in common_bases:
+                full_path = os.path.join(base, image_data)
+                if os.path.exists(full_path):
+                    try:
+                        img = Image.open(full_path)
+                        if convert_to_rgb and img.mode != "RGB":
+                            img = img.convert("RGB")
+                        img.load()
+                        return img, True
+                    except Exception:
+                        pass  # Try next base
+
+        # Try base64 decoding (for data URIs or long base64 strings)
+        if is_data_uri or len(image_data) > 200:
             try:
                 img = decode_base64_image(image_data)
                 if convert_to_rgb and img.mode != "RGB":
                     img = img.convert("RGB")
-                return img
+                return img, True
             except ValueError:
-                # Fall through to fallback
-                pass
-        elif os.path.exists(image_data):
-            # Load image from file
-            img = Image.open(image_data)
-            # Convert to RGB to ensure consistent format
-            if convert_to_rgb and img.mode != "RGB":
-                img = img.convert("RGB")
-            # Force load to ensure pixels are in memory (avoid lazy loading)
-            img.load()
-            return img
+                pass  # Fall through to fallback
 
     # Fallback: create blank image
-    return Image.new("RGB", fallback_size)
+    return Image.new("RGB", fallback_size), False
 
 
 def load_image_safe(
@@ -143,20 +167,17 @@ def load_image_safe(
         PIL Image object
     """
     # Try the standard load first
-    result = load_image(image_data, fallback_size, convert_to_rgb)
+    result, success = load_image(image_data, fallback_size, convert_to_rgb)
 
-    # Check if we got a fallback image (blank image of fallback_size)
-    if warn_on_fallback and result.size == fallback_size:
-        # Check if original was not already a valid image
-        original_is_image = isinstance(image_data, Image.Image) or (
-            hasattr(image_data, "mode") and hasattr(image_data, "convert")
+    # Warn if loading failed
+    if warn_on_fallback and not success:
+        from model_garden.utils.console import console
+
+        display_value = (
+            str(image_data)[:100] + "..." if len(str(image_data)) > 100 else str(image_data)
         )
-        if not original_is_image:
-            from model_garden.utils.console import console
-
-            console.print(
-                f"[yellow]⚠️  Unknown image format (type: {type(image_data).__name__}), "
-                f"using blank image[/yellow]"
-            )
+        console.print(
+            f"[yellow]⚠️  Could not load image: {display_value}, using blank image[/yellow]"
+        )
 
     return result

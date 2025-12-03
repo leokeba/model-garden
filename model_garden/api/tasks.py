@@ -26,6 +26,13 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def utc_now_iso() -> str:
+    """Get the current UTC time as ISO 8601 string with Z suffix."""
+    # Use replace to remove timezone info, then add Z suffix
+    # This produces: 2025-12-03T15:16:07.239014Z (valid ISO 8601)
+    return datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
+
+
 def _run_async_in_thread(coro):
     """Helper to run async code in a sync context (thread or main).
 
@@ -272,7 +279,7 @@ def create_progress_callback(job_id: str, manager: Any):
                         "current_step": current_step,
                         "total_steps": total_steps,
                         "epoch": epoch,
-                        "timestamp": utc_now().isoformat() + "Z",
+                        "timestamp": utc_now_iso(),
                     },
                 )
             )
@@ -292,7 +299,7 @@ def create_progress_callback(job_id: str, manager: Any):
 
             if logs:
                 current_step = state.global_step
-                timestamp = utc_now().isoformat() + "Z"
+                timestamp = utc_now_iso()
 
                 is_eval = any(k.startswith("eval_") for k in logs.keys())
 
@@ -423,7 +430,7 @@ def run_training_job(job_id: str):
 
         # Update status to running
         job["status"] = "running"
-        job["started_at"] = utc_now().isoformat() + "Z"
+        job["started_at"] = utc_now_iso()
         storage.save_training_jobs(training_jobs)
 
         # Notify WebSocket clients
@@ -435,7 +442,7 @@ def run_training_job(job_id: str):
                     "job_id": job_id,
                     "status": "running",
                     "started_at": job["started_at"],
-                    "timestamp": utc_now().isoformat() + "Z",
+                    "timestamp": utc_now_iso(),
                 },
             )
         )
@@ -503,7 +510,7 @@ def run_training_job(job_id: str):
         training_jobs = storage.load_training_jobs()
         job = training_jobs[job_id]
         job["status"] = "completed"
-        job["completed_at"] = utc_now().isoformat() + "Z"
+        job["completed_at"] = utc_now_iso()
         storage.save_training_jobs(training_jobs)
 
         # Notify completion
@@ -515,7 +522,7 @@ def run_training_job(job_id: str):
                     "job_id": job_id,
                     "status": "completed",
                     "completed_at": job["completed_at"],
-                    "timestamp": utc_now().isoformat() + "Z",
+                    "timestamp": utc_now_iso(),
                 },
             )
         )
@@ -529,7 +536,7 @@ def run_training_job(job_id: str):
             "base_model": job["base_model"],
             "status": "available",
             "created_at": job["created_at"],
-            "updated_at": utc_now().isoformat() + "Z",
+            "updated_at": utc_now_iso(),
             "path": job["output_dir"],
             "training_job_id": job_id,
             "size_bytes": calculate_dir_size(Path(job["output_dir"])),
@@ -584,6 +591,22 @@ def _run_vision_training(
         load_in_8bit=load_in_8bit,
         backend=backend,
     )
+
+    # Set up warning callback to send warnings to WebSocket/UI
+    def send_warning_to_ui(message: str):
+        _run_async_in_thread(
+            manager.send_update(
+                job_id,
+                {
+                    "type": "warning",
+                    "job_id": job_id,
+                    "message": message,
+                    "timestamp": utc_now_iso(),
+                },
+            )
+        )
+
+    trainer.warning_callback = send_warning_to_ui
 
     trainer.load_model()
 
@@ -796,7 +819,7 @@ def _handle_job_cancellation(job_id: str, storage, manager):
     training_jobs = storage.load_training_jobs()
     if job_id in training_jobs:
         training_jobs[job_id]["status"] = "cancelled"
-        training_jobs[job_id]["completed_at"] = utc_now().isoformat() + "Z"
+        training_jobs[job_id]["completed_at"] = utc_now_iso()
         training_jobs[job_id]["error_message"] = "Training cancelled by user"
         storage.save_training_jobs(training_jobs)
 
@@ -810,7 +833,7 @@ def _handle_job_cancellation(job_id: str, storage, manager):
                     "type": "status_update",
                     "job_id": job_id,
                     "status": "cancelled",
-                    "timestamp": utc_now().isoformat() + "Z",
+                    "timestamp": utc_now_iso(),
                 },
             )
         )
@@ -825,7 +848,7 @@ def _handle_job_failure(job_id: str, error_message: str, storage, manager):
     training_jobs = storage.load_training_jobs()
     if job_id in training_jobs:
         training_jobs[job_id]["status"] = "failed"
-        training_jobs[job_id]["completed_at"] = utc_now().isoformat() + "Z"
+        training_jobs[job_id]["completed_at"] = utc_now_iso()
         training_jobs[job_id]["error_message"] = error_message
         storage.save_training_jobs(training_jobs)
 
@@ -840,7 +863,7 @@ def _handle_job_failure(job_id: str, error_message: str, storage, manager):
                     "job_id": job_id,
                     "status": "failed",
                     "error_message": error_message,
-                    "timestamp": utc_now().isoformat() + "Z",
+                    "timestamp": utc_now_iso(),
                 },
             )
         )

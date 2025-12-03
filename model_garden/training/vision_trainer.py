@@ -135,6 +135,10 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         # Check if this is a vision model
         self.is_vision_model = "VL" in base_model or "vision" in base_model.lower()
 
+        # Warning callback for logging issues (e.g., image loading failures)
+        # Set this to send warnings to WebSocket/UI when running via API
+        self.warning_callback: callable | None = None
+
     def load_model(self) -> None:
         """Load the vision-language model.
 
@@ -468,17 +472,23 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             ensures consistent format and forces full loading (avoiding lazy loading issues).
         """
         # Use centralized image loading with fallback warning
-        result = load_image(image_data, fallback_size=(224, 224), convert_to_rgb=True)
+        result, success = load_image(image_data, fallback_size=(224, 224), convert_to_rgb=True)
 
-        # Warn if we got a fallback image
-        if result.size == (224, 224):
-            original_is_image = isinstance(image_data, Image.Image) or (
-                hasattr(image_data, "mode") and hasattr(image_data, "convert")
+        # Warn if loading failed
+        if not success:
+            # Show the actual path/value that couldn't be loaded
+            display_value = (
+                str(image_data)[:100] + "..." if len(str(image_data)) > 100 else str(image_data)
             )
-            if not original_is_image:
-                console.print(
-                    f"[yellow]⚠️  Unknown image format (type: {type(image_data).__name__}), using blank image[/yellow]"
-                )
+            warning_msg = f"Could not load image: {display_value}"
+            console.print(f"[yellow]⚠️  {warning_msg}[/yellow]")
+
+            # Send warning to UI via callback if set
+            if self.warning_callback is not None:
+                try:
+                    self.warning_callback(warning_msg)
+                except Exception:
+                    pass  # Don't let callback errors break training
 
         return result
 

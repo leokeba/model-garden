@@ -4,14 +4,14 @@
   import Button from "$lib/components/Button.svelte";
   import Card from "$lib/components/Card.svelte";
   import {
+    ActionsCard,
+    CarbonCard,
+    ConfigSidebar,
     JobHeader,
     JobInfo,
+    LogsCard,
     LossCurvesCard,
     ProgressCard,
-    LogsCard,
-    ConfigSidebar,
-    CarbonCard,
-    ActionsCard,
   } from "$lib/components/training-job";
   import { onDestroy, onMount } from "svelte";
 
@@ -134,11 +134,24 @@
           console.log("WebSocket update:", update);
 
           // Handle different update types
-          if (update.type === "status" && job) {
+          if (update.type === "status_update" && job) {
             job.status = update.status;
+            if (update.started_at) {
+              job.started_at = update.started_at;
+            }
             if (update.completed_at) {
               job.completed_at = update.completed_at;
             }
+            if (update.error_message) {
+              job.error_message = update.error_message;
+              error = update.error_message;
+            }
+            // Log status changes
+            logs = [
+              ...logs,
+              `[${new Date().toLocaleTimeString()}] Status changed to: ${update.status}`,
+            ];
+            setTimeout(() => scrollLogsToBottom(), 10);
           } else if (update.type === "progress" && job) {
             job.progress = update.progress;
             job.current_step = update.progress?.current_step;

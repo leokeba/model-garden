@@ -34,6 +34,13 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def utc_now_iso() -> str:
+    """Get the current UTC time as ISO 8601 string with Z suffix."""
+    # Use replace to remove timezone info, then add Z suffix
+    # This produces: 2025-12-03T15:16:07.239014Z (valid ISO 8601)
+    return datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
+
+
 router = APIRouter(tags=["training"])
 
 
@@ -46,12 +53,16 @@ def resolve_path(path: str) -> str:
 
 
 def resolve_model_path(path: str) -> str:
-    """Resolve a model path, handling simple names."""
-    if "/" not in path and not Path(path).exists():
-        # Simple name - look in models directory
-        models_path = Path("./models") / path
-        if models_path.exists():
-            return str(models_path.resolve())
+    """Resolve a model path, handling simple names.
+
+    If path is a simple name (no slashes), place it in the models directory.
+    This ensures trained models are saved to ./models/<name> by default.
+    """
+    if "/" not in path and "\\" not in path:
+        # Simple name - put in models directory
+        models_dir = Path.cwd() / "models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+        return str((models_dir / path).resolve())
     return resolve_path(path)
 
 
@@ -75,7 +86,7 @@ def create_training_job_record(
         dataset_path=dataset_path,
         validation_dataset_path=validation_dataset_path,
         output_dir=output_dir,
-        created_at=utc_now().isoformat() + "Z",
+        created_at=utc_now_iso(),
         hyperparameters=hyperparams,
         lora_config=lora_cfg,
         from_hub=job_request.from_hub,
@@ -246,7 +257,7 @@ async def delete_or_cancel_training_job(job_id: str):
             {
                 "type": "job_deleted",
                 "job_id": job_id,
-                "timestamp": utc_now().isoformat() + "Z",
+                "timestamp": utc_now_iso(),
             },
         )
 
@@ -258,7 +269,7 @@ async def delete_or_cancel_training_job(job_id: str):
 
     # Mark as cancelled
     job["status"] = "cancelled"
-    job["completed_at"] = utc_now().isoformat() + "Z"
+    job["completed_at"] = utc_now_iso()
     storage.save_training_jobs(training_jobs)
 
     # Notify WebSocket clients
@@ -269,7 +280,7 @@ async def delete_or_cancel_training_job(job_id: str):
             "job_id": job_id,
             "status": "cancelled",
             "completed_at": job["completed_at"],
-            "timestamp": utc_now().isoformat() + "Z",
+            "timestamp": utc_now_iso(),
         },
     )
 
@@ -318,7 +329,7 @@ async def request_early_stop(job_id: str):
                 "type": "early_stop_requested",
                 "job_id": job_id,
                 "message": "Early stopping requested - will stop at next evaluation",
-                "timestamp": utc_now().isoformat() + "Z",
+                "timestamp": utc_now_iso(),
             },
         )
 
@@ -370,7 +381,7 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
         "dataset_path": original_job["dataset_path"],
         "validation_dataset_path": original_job.get("validation_dataset_path"),
         "output_dir": new_output_dir,
-        "created_at": utc_now().isoformat() + "Z",
+        "created_at": utc_now_iso(),
         "started_at": None,
         "completed_at": None,
         "progress": {"current_step": 0, "total_steps": 0, "epoch": 0},
@@ -409,6 +420,8 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
         "early_stopping_enabled": original_job.get("early_stopping_enabled", False),
         "early_stopping_patience": original_job.get("early_stopping_patience", 3),
         "early_stopping_threshold": original_job.get("early_stopping_threshold", 0.0),
+        # Clone backend setting
+        "backend": original_job.get("backend", "unsloth"),
         # Metadata
         "rerun_from": job_id,
         "rerun_from_name": original_job["name"],
@@ -492,7 +505,7 @@ async def websocket_training_updates(websocket: WebSocket, job_id: str):
                 {
                     "type": "initial_state",
                     "job": training_jobs[job_id],
-                    "timestamp": utc_now().isoformat() + "Z",
+                    "timestamp": utc_now_iso(),
                 }
             )
         else:
@@ -500,7 +513,7 @@ async def websocket_training_updates(websocket: WebSocket, job_id: str):
                 {
                     "type": "error",
                     "message": f"Training job {job_id} not found",
-                    "timestamp": utc_now().isoformat() + "Z",
+                    "timestamp": utc_now_iso(),
                 }
             )
             await websocket.close()
@@ -511,9 +524,7 @@ async def websocket_training_updates(websocket: WebSocket, job_id: str):
             try:
                 data = await websocket.receive_text()
                 if data == "ping":
-                    await websocket.send_json(
-                        {"type": "pong", "timestamp": utc_now().isoformat() + "Z"}
-                    )
+                    await websocket.send_json({"type": "pong", "timestamp": utc_now_iso()})
             except WebSocketDisconnect:
                 break
             except Exception as e:
