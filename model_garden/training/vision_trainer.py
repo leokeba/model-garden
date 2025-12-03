@@ -53,6 +53,132 @@ from model_garden.utils.console import console
 from model_garden.utils.image import decode_base64_image, load_image
 
 
+class LazyVisionDataset:
+    """A dataset wrapper that loads images on-demand to prevent memory exhaustion.
+
+    Instead of loading all PIL Images into RAM at format time (which can easily
+    exhaust memory with 1000+ images), this class stores only the image references
+    (file paths or base64 strings) and loads them lazily when accessed.
+
+    This is particularly important for:
+    - Large vision datasets (1000+ images)
+    - High-resolution images
+    - Multi-epoch training where data is iterated multiple times
+
+    The tradeoff is slightly more I/O during training, but dramatically reduced
+    memory usage. For SSD storage, the I/O overhead is minimal.
+
+    Attributes:
+        examples: List of example metadata (text, image reference, response, etc.)
+        system_message: System message to use for all examples
+        image_loader: Function to load images from references
+        _cache: Optional LRU cache for recently accessed images
+
+    Example:
+        >>> dataset = LazyVisionDataset(examples, system_message, loader)
+        >>> len(dataset)  # Fast - just returns count
+        1000
+        >>> dataset[0]  # Loads image on-demand
+        {"messages": [...]}  # With PIL Image loaded
+    """
+
+    def __init__(
+        self,
+        examples: list[dict],
+        system_message: str,
+        image_loader: "Callable[[Any], Image.Image]",
+        cache_size: int = 0,
+    ):
+        """Initialize the lazy dataset.
+
+        Args:
+            examples: List of example dicts with text, image reference, and response.
+                     Image references can be file paths, base64 strings, or URLs.
+            system_message: System message to prepend to each example.
+            image_loader: Function to load PIL Image from image reference.
+            cache_size: Number of images to cache in memory (0 = no caching).
+                       Caching can help if the same images are accessed repeatedly,
+                       but uses memory proportional to cache_size * avg_image_size.
+        """
+        self.examples = examples
+        self.system_message = system_message
+        self.image_loader = image_loader
+        self._cache: dict[int, Image.Image] | None = None
+        self._cache_size = cache_size
+        if cache_size > 0:
+            self._cache = {}
+            self._cache_order: list[int] = []
+
+    def __len__(self) -> int:
+        """Return the number of examples (fast, no I/O)."""
+        return len(self.examples)
+
+    def __getitem__(self, idx: int) -> dict:
+        """Load and return a single example with its image.
+
+        This method is called by the DataLoader during training. The image
+        is loaded on-demand here, keeping memory usage proportional to
+        batch_size rather than dataset_size.
+
+        Args:
+            idx: Index of the example to load
+
+        Returns:
+            Formatted message dict with PIL Image loaded
+        """
+        example = self.examples[idx]
+
+        # Check cache first
+        pil_image = None
+        if self._cache is not None and idx in self._cache:
+            pil_image = self._cache[idx]
+        else:
+            # Load image on-demand
+            image_ref = example.get("image")
+            pil_image = self.image_loader(image_ref)
+
+            # Update cache if enabled
+            if self._cache is not None:
+                # Simple LRU eviction
+                if len(self._cache) >= self._cache_size:
+                    oldest = self._cache_order.pop(0)
+                    del self._cache[oldest]
+                self._cache[idx] = pil_image
+                self._cache_order.append(idx)
+
+        # Get text and response
+        text = example.get("text", "")
+        response = example.get("response", "")
+        effective_system = example.get("system", self.system_message)
+
+        # Format as OpenAI messages
+        return {
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": effective_system}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": pil_image},
+                        {"type": "text", "text": text},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": response}],
+                },
+            ],
+        }
+
+    def clear_cache(self) -> None:
+        """Clear the image cache to free memory."""
+        if self._cache is not None:
+            self._cache.clear()
+            self._cache_order.clear()
+
+
 class FixedSFTTrainer(SFTTrainer):
     """Custom SFTTrainer that fixes the eval loss computation bug.
 
@@ -831,7 +957,8 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         image_field: str = "image",
         system_message: str | None = None,
         messages_field: str | None = None,
-    ) -> list:
+        lazy_loading: bool = False,
+    ) -> list | LazyVisionDataset:
         """Format dataset for vision-language training using OpenAI message format.
 
         Supports multiple input formats:
@@ -863,24 +990,23 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         Note: OpenAI messages and VQA formats are automatically converted to simple format
         for compatibility with UnslothVisionDataCollator.
 
-        Returns list of message dictionaries for UnslothVisionDataCollator.
-
         Args:
             dataset: Input dataset
             text_field: Field name for text/questions (for simple format)
             image_field: Field name for images (for simple format)
             system_message: Optional system message (for simple format)
             messages_field: Field name for messages (for OpenAI format, default: "messages")
+            lazy_loading: If True, return a LazyVisionDataset that loads images on-demand.
+                         Recommended for large datasets (1000+ images) to prevent memory exhaustion.
 
         Returns:
-            List of formatted message dictionaries
+            List of formatted message dictionaries (if lazy_loading=False) or
+            LazyVisionDataset instance (if lazy_loading=True)
         """
         console.print("[cyan]Formatting vision-language dataset...[/cyan]")
 
         if system_message is None:
             system_message = "You are a helpful assistant that can analyze images."
-
-        formatted_data = []
 
         # Check if dataset uses OpenAI messages format
         if messages_field is None:
@@ -896,6 +1022,66 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             console.print(
                 "[yellow]✓ Detected VQA format - will auto-convert (question/answer/image)[/yellow]"
             )
+
+        # For lazy loading, extract metadata without loading images
+        if lazy_loading:
+            console.print(
+                "[cyan]📦 Using lazy loading - images will be loaded on-demand during training[/cyan]"
+            )
+            examples_metadata = []
+
+            for example in dataset:
+                if not isinstance(example, dict):
+                    continue
+                example_dict = example
+
+                if is_vqa_format:
+                    simple = self._convert_vqa_to_simple(example_dict)
+                    examples_metadata.append(
+                        {
+                            "text": simple.get("text", ""),
+                            "image": simple.get("image"),
+                            "response": simple.get("response", ""),
+                            "system": system_message,
+                        }
+                    )
+                elif has_messages_field and messages_field in example_dict:
+                    messages = example_dict[messages_field]
+                    simple = self._convert_messages_to_simple_format(messages)
+                    original_system = simple.get("system", "")
+                    examples_metadata.append(
+                        {
+                            "text": simple.get("text", ""),
+                            "image": simple.get("image"),
+                            "response": simple.get("response", ""),
+                            "system": original_system if original_system else system_message,
+                        }
+                    )
+                else:
+                    examples_metadata.append(
+                        {
+                            "text": example_dict.get(text_field, ""),
+                            "image": example_dict.get(image_field, ""),
+                            "response": example_dict.get(
+                                "response", example_dict.get("output", "")
+                            ),
+                            "system": system_message,
+                        }
+                    )
+
+            console.print(
+                f"[green]✓[/green] Dataset prepared for lazy loading ({len(examples_metadata)} examples)"
+            )
+            console.print("[cyan]   Memory saved: Images will be loaded one batch at a time[/cyan]")
+
+            return LazyVisionDataset(
+                examples=examples_metadata,
+                system_message=system_message,
+                image_loader=self._load_image,
+            )
+
+        # Original eager loading behavior
+        formatted_data = []
 
         for example in dataset:
             # Ensure example is a dict-like object
@@ -1011,17 +1197,17 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
     def train(
         self,
-        dataset: Dataset | list[dict],
+        dataset: Dataset | list[dict] | LazyVisionDataset,
         config: VisionTrainingConfig,
         job_id: str | None = None,
         enable_carbon_tracking: bool = True,
         callbacks: list | None = None,
-        eval_dataset: Dataset | list[dict] | None = None,
+        eval_dataset: Dataset | list[dict] | LazyVisionDataset | None = None,
     ) -> None:
         """Train the vision-language model.
 
         Args:
-            dataset: Training dataset (Dataset object or list of formatted messages)
+            dataset: Training dataset (Dataset, list of formatted messages, or LazyVisionDataset)
             config: Vision training configuration (hyperparameters, output directory,
                     selective loss settings, etc.)
             job_id: Optional job identifier for carbon tracking
@@ -1034,11 +1220,25 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             ...     output_dir="./models/vision-model",
             ...     num_epochs=3,
             ...     selective_loss=True,
-            ...     selective_loss_level="aggressive"
+            ...     selective_loss_level="aggressive",
+            ...     lazy_loading=True  # Recommended for large datasets
             ... )
             >>> trainer.train(dataset, config)
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
+
+        # Log lazy loading status
+        if isinstance(dataset, LazyVisionDataset):
+            console.print(
+                f"[cyan]📦 Using lazy-loaded dataset ({len(dataset)} examples) - memory efficient mode[/cyan]"
+            )
+        elif config.lazy_loading:
+            console.print(
+                "[yellow]⚠️  lazy_loading=True in config but dataset is not a LazyVisionDataset[/yellow]"
+            )
+            console.print(
+                "[yellow]    Use format_dataset(..., lazy_loading=True) to enable lazy loading[/yellow]"
+            )
 
         # Note: Using DataLoader workers with vision models can be tricky
         if config.dataloader_num_workers > 0:
@@ -1059,9 +1259,9 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         from trl.trainer.sft_config import SFTConfig
         from unsloth.trainer import UnslothVisionDataCollator
 
-        # For vision models, keep data as list - don't convert to Dataset
+        # For vision models, keep data as list or LazyVisionDataset - don't convert to HF Dataset
         # The UnslothVisionDataCollator expects PIL Images which don't survive PyArrow serialization
-        if isinstance(dataset, list):
+        if isinstance(dataset, (list, LazyVisionDataset)):
             console.print(f"[cyan]Using formatted data directly ({len(dataset)} examples)[/cyan]")
             train_dataset = dataset
         else:
@@ -1299,6 +1499,12 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
                 trainer.eval_dataset = None  # type: ignore
             if hasattr(trainer, "data_collator"):
                 trainer.data_collator = None  # type: ignore
+
+            # Clear lazy dataset caches if using LazyVisionDataset
+            if isinstance(train_dataset, LazyVisionDataset):
+                train_dataset.clear_cache()
+            if isinstance(eval_dataset, LazyVisionDataset):
+                eval_dataset.clear_cache()
         except Exception as e:
             console.print(f"[yellow]⚠️  Warning: Failed to clear trainer datasets: {e}[/yellow]")
 

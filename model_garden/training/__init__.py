@@ -51,6 +51,7 @@ from .subprocess_runner import (
 # Main trainers
 from .trainer import ModelTrainer, create_sample_dataset, create_text_trainer
 from .vision_trainer import (
+    LazyVisionDataset,
     VisionLanguageTrainer,
     create_vision_sample_dataset,
     create_vision_trainer,
@@ -72,6 +73,7 @@ __all__ = [
     "ModelTrainer",
     "VisionLanguageTrainer",
     "TrainerMixin",
+    "LazyVisionDataset",
     "create_text_trainer",
     "create_vision_trainer",
     "create_sample_dataset",

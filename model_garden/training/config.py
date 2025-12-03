@@ -269,6 +269,7 @@ class VisionTrainingConfig(TrainingConfig):
         learning_rate: Lower default (2e-5) for vision models.
         lr_scheduler_type: Cosine scheduler works better for vision.
         dataloader_pin_memory: Disabled by default to prevent RAM accumulation.
+        lazy_loading: Load images on-demand instead of all at once (saves memory).
         selective_loss: Enable selective loss masking for structured outputs.
         selective_loss_level: Masking level ("conservative", "moderate", "aggressive").
         selective_loss_schema_keys: Schema keys to mask (auto-detected if None).
@@ -283,7 +284,8 @@ class VisionTrainingConfig(TrainingConfig):
         >>> config = VisionTrainingConfig(
         ...     output_dir="./models/vision-model",
         ...     selective_loss=True,
-        ...     selective_loss_level="aggressive"
+        ...     selective_loss_level="aggressive",
+        ...     lazy_loading=True  # Recommended for large datasets
         ... )
     """
 
@@ -293,6 +295,9 @@ class VisionTrainingConfig(TrainingConfig):
     learning_rate: float = VISION_DEFAULT_LEARNING_RATE
     lr_scheduler_type: str = VISION_DEFAULT_LR_SCHEDULER
     dataloader_pin_memory: bool = False
+
+    # Memory optimization
+    lazy_loading: bool = False  # Load images on-demand to prevent memory exhaustion
 
     # Selective loss options
     selective_loss: bool = False
@@ -310,6 +315,7 @@ class VisionTrainingConfig(TrainingConfig):
         base = super().to_dict()
         base.update(
             {
+                "lazy_loading": self.lazy_loading,
                 "selective_loss": self.selective_loss,
                 "selective_loss_level": self.selective_loss_level,
                 "selective_loss_schema_keys": self.selective_loss_schema_keys,
