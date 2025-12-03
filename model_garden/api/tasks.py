@@ -6,18 +6,18 @@ Background task functions for:
 
 These tasks are run in the background by FastAPI's BackgroundTasks
 or by the job queue worker.
+
+Training jobs now use TrainingService for consistency with CLI,
+eliminating duplicated training logic.
 """
 
 import asyncio
-import gc
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import torch
-
-from model_garden.training.config import TrainingConfig, VisionTrainingConfig
+from model_garden.services import TrainingRequest, TrainingService
 
 from .storage import get_storage_manager
 from .websocket import get_connection_manager
@@ -66,89 +66,6 @@ def calculate_dir_size(path: Path) -> int:
             if file.is_file():
                 total += file.stat().st_size
     return total
-
-
-def cleanup_training_resources(*objects):
-    """Aggressively free memory after training completes.
-
-    This function attempts to:
-    1. Delete Python objects (model, tokenizer, trainer, datasets)
-    2. Force garbage collection
-    3. Clear CUDA cache and synchronize
-    4. Run multiple GC passes to break circular references
-
-    Args:
-        *objects: Variable arguments of objects to delete/cleanup
-    """
-
-    print("🧹 Cleaning up training resources...")
-
-    # First pass: delete and dereference objects
-    for obj in objects:
-        try:
-            if obj is not None:
-                # Try to move model to CPU first to free GPU memory
-                if hasattr(obj, "to"):
-                    try:
-                        obj.to("cpu")
-                    except Exception:
-                        pass
-
-                # Delete references held by trainer
-                if hasattr(obj, "model"):
-                    try:
-                        obj.model = None
-                    except Exception:
-                        pass
-                if hasattr(obj, "tokenizer"):
-                    try:
-                        obj.tokenizer = None
-                    except Exception:
-                        pass
-                if hasattr(obj, "optimizer"):
-                    try:
-                        obj.optimizer = None
-                    except Exception:
-                        pass
-                if hasattr(obj, "lr_scheduler"):
-                    try:
-                        obj.lr_scheduler = None
-                    except Exception:
-                        pass
-
-                del obj
-        except Exception as e:
-            print(f"⚠️  Warning during cleanup: {e}")
-
-    # Multiple GC passes to break circular references
-    for _ in range(5):
-        gc.collect()
-
-    # Clear CUDA cache
-    if torch.cuda.is_available():
-        # Move all tensors to CPU to free GPU memory
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-
-        # Additional synchronization
-        for device_id in range(torch.cuda.device_count()):
-            with torch.cuda.device(device_id):
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-
-    # Final GC passes
-    for _ in range(3):
-        gc.collect()
-
-    # Report memory usage
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated() / (1024**3)
-        reserved = torch.cuda.memory_reserved() / (1024**3)
-        print(
-            f"🧹 Cleanup complete. GPU memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved"
-        )
-    else:
-        print("🧹 Cleanup complete.")
 
 
 async def run_model_loading(
@@ -408,6 +325,7 @@ def run_training_job(job_id: str):
     """Execute a training job in the background.
 
     This is the main training entry point called by the job queue worker.
+    Now uses TrainingService for consistent behavior with CLI.
     """
     from model_garden.queue import get_job_queue
 
@@ -451,62 +369,36 @@ def run_training_job(job_id: str):
 
         print(f"🚀 Starting training job {job_id}: {job['name']}")
 
-        # Training configuration
-        is_vision = job.get("is_vision", False)
-        from_hub = job.get("from_hub", False)
-        validation_from_hub = job.get("validation_from_hub", False)
-        validation_dataset_path = job.get("validation_dataset_path")
+        # Build TrainingRequest from job config - single source of truth
+        request = TrainingRequest.from_dict(job)
+        request.job_id = job_id
 
-        # Quality mode settings
-        quality_mode = job.get("quality_mode", False)
-        load_in_16bit = job.get("load_in_16bit", False)
-        load_in_8bit = job.get("load_in_8bit", False)
-
-        if quality_mode:
-            print("🎯 Quality mode enabled - using higher precision settings")
-            load_in_16bit = True
-            load_in_8bit = False
-            lora_config = job.get("lora_config", {})
-            if lora_config.get("use_gradient_checkpointing") == "unsloth":
-                lora_config["use_gradient_checkpointing"] = True
-            hyperparams = job.get("hyperparameters", {})
-            if hyperparams.get("optim") == "adamw_8bit":
-                hyperparams["optim"] = "adamw_torch"
-            if lora_config.get("r", 16) >= 32 and not lora_config.get("use_rslora"):
-                lora_config["use_rslora"] = True
-            job["lora_config"] = lora_config
-            job["hyperparameters"] = hyperparams
-
-        load_in_4bit = not (load_in_16bit or load_in_8bit)
-        backend = job.get("backend", "unsloth")
-
-        # Execute training based on model type
-        if is_vision:
-            _run_vision_training(
-                job,
-                job_id,
-                load_in_4bit,
-                load_in_8bit,
-                backend,
-                from_hub,
-                validation_from_hub,
-                validation_dataset_path,
-                storage,
-                manager,
+        # Set up warning callback for WebSocket notifications
+        def send_warning_to_ui(message: str):
+            _run_async_in_thread(
+                manager.send_update(
+                    job_id,
+                    {
+                        "type": "warning",
+                        "job_id": job_id,
+                        "message": message,
+                        "timestamp": utc_now_iso(),
+                    },
+                )
             )
-        else:
-            _run_text_training(
-                job,
-                job_id,
-                load_in_4bit,
-                load_in_8bit,
-                backend,
-                from_hub,
-                validation_from_hub,
-                validation_dataset_path,
-                storage,
-                manager,
-            )
+
+        request.warning_callback = send_warning_to_ui
+
+        # Build progress callback for WebSocket updates
+        progress_callback = create_progress_callback(job_id, manager)
+        progress_callback.cancellation_event = cancellation_events.get(job_id)
+
+        # Execute training through unified service
+        service = TrainingService()
+        result = service.train(request, callbacks=[progress_callback])
+
+        if not result.success:
+            raise RuntimeError(result.error or "Training failed")
 
         # Update status to completed
         training_jobs = storage.load_training_jobs()
@@ -567,255 +459,6 @@ def run_training_job(job_id: str):
         # Clean up cancellation event
         if job_id in cancellation_events:
             del cancellation_events[job_id]
-
-
-def _run_vision_training(
-    job,
-    job_id,
-    load_in_4bit,
-    load_in_8bit,
-    backend,
-    from_hub,
-    validation_from_hub,
-    validation_dataset_path,
-    storage,
-    manager,
-):
-    """Execute vision model training."""
-    from model_garden.training import create_vision_trainer
-
-    print(f"🎨 Using VisionLanguageTrainer for {job['base_model']}")
-
-    trainer = create_vision_trainer(
-        base_model=job["base_model"],
-        max_seq_length=job["hyperparameters"].get("max_seq_length", 16384),
-        load_in_4bit=load_in_4bit,
-        load_in_8bit=load_in_8bit,
-        backend=backend,
-    )
-
-    # Set up warning callback to send warnings to WebSocket/UI
-    def send_warning_to_ui(message: str):
-        _run_async_in_thread(
-            manager.send_update(
-                job_id,
-                {
-                    "type": "warning",
-                    "job_id": job_id,
-                    "message": message,
-                    "timestamp": utc_now_iso(),
-                },
-            )
-        )
-
-    trainer.warning_callback = send_warning_to_ui
-
-    trainer.load_model()
-
-    lora_config = job["lora_config"]
-    trainer.prepare_for_training(
-        r=lora_config.get("r", 16),
-        lora_alpha=lora_config.get("lora_alpha", 16),
-        lora_dropout=lora_config.get("lora_dropout", 0.0),
-        lora_bias=lora_config.get("lora_bias", "none"),
-        use_rslora=lora_config.get("use_rslora", False),
-        use_gradient_checkpointing=lora_config.get("use_gradient_checkpointing", "unsloth"),
-        random_state=lora_config.get("random_state", 42),
-        loftq_config=lora_config.get("loftq_config"),
-        finetune_vision_layers=lora_config.get("finetune_vision_layers", True),
-        finetune_language_layers=lora_config.get("finetune_language_layers", True),
-        finetune_attention_modules=lora_config.get("finetune_attention_modules", True),
-        finetune_mlp_modules=lora_config.get("finetune_mlp_modules", True),
-    )
-
-    # Load datasets
-    train_dataset = trainer.load_dataset(
-        dataset_path=job["dataset_path"],
-        from_hub=from_hub,
-        split="train",
-    )
-    formatted_train_dataset = trainer.format_dataset(train_dataset)
-
-    formatted_val_dataset = None
-    if validation_dataset_path:
-        val_dataset = trainer.load_dataset(
-            dataset_path=validation_dataset_path,
-            from_hub=validation_from_hub,
-            split="validation",
-        )
-        formatted_val_dataset = trainer.format_dataset(val_dataset)
-
-    # Build callbacks
-    progress_callback = create_progress_callback(job_id, manager)
-    progress_callback.cancellation_event = cancellation_events.get(job_id)
-
-    callbacks = [progress_callback]
-
-    if job.get("early_stopping_enabled", False):
-        from model_garden.training import EarlyStoppingCallback
-
-        callbacks.append(
-            EarlyStoppingCallback(
-                patience=job.get("early_stopping_patience", 3),
-                threshold=job.get("early_stopping_threshold", 0.0),
-            )
-        )
-
-    # Train using VisionTrainingConfig
-    hyperparams = job["hyperparameters"]
-    config = VisionTrainingConfig(
-        output_dir=job["output_dir"],
-        num_epochs=hyperparams.get("num_epochs", 3),
-        batch_size=hyperparams.get("batch_size", 1),
-        gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 8),
-        learning_rate=hyperparams.get("learning_rate", 2e-5),
-        warmup_steps=hyperparams.get("warmup_steps", 10),
-        max_steps=hyperparams.get("max_steps", -1),
-        logging_steps=hyperparams.get("logging_steps", 10),
-        save_steps=hyperparams.get("save_steps", 100),
-        eval_steps=hyperparams.get("eval_steps"),
-        optim=hyperparams.get("optim", "adamw_8bit"),
-        weight_decay=hyperparams.get("weight_decay", 0.01),
-        lr_scheduler_type=hyperparams.get("lr_scheduler_type", "cosine"),
-        selective_loss=job.get("selective_loss", False),
-        selective_loss_level=job.get("selective_loss_level", "conservative"),
-    )
-    trainer.train(
-        dataset=formatted_train_dataset,
-        config=config,
-        eval_dataset=formatted_val_dataset,
-        callbacks=callbacks,
-    )
-
-    # Save
-    save_method = job.get("save_method", "merged_16bit")
-    trainer.save_model(job["output_dir"], save_method=save_method)
-
-    # Cleanup
-    cleanup_training_resources(
-        trainer.model,
-        trainer.tokenizer,
-        trainer.processor,
-        trainer,
-        formatted_train_dataset,
-        formatted_val_dataset,
-        train_dataset,
-        progress_callback,
-    )
-
-
-def _run_text_training(
-    job,
-    job_id,
-    load_in_4bit,
-    load_in_8bit,
-    backend,
-    from_hub,
-    validation_from_hub,
-    validation_dataset_path,
-    storage,
-    manager,
-):
-    """Execute text model training."""
-    from model_garden.training import create_text_trainer
-
-    trainer = create_text_trainer(
-        base_model=job["base_model"],
-        max_seq_length=job["hyperparameters"].get("max_seq_length", 2048),
-        load_in_4bit=load_in_4bit,
-        load_in_8bit=load_in_8bit,
-        backend=backend,
-    )
-
-    trainer.load_model()
-
-    lora_config = job["lora_config"]
-    trainer.prepare_for_training(
-        r=lora_config.get("r", 16),
-        lora_alpha=lora_config.get("lora_alpha", 16),
-        lora_dropout=lora_config.get("lora_dropout", 0.0),
-        lora_bias=lora_config.get("lora_bias", "none"),
-        use_rslora=lora_config.get("use_rslora", False),
-        use_gradient_checkpointing=lora_config.get("use_gradient_checkpointing", "unsloth"),
-        random_state=lora_config.get("random_state", 42),
-        loftq_config=lora_config.get("loftq_config"),
-    )
-
-    # Load datasets
-    if from_hub:
-        train_dataset = trainer.load_dataset_from_hub(job["dataset_path"], split="train")
-    else:
-        train_dataset = trainer.load_dataset_from_file(job["dataset_path"])
-
-    train_dataset = trainer.format_dataset(
-        train_dataset,
-        instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
-        input_field=job["hyperparameters"].get("input_field", "input"),
-        output_field=job["hyperparameters"].get("output_field", "output"),
-    )
-
-    val_dataset = None
-    if validation_dataset_path:
-        if validation_from_hub:
-            val_dataset = trainer.load_dataset_from_hub(validation_dataset_path, split="validation")
-        else:
-            val_dataset = trainer.load_dataset_from_file(validation_dataset_path)
-        val_dataset = trainer.format_dataset(
-            val_dataset,
-            instruction_field=job["hyperparameters"].get("instruction_field", "instruction"),
-            input_field=job["hyperparameters"].get("input_field", "input"),
-            output_field=job["hyperparameters"].get("output_field", "output"),
-        )
-
-    # Build callbacks
-    progress_callback = create_progress_callback(job_id, manager)
-    progress_callback.cancellation_event = cancellation_events.get(job_id)
-
-    callbacks = [progress_callback]
-
-    if job.get("early_stopping_enabled", False):
-        from model_garden.training import EarlyStoppingCallback
-
-        callbacks.append(
-            EarlyStoppingCallback(
-                patience=job.get("early_stopping_patience", 3),
-                threshold=job.get("early_stopping_threshold", 0.0),
-            )
-        )
-
-    # Train using TrainingConfig
-    hyperparams = job["hyperparameters"]
-    config = TrainingConfig(
-        output_dir=job["output_dir"],
-        num_epochs=hyperparams.get("num_epochs", 3),
-        batch_size=hyperparams.get("batch_size", 2),
-        gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
-        learning_rate=hyperparams.get("learning_rate", 2e-4),
-        warmup_steps=hyperparams.get("warmup_steps", 10),
-        max_steps=hyperparams.get("max_steps", -1),
-        logging_steps=hyperparams.get("logging_steps", 10),
-        save_steps=hyperparams.get("save_steps", 100),
-        eval_steps=hyperparams.get("eval_steps"),
-        optim=hyperparams.get("optim", "adamw_8bit"),
-        weight_decay=hyperparams.get("weight_decay", 0.01),
-        lr_scheduler_type=hyperparams.get("lr_scheduler_type", "linear"),
-    )
-    trainer.train(
-        dataset=train_dataset,
-        config=config,
-        eval_dataset=val_dataset,
-        callbacks=callbacks,
-    )
-
-    # Save
-    save_method = job["hyperparameters"].get("save_method", "merged_16bit")
-    if save_method != "lora":
-        trainer.save_model(job["output_dir"], save_method=save_method)
-
-    # Cleanup
-    cleanup_training_resources(
-        trainer.model, trainer.tokenizer, trainer, train_dataset, val_dataset, progress_callback
-    )
 
 
 def _handle_job_cancellation(job_id: str, storage, manager):

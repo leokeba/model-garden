@@ -3,11 +3,22 @@
 Contains:
 - train: Fine-tune a text language model
 - train-vision: Fine-tune a vision-language model
+
+Both commands use TrainingService for actual training logic, ensuring
+consistency with the API and eliminating code duplication.
 """
+
+from typing import Literal, cast
 
 import click
 
-from model_garden.training.config import TrainingConfig, VisionTrainingConfig
+from model_garden.services import TrainingRequest, TrainingService
+from model_garden.training.config import (
+    LoRAConfig,
+    TrainingConfig,
+    VisionLoRAConfig,
+    VisionTrainingConfig,
+)
 from model_garden.utils.console import console
 
 
@@ -293,115 +304,78 @@ def train(
             --output-dir ./models/my-model \\
             --from-hub
     """
-    try:
-        # Lazy import to avoid loading heavy deps for other commands
-        from model_garden.training import create_text_trainer
-        from model_garden.training.backends import get_default_backend
+    # Validate precision settings
+    if load_in_16bit and load_in_8bit:
+        console.print("[red]Error: Cannot use both --load-in-16bit and --load-in-8bit[/red]")
+        raise click.Abort()
 
-        # Determine actual backend to use
-        actual_backend = backend if backend else get_default_backend()
+    # Convert gradient checkpointing string to appropriate value
+    if use_gradient_checkpointing == "unsloth":
+        gc_value = "unsloth"
+    elif use_gradient_checkpointing == "true":
+        gc_value = True
+    else:  # "false"
+        gc_value = False
 
-        console.print("\n[bold cyan]🌱 Model Garden - Fine-tuning[/bold cyan]\n")
-        console.print(f"[cyan]Backend: {actual_backend}[/cyan]\n")
+    # Build training config
+    training_config = TrainingConfig(
+        output_dir=output_dir,
+        num_epochs=epochs,
+        batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        learning_rate=learning_rate,
+        max_steps=max_steps,
+        logging_steps=logging_steps,
+        save_steps=save_steps,
+        optim=optim,
+        weight_decay=weight_decay,
+        lr_scheduler_type=lr_scheduler_type,
+        max_grad_norm=max_grad_norm,
+        adam_beta1=adam_beta1,
+        adam_beta2=adam_beta2,
+        adam_epsilon=adam_epsilon,
+        dataloader_num_workers=dataloader_num_workers,
+        eval_strategy=eval_strategy,
+        save_total_limit=save_total_limit,
+    )
 
-        # Apply quality mode overrides
-        if quality_mode:
-            console.print(
-                "[yellow]🎯 Quality mode enabled - using higher precision settings[/yellow]"
-            )
-            load_in_16bit = True
-            use_gradient_checkpointing = "true"
-            optim = "adamw_torch"
-            if lora_r >= 32:
-                use_rslora = True
-                console.print(f"[yellow]🎯 LoRA rank {lora_r} >= 32, enabling RSLoRA[/yellow]")
-            console.print(
-                "[yellow]⚠️  Warning: Quality mode uses ~4x more VRAM than default settings[/yellow]\n"
-            )
+    # Build LoRA config
+    lora_config = LoRAConfig(
+        r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        bias=cast(Literal["none", "all", "lora_only"], lora_bias),
+        use_gradient_checkpointing=gc_value,
+        use_rslora=use_rslora,
+    )
 
-        # Convert gradient checkpointing string to appropriate value
-        if use_gradient_checkpointing == "unsloth":
-            gc_value = "unsloth"
-        elif use_gradient_checkpointing == "true":
-            gc_value = True
-        else:  # "false"
-            gc_value = False
+    # Build training request - ALL logic now in TrainingService
+    request = TrainingRequest(
+        name=f"cli-train-{base_model.split('/')[-1]}",
+        base_model=base_model,
+        dataset_path=dataset,
+        output_dir=output_dir,
+        is_vision=False,
+        from_hub=from_hub,
+        training_config=training_config,
+        lora_config=lora_config,
+        quality_mode=quality_mode,
+        load_in_4bit=not (load_in_16bit or load_in_8bit),
+        load_in_8bit=load_in_8bit,
+        save_method=cast(Literal["lora", "merged_16bit", "merged_4bit"], save_method),
+        backend=backend,
+        instruction_field=instruction_field,
+        input_field=input_field,
+        output_field=output_field,
+    )
 
-        # Determine quantization settings
-        if load_in_16bit and load_in_8bit:
-            console.print("[red]Error: Cannot use both --load-in-16bit and --load-in-8bit[/red]")
-            return
+    # Execute training through unified service
+    service = TrainingService()
+    result = service.train(request)
 
-        load_in_4bit_final = not (load_in_16bit or load_in_8bit)
-
-        # Initialize trainer with backend
-        trainer = create_text_trainer(
-            base_model=base_model,
-            max_seq_length=max_seq_length,
-            load_in_4bit=load_in_4bit_final,
-            load_in_8bit=load_in_8bit,
-            backend=backend,
-        )
-
-        # Load model
-        trainer.load_model()
-
-        # Prepare for training with LoRA
-        trainer.prepare_for_training(
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            lora_bias=lora_bias,
-            use_gradient_checkpointing=gc_value,
-            use_rslora=use_rslora,
-        )
-
-        # Load dataset
-        if from_hub:
-            train_dataset = trainer.load_dataset_from_hub(dataset)
-        else:
-            train_dataset = trainer.load_dataset_from_file(dataset)
-
-        # Format dataset
-        train_dataset = trainer.format_dataset(
-            train_dataset,
-            instruction_field=instruction_field,
-            input_field=input_field,
-            output_field=output_field,
-        )
-
-        # Train using TrainingConfig
-        config = TrainingConfig(
-            output_dir=output_dir,
-            num_epochs=epochs,
-            batch_size=batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=learning_rate,
-            max_steps=max_steps,
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            optim=optim,
-            weight_decay=weight_decay,
-            lr_scheduler_type=lr_scheduler_type,
-            max_grad_norm=max_grad_norm,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            adam_epsilon=adam_epsilon,
-            dataloader_num_workers=dataloader_num_workers,
-            eval_strategy=eval_strategy,
-            save_total_limit=save_total_limit,
-        )
-        trainer.train(dataset=train_dataset, config=config)
-
-        # Save final model
-        if save_method != "lora":
-            trainer.save_model(output_dir, save_method=save_method)
-
-        console.print("\n[bold green]✨ Training completed successfully![/bold green]\n")
-
-    except Exception as e:
-        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort() from None
+    if not result.success:
+        console.print(f"\n[bold red]❌ Training failed: {result.error}[/bold red]\n")
+        raise click.Abort()
 
 
 @click.command()
@@ -764,142 +738,92 @@ def train_vision(
         HuggingFace Hub (OpenAI messages format):
             {"messages": [{"role": "user", "content": [{"type": "image", "image": "data:image/jpeg;base64,..."}]}]}
     """
-    try:
-        from model_garden.training import create_vision_trainer
-        from model_garden.training.backends import get_default_backend
+    # Validate precision settings
+    if load_in_16bit and load_in_8bit:
+        console.print("[red]Error: Cannot use both --load-in-16bit and --load-in-8bit[/red]")
+        raise click.Abort()
 
-        # Determine actual backend to use
-        actual_backend = backend if backend else get_default_backend()
+    # Convert gradient checkpointing string to appropriate value
+    if use_gradient_checkpointing == "unsloth":
+        gc_value = "unsloth"
+    elif use_gradient_checkpointing == "true":
+        gc_value = True
+    else:  # "false"
+        gc_value = False
 
-        console.print("\n[bold cyan]🌱 Model Garden - Vision-Language Fine-tuning[/bold cyan]\n")
-        console.print(f"[cyan]Backend: {actual_backend}[/cyan]\n")
+    # Parse schema keys if provided
+    schema_keys_list = None
+    if selective_loss_schema_keys:
+        schema_keys_list = [k.strip() for k in selective_loss_schema_keys.split(",")]
 
-        if from_hub:
-            console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset}[/cyan]")
-        else:
-            console.print(f"[cyan]Loading dataset from local file: {dataset}[/cyan]")
+    # Build vision training config
+    training_config = VisionTrainingConfig(
+        output_dir=output_dir,
+        num_epochs=epochs,
+        batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        learning_rate=learning_rate,
+        max_steps=max_steps,
+        logging_steps=logging_steps,
+        save_steps=save_steps,
+        optim=optim,
+        weight_decay=weight_decay,
+        lr_scheduler_type=lr_scheduler_type,
+        max_grad_norm=max_grad_norm,
+        adam_beta1=adam_beta1,
+        adam_beta2=adam_beta2,
+        adam_epsilon=adam_epsilon,
+        dataloader_num_workers=dataloader_num_workers,
+        eval_strategy=eval_strategy,
+        save_total_limit=save_total_limit,
+        selective_loss=selective_loss,
+        selective_loss_level=selective_loss_level,
+        selective_loss_schema_keys=schema_keys_list,
+        selective_loss_masking_strategy=selective_loss_masking_strategy,
+        selective_loss_masking_start_epoch=selective_loss_masking_start_epoch,
+        selective_loss_mask_every_n_steps=selective_loss_mask_every_n_steps,
+        selective_loss_mask_for_n_steps=selective_loss_mask_for_n_steps,
+        selective_loss_structural_weight=selective_loss_structural_weight,
+        selective_loss_verbose=selective_loss_verbose,
+    )
 
-        console.print("[yellow]⚠️  Vision-language training is experimental[/yellow]\n")
+    # Build vision LoRA config
+    lora_config = VisionLoRAConfig(
+        r=lora_r,
+        lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
+        bias=cast(Literal["none", "all", "lora_only"], lora_bias),
+        use_gradient_checkpointing=gc_value,
+        use_rslora=use_rslora,
+        finetune_vision_layers=finetune_vision_layers,
+        finetune_language_layers=finetune_language_layers,
+        finetune_attention_modules=finetune_attention_modules,
+        finetune_mlp_modules=finetune_mlp_modules,
+    )
 
-        # Apply quality mode overrides
-        if quality_mode:
-            console.print("[yellow]🎯 Quality mode enabled - applying optimizations:[/yellow]")
-            console.print("[yellow]  • 16-bit precision (full quality)[/yellow]")
-            console.print("[yellow]  • Standard gradient checkpointing[/yellow]")
-            console.print("[yellow]  \u2022 Better optimizer (adamw_torch)[/yellow]")
-            load_in_16bit = True
-            use_gradient_checkpointing = "true"
-            optim = "adamw_torch"
-            if lora_r >= 32:
-                use_rslora = True
-                console.print(f"[yellow]🎯 LoRA rank {lora_r} >= 32, enabling RSLoRA[/yellow]")
-            console.print(
-                "[yellow]⚠️  Warning: Quality mode uses ~4x more VRAM than default settings[/yellow]\n"
-            )
+    # Build training request - ALL logic now in TrainingService
+    request = TrainingRequest(
+        name=f"cli-vision-{base_model.split('/')[-1]}",
+        base_model=base_model,
+        dataset_path=dataset,
+        output_dir=output_dir,
+        is_vision=True,
+        from_hub=from_hub,
+        training_config=training_config,
+        lora_config=lora_config,
+        quality_mode=quality_mode,
+        load_in_4bit=not (load_in_16bit or load_in_8bit),
+        load_in_8bit=load_in_8bit,
+        save_method=cast(Literal["lora", "merged_16bit", "merged_4bit"], save_method),
+        backend=backend,
+        text_field=text_field,
+        image_field=image_field,
+    )
 
-        # Convert gradient checkpointing string to appropriate value
-        if use_gradient_checkpointing == "unsloth":
-            gc_value = "unsloth"
-        elif use_gradient_checkpointing == "true":
-            gc_value = True
-        else:  # "false"
-            gc_value = False
+    # Execute training through unified service
+    service = TrainingService()
+    result = service.train(request)
 
-        # Determine quantization settings
-        if load_in_16bit and load_in_8bit:
-            console.print("[red]Error: Cannot use both --load-in-16bit and --load-in-8bit[/red]")
-            return
-
-        load_in_4bit_final = not (load_in_16bit or load_in_8bit)
-
-        # Initialize trainer with backend
-        trainer = create_vision_trainer(
-            base_model=base_model,
-            max_seq_length=max_seq_length,
-            load_in_4bit=load_in_4bit_final,
-            load_in_8bit=load_in_8bit,
-            backend=backend,
-        )
-
-        # Load model
-        trainer.load_model()
-
-        # Prepare for training with LoRA and selective layer fine-tuning
-        trainer.prepare_for_training(
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            lora_bias=lora_bias,
-            use_gradient_checkpointing=gc_value,
-            use_rslora=use_rslora,
-            finetune_vision_layers=finetune_vision_layers,
-            finetune_language_layers=finetune_language_layers,
-            finetune_attention_modules=finetune_attention_modules,
-            finetune_mlp_modules=finetune_mlp_modules,
-        )
-
-        # Load dataset (handles both local files and HuggingFace Hub)
-        train_dataset = trainer.load_dataset(
-            dataset_path=dataset,
-            from_hub=from_hub,
-        )
-
-        # Format dataset
-        train_dataset = trainer.format_dataset(
-            train_dataset,
-            text_field=text_field,
-            image_field=image_field,
-        )
-
-        # Parse schema keys if provided
-        schema_keys_list = None
-        if selective_loss_schema_keys:
-            schema_keys_list = [k.strip() for k in selective_loss_schema_keys.split(",")]
-            console.print(f"[cyan]Schema keys to mask: {schema_keys_list}[/cyan]")
-
-        # Train using VisionTrainingConfig
-        config = VisionTrainingConfig(
-            output_dir=output_dir,
-            num_epochs=epochs,
-            batch_size=batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=learning_rate,
-            max_steps=max_steps,
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            optim=optim,
-            weight_decay=weight_decay,
-            lr_scheduler_type=lr_scheduler_type,
-            max_grad_norm=max_grad_norm,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            adam_epsilon=adam_epsilon,
-            dataloader_num_workers=dataloader_num_workers,
-            eval_strategy=eval_strategy,
-            save_total_limit=save_total_limit,
-            selective_loss=selective_loss,
-            selective_loss_level=selective_loss_level,
-            selective_loss_schema_keys=schema_keys_list,
-            selective_loss_masking_strategy=selective_loss_masking_strategy,
-            selective_loss_masking_start_epoch=selective_loss_masking_start_epoch,
-            selective_loss_mask_every_n_steps=selective_loss_mask_every_n_steps,
-            selective_loss_mask_for_n_steps=selective_loss_mask_for_n_steps,
-            selective_loss_structural_weight=selective_loss_structural_weight,
-            selective_loss_verbose=selective_loss_verbose,
-        )
-        trainer.train(dataset=train_dataset, config=config)
-
-        # Save final model with specified method
-        trainer.save_model(output_dir, save_method=save_method)
-
-        console.print(
-            "\n[bold green]✨ Vision-language training completed successfully![/bold green]\n"
-        )
-        console.print(f"[green]Model saved to: {output_dir}[/green]\n")
-
-    except Exception as e:
-        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        import traceback
-
-        traceback.print_exc()
-        raise click.Abort() from None
+    if not result.success:
+        console.print(f"\n[bold red]❌ Training failed: {result.error}[/bold red]\n")
+        raise click.Abort()

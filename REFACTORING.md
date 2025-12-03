@@ -80,6 +80,25 @@ This document tracks the refactoring of `model_garden/` from a flat module struc
   - `_configure_lora_peft()`, `_save_model_merged()` (LoRA/PEFT operations)
 - ✅ Single source of truth for shared training functionality
 
+### Phase 11: Service Layer (Complete)
+- ✅ Created `services/` package with backend-agnostic service classes
+- ✅ `TrainingService` - Unified training orchestration
+  - `TrainingRequest` dataclass consolidates all training parameters
+  - `apply_quality_mode()` - Single implementation of quality mode logic
+  - `from_dict()` - Reconstruct request from API job config
+  - Handles both text and vision training through unified interface
+- ✅ `InferenceServiceWrapper` - Clean interface for vLLM inference
+  - `ModelLoadRequest` and `GenerationRequest` dataclasses
+  - Wraps existing `InferenceService` with cleaner API
+- ✅ `DatasetService` - Dataset operations
+  - `DatasetInfo` and `DatasetValidationResult` dataclasses
+  - Validation, listing, preview, and loading operations
+- ✅ CLI training commands (`train`, `train-vision`) migrated to use `TrainingService`
+- ✅ API training tasks migrated to use `TrainingService`
+  - `run_training_job()` now uses `TrainingRequest.from_dict()` and `TrainingService.train()`
+  - Removed ~300 lines of duplicated `_run_text_training()` and `_run_vision_training()` functions
+  - Removed unused `cleanup_training_resources()` (handled by service)
+
 ## Current Package Structure
 
 ```
@@ -89,9 +108,15 @@ model_garden/
 ├── model_registry.py    # Model registry (standalone)
 ├── api.py               # OLD - kept for reference
 │
+├── services/            # Backend-agnostic service layer (NEW)
+│   ├── __init__.py      # Exports TrainingService, InferenceService, DatasetService
+│   ├── training_service.py    # TrainingRequest, TrainingService
+│   ├── inference_service.py   # InferenceServiceWrapper, ModelLoadRequest
+│   └── dataset_service.py     # DatasetService, DatasetInfo
+│
 ├── cli/                 # CLI commands
 │   ├── __init__.py      # Main entry point
-│   ├── train.py         # train, train-vision
+│   ├── train.py         # train, train-vision (uses TrainingService)
 │   ├── inference.py     # serve-model, inference-generate, inference-chat
 │   ├── dataset.py       # create-dataset, create-vision-dataset
 │   ├── server.py        # serve (FastAPI)
@@ -101,7 +126,7 @@ model_garden/
 │   ├── __init__.py
 │   ├── app.py
 │   ├── storage.py
-│   ├── tasks.py
+│   ├── tasks.py         # Uses TrainingRequest for job config
 │   ├── websocket.py
 │   ├── models/
 │   └── routes/

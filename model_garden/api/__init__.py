@@ -40,7 +40,6 @@ from .routes.inference import (
 from .storage import StorageManager, get_storage_manager
 from .tasks import (
     cancellation_events,
-    cleanup_training_resources,
     create_progress_callback,
     early_stop_requests,
     run_model_loading,
@@ -69,7 +68,6 @@ __all__ = [
     "run_training_job",
     "run_model_loading",
     "create_progress_callback",
-    "cleanup_training_resources",
     "cancellation_events",
     "early_stop_requests",
     # Models
