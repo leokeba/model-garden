@@ -214,15 +214,10 @@ class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
     ) -> None:
         """Train the vision-language model.
 
-        Note: This is a basic implementation. Advanced features like selective loss
-        are not supported. For full feature support, use the Unsloth backend.
+        Supports selective loss masking for structured output training using
+        the backend-agnostic SelectiveLossCollator.
         """
         console.print("[cyan]Starting vision training with Transformers backend...[/cyan]")
-
-        if config.selective_loss:
-            console.print(
-                "[yellow]⚠️  Selective loss not supported in Transformers backend[/yellow]"
-            )
 
         # Set up carbon tracking
         if enable_carbon_tracking:
@@ -260,7 +255,7 @@ class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
         all_callbacks = self._get_default_callbacks(callbacks)
 
         # Create a simple data collator for vision-language models
-        def collate_fn(examples):
+        def base_collate_fn(examples):
             """Simple collator using standard Transformers processor API."""
             assert self.processor is not None, "Processor must be loaded before training"
 
@@ -337,19 +332,75 @@ class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
 
             return inputs
 
+        # Choose data collator based on selective_loss flag
+        if config.selective_loss:
+            from model_garden.training.selective_loss import (
+                SelectiveLossCollator,
+                detect_schema_keys_from_dataset,
+            )
+
+            console.print(
+                f"[cyan]🎯 Using selective loss masking (level: {config.selective_loss_level})[/cyan]"
+            )
+            console.print(f"[cyan]   Strategy: {config.selective_loss_masking_strategy}[/cyan]")
+
+            # Auto-detect schema keys if in aggressive mode
+            schema_keys = config.selective_loss_schema_keys
+            if config.selective_loss_level == "aggressive" and not schema_keys:
+                detected_keys = detect_schema_keys_from_dataset(
+                    dataset=dataset,
+                    processor=self.processor,
+                    num_samples=min(50, len(dataset) if hasattr(dataset, "__len__") else 50),
+                    threshold=0.3,
+                    verbose=config.selective_loss_verbose,
+                )
+                schema_keys = list(detected_keys)
+
+            # Wrap the base collator with SelectiveLossCollator (transformers backend)
+            data_collator = SelectiveLossCollator(
+                base_collator=base_collate_fn,
+                processor=self.processor,
+                mask_structural_tokens=(config.selective_loss_level != "none"),
+                mask_schema_keys=(config.selective_loss_level == "aggressive"),
+                schema_keys=schema_keys,
+                mask_json_keywords=(config.selective_loss_level in ["moderate", "aggressive"]),
+                masking_strategy=config.selective_loss_masking_strategy,
+                masking_start_epoch=config.selective_loss_masking_start_epoch,
+                mask_every_n_steps=config.selective_loss_mask_every_n_steps,
+                mask_for_n_steps=config.selective_loss_mask_for_n_steps,
+                structural_weight=config.selective_loss_structural_weight,
+                verbose=config.selective_loss_verbose,
+            )
+        else:
+            data_collator = base_collate_fn
+
         # Create trainer
         trainer = Trainer(
             model=self.model,
             args=training_args,
             train_dataset=dataset,  # type: ignore
             eval_dataset=eval_dataset if isinstance(eval_dataset, Dataset) else None,
-            data_collator=collate_fn,
+            data_collator=data_collator,
             callbacks=all_callbacks,
         )
+
+        # Link trainer to data collator for epoch-based masking
+        if config.selective_loss:
+            from model_garden.training.selective_loss import SelectiveLossMixin
+
+            if isinstance(data_collator, SelectiveLossMixin):
+                data_collator.set_trainer(trainer)
 
         # Train
         trainer.train()
         console.print("[green]✓[/green] Training completed")
+
+        # Print selective loss statistics if enabled
+        if config.selective_loss:
+            from model_garden.training.selective_loss import SelectiveLossMixin
+
+            if isinstance(data_collator, SelectiveLossMixin):
+                data_collator.print_stats()
 
         # Stop carbon tracking
         self._stop_carbon_tracking()

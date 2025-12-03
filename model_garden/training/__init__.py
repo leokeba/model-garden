@@ -77,9 +77,13 @@ from .protocols import (
 
 # Selective loss
 from .selective_loss import (
-    SelectiveLossVisionCollator,
+    SelectiveLossCollator,
+    SelectiveLossMixin,
+    SelectiveLossUnslothCollator,
+    SelectiveLossVisionCollator,  # Backwards compatibility alias
     create_selective_loss_collator,
     detect_schema_keys_from_dataset,
+    is_unsloth_available,
 )
 
 # Custom SFT trainer
@@ -145,9 +149,13 @@ __all__ = [
     "TrainingResult",
     "is_vision_model",
     # Selective loss
-    "SelectiveLossVisionCollator",
+    "SelectiveLossMixin",
+    "SelectiveLossCollator",
+    "SelectiveLossUnslothCollator",
+    "SelectiveLossVisionCollator",  # Backwards compatibility alias
     "create_selective_loss_collator",
     "detect_schema_keys_from_dataset",
+    "is_unsloth_available",
     # Weighted loss
     "WeightedLossTrainer",
     "WeightedLossTrainerWithMetrics",
