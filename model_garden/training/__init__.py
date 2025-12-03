@@ -5,6 +5,9 @@ Training components for Model Garden:
 - vision_trainer.py: Vision-language model training (VisionLanguageTrainer)
 - config.py: Training configuration dataclasses
 - mixins.py: Shared trainer mixin with common functionality
+- callbacks.py: Training callbacks (metrics, progress estimation)
+- protocols.py: Protocol-based interfaces for duck typing
+- pipeline.py: Unified training pipeline
 - selective_loss.py: Selective loss for structured outputs
 - early_stopping.py: Early stopping callback
 - weighted_loss.py: Weighted loss trainers
@@ -23,6 +26,12 @@ from .config import (
 )
 
 # Callbacks
+from .callbacks import (
+    ProgressEstimate,
+    ProgressEstimationCallback,
+    TrainingMetrics,
+    TrainingMetricsCallback,
+)
 from .early_stopping import EarlyStoppingCallback
 
 # Shared mixin and utilities (consolidated location)
@@ -33,6 +42,25 @@ from .mixins import (
     detect_model_dtype,
     get_training_precision_config,
     retry_with_backoff,
+)
+
+# Unified training pipeline
+from .pipeline import (
+    TrainingResult,
+    is_vision_model,
+    train,
+    train_text,
+    train_vision,
+)
+
+# Protocol-based interfaces
+from .protocols import (
+    TextTrainerProtocol,
+    TrainingBackendProtocol,
+    VisionTrainerProtocol,
+    is_text_trainer,
+    is_training_backend,
+    is_vision_trainer,
 )
 
 # Selective loss
@@ -81,6 +109,23 @@ __all__ = [
     "merge_vision_lora_adapter",
     # Callbacks
     "EarlyStoppingCallback",
+    "TrainingMetricsCallback",
+    "TrainingMetrics",
+    "ProgressEstimationCallback",
+    "ProgressEstimate",
+    # Protocols
+    "TextTrainerProtocol",
+    "VisionTrainerProtocol",
+    "TrainingBackendProtocol",
+    "is_text_trainer",
+    "is_vision_trainer",
+    "is_training_backend",
+    # Unified pipeline
+    "train",
+    "train_text",
+    "train_vision",
+    "TrainingResult",
+    "is_vision_model",
     # Selective loss
     "SelectiveLossVisionCollator",
     "create_selective_loss_collator",
