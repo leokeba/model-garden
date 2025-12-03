@@ -442,7 +442,7 @@ def carbon_clear(force: bool, older_than: int | None):
         # Filter by age
         from datetime import datetime, timedelta
 
-        cutoff = datetime.utcnow() - timedelta(days=older_than)
+        cutoff = datetime.now(datetime.UTC) - timedelta(days=older_than)
         to_delete = []
 
         for e in emissions:
@@ -450,7 +450,7 @@ def carbon_clear(force: bool, older_than: int | None):
             if ts:
                 try:
                     emission_time = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    if emission_time.replace(tzinfo=None) < cutoff:
+                    if emission_time < cutoff:
                         to_delete.append(e.get("job_id"))
                 except (ValueError, AttributeError):
                     pass

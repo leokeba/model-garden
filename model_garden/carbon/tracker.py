@@ -1,7 +1,7 @@
 """Carbon emissions tracker wrapper around CodeCarbon."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -233,7 +233,7 @@ class CarbonTracker:
         summary = {
             "job_id": self.job_id,
             "job_type": self.job_type,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "emissions_kg_co2": emissions_kg,
             "tracking_mode": "process",
             "output_dir": str(self.output_dir),

@@ -11,7 +11,7 @@ Routes for carbon emissions tracking:
 """
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -209,7 +209,7 @@ async def get_emissions_trends(
             }
 
         # Calculate cutoff date
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         if period == "7d":
             cutoff = now - timedelta(days=7)
         elif period == "30d":
