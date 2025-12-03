@@ -44,6 +44,15 @@ async def list_emissions(job_type: str | None = None, limit: int | None = None):
                 if record["job_id"] in training_jobs:
                     model_name = training_jobs[record["job_id"]].get("base_model", "Unknown")
 
+            # Calculate carbon intensity if it's 0 (for historical data)
+            carbon_intensity = record.get("carbon_intensity_g_per_kwh", 0.0)
+            if carbon_intensity == 0.0:
+                emissions_kg = record.get("emissions_kg_co2", 0.0)
+                energy_kwh = record.get("energy_consumed_kwh", 0.0)
+                if energy_kwh > 0 and emissions_kg > 0:
+                    # carbon_intensity (g/kWh) = emissions (kg) * 1000 / energy (kWh)
+                    carbon_intensity = (emissions_kg * 1000) / energy_kwh
+
             formatted_emissions.append(
                 {
                     "id": f"emission-{record['job_id']}",
@@ -59,7 +68,7 @@ async def list_emissions(job_type: str | None = None, limit: int | None = None):
                     "cpu_energy": record.get("cpu_energy_kwh", 0.0),
                     "gpu_energy": record.get("gpu_energy_kwh", 0.0),
                     "ram_energy": record.get("ram_energy_kwh", 0.0),
-                    "carbon_intensity": record.get("carbon_intensity_g_per_kwh", 0.0),
+                    "carbon_intensity": carbon_intensity,
                     "country": record.get("country_name", "Unknown"),
                     "region": record.get("region", "Unknown"),
                     "equivalents": record.get("equivalents", {}),

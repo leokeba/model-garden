@@ -203,8 +203,17 @@ class CarbonTracker:
                     rows = list(reader)
                     if rows:
                         last_row = rows[-1]
+                        energy_consumed = float(last_row.get("energy_consumed", 0))
+                        emissions_from_csv = float(last_row.get("emissions", 0))
+
+                        # Calculate carbon intensity from emissions and energy
+                        # Formula: carbon_intensity (g/kWh) = emissions (kg) * 1000 / energy (kWh)
+                        carbon_intensity = 0.0
+                        if energy_consumed > 0 and emissions_from_csv > 0:
+                            carbon_intensity = (emissions_from_csv * 1000) / energy_consumed
+
                         detailed_data = {
-                            "energy_consumed_kwh": float(last_row.get("energy_consumed", 0)),
+                            "energy_consumed_kwh": energy_consumed,
                             "duration_seconds": float(last_row.get("duration", 0)),
                             "emissions_rate_kg_per_sec": float(last_row.get("emissions_rate", 0)),
                             "cpu_power_watts": float(last_row.get("cpu_power", 0)),
@@ -213,9 +222,7 @@ class CarbonTracker:
                             "cpu_energy_kwh": float(last_row.get("cpu_energy", 0)),
                             "gpu_energy_kwh": float(last_row.get("gpu_energy", 0)),
                             "ram_energy_kwh": float(last_row.get("ram_energy", 0)),
-                            "carbon_intensity_g_per_kwh": float(
-                                last_row.get("carbon_intensity", 0)
-                            ),
+                            "carbon_intensity_g_per_kwh": carbon_intensity,
                             "country_name": last_row.get("country_name", "Unknown"),
                             "region": last_row.get("region", "Unknown"),
                         }

@@ -532,7 +532,31 @@ class BoAmpsReportGenerator:
         # Use actual data from CodeCarbon
         country_name = emissions_data.get("country_name", "USA")
         region = emissions_data.get("region", "Unknown")
-        carbon_intensity = emissions_data.get("carbon_intensity_g_per_kwh", 240.0)
+        carbon_intensity = emissions_data.get("carbon_intensity_g_per_kwh", 0.0)
+
+        # If carbon intensity is 0, try to calculate it from emissions and energy
+        if carbon_intensity == 0.0:
+            emissions_kg = emissions_data.get("emissions_kg_co2", 0.0)
+            energy_kwh = emissions_data.get("energy_consumed_kwh", 0.0)
+            if energy_kwh > 0 and emissions_kg > 0:
+                # carbon_intensity (g/kWh) = emissions (kg) * 1000 / energy (kWh)
+                carbon_intensity = (emissions_kg * 1000) / energy_kwh
+
+        # If still 0, use default values based on country
+        if carbon_intensity == 0.0:
+            # Default carbon intensities by country (g CO2/kWh) - approximate 2024 values
+            country_defaults = {
+                "France": 56.0,  # Mostly nuclear
+                "USA": 380.0,
+                "United States": 380.0,
+                "Germany": 350.0,
+                "United Kingdom": 200.0,
+                "Canada": 130.0,
+                "China": 540.0,
+                "Japan": 470.0,
+                "Australia": 510.0,
+            }
+            carbon_intensity = country_defaults.get(country_name, 240.0)  # World average fallback
 
         # Convert country name to ISO code (simple mapping for common ones)
         country_code_map = {
