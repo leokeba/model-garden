@@ -15,6 +15,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 
+from model_garden.utils.hf_cache import get_hf_token
+
 from ..models import APIResponse, ModelRenameRequest, PaginatedResponse
 from ..storage import get_storage_manager
 
@@ -383,7 +385,6 @@ async def upload_model_to_hub(
     hf_token: str | None = None,
 ):
     """Upload a model to HuggingFace Hub."""
-    import os
 
     from huggingface_hub import HfApi, create_repo
 
@@ -405,7 +406,7 @@ async def upload_model_to_hub(
         )
 
     # Get token from request or environment
-    token = hf_token or os.environ.get("HF_TOKEN")
+    token = hf_token or get_hf_token()
     if not token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

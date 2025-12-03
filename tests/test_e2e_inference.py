@@ -1236,7 +1236,7 @@ class TestModelInfoAndState:
     async def test_model_state_after_generation(self, info_service):
         """Test that model state is consistent after generation."""
         # Generate text
-        result = await info_service.generate(
+        await info_service.generate(
             prompt="Test prompt",
             max_tokens=10,
             stream=False,

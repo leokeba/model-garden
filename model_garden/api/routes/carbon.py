@@ -552,13 +552,8 @@ async def get_carbon_recommendations():
 
         # Analyze patterns
         total_emissions = sum(r.get("emissions_kg_co2", 0) for r in all_emissions)
-        total_energy = sum(r.get("energy_consumed_kwh", 0) for r in all_emissions)
         total_duration = sum(r.get("duration_seconds", 0) for r in all_emissions)
         job_count = len(all_emissions)
-
-        # Calculate averages
-        avg_emissions_per_job = total_emissions / job_count if job_count > 0 else 0
-        avg_duration = total_duration / job_count if job_count > 0 else 0
 
         # Insight: Total impact
         insights.append(

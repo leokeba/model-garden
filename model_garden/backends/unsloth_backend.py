@@ -4,22 +4,13 @@ This backend provides Unsloth-optimized training for both text and vision-langua
 Unsloth offers significant speedups and memory savings through specialized optimizations.
 """
 
-import os
-from pathlib import Path
 from typing import Any
 
-# Configure HuggingFace cache from environment before importing HF libraries
-from dotenv import load_dotenv
+# Configure HuggingFace cache BEFORE importing HF libraries
+from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_memory
 
-load_dotenv()
-
-HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-os.environ["HF_HOME"] = HF_HOME
-os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
-os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
-
-# Suppress non-critical warnings
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+configure_hf_cache()
+configure_pytorch_memory()
 
 from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
 

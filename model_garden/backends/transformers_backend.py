@@ -4,26 +4,16 @@ This backend provides standard HuggingFace Transformers + PEFT training without 
 Use this for maximum compatibility or when Unsloth doesn't support your model.
 """
 
-import os
-from pathlib import Path
 from typing import Any
 
-# Configure HuggingFace cache from environment before importing HF libraries
-from dotenv import load_dotenv
+# Configure HuggingFace cache BEFORE importing HF libraries
+from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_memory
 
-load_dotenv()
-
-HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-os.environ["HF_HOME"] = HF_HOME
-os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
-os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
-
-# Configure PyTorch memory allocator
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+configure_hf_cache()
+configure_pytorch_memory()
 
 from datasets import Dataset
 from peft import PeftModel
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from transformers import (
     AutoModelForCausalLM,
@@ -34,8 +24,7 @@ from transformers import (
 
 from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
 from model_garden.backends.transformers_base import TransformersTrainerMixin
-
-console = Console()
+from model_garden.utils.console import console
 
 
 class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):

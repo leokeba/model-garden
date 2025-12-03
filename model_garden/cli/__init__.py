@@ -9,9 +9,8 @@ This package provides the CLI commands organized into logical groups:
 """
 
 import click
-from rich.console import Console
 
-console = Console()
+from model_garden.utils.console import console
 
 
 @click.group()

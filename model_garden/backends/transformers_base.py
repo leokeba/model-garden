@@ -4,7 +4,6 @@ This module provides shared functionality between TransformersTextTrainer and
 TransformersVisionTrainer to reduce code duplication.
 """
 
-import os
 import time
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -12,7 +11,6 @@ from typing import Any, Literal, cast
 import torch
 from datasets import Dataset, load_dataset
 from peft import LoraConfig, PeftModel, TaskType, get_peft_model
-from rich.console import Console
 from transformers import TrainingArguments
 
 from model_garden.carbon import CarbonTracker
@@ -21,8 +19,8 @@ from model_garden.training.utils import (
     detect_model_dtype,
     get_training_precision_config,
 )
-
-console = Console()
+from model_garden.utils.console import console
+from model_garden.utils.hf_cache import get_hf_token
 
 
 class TransformersTrainerMixin:
@@ -44,7 +42,7 @@ class TransformersTrainerMixin:
 
     def _get_hf_token(self) -> str | None:
         """Get HuggingFace token from environment."""
-        return os.getenv("HF_TOKEN")
+        return get_hf_token()
 
     def _get_torch_dtype(self) -> torch.dtype:
         """Get appropriate torch dtype based on hardware support."""

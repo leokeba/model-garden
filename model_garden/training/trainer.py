@@ -6,21 +6,13 @@ Note: You may see non-critical warnings:
 """
 
 import json
-import os
 from pathlib import Path
 
-# Configure HuggingFace cache from environment before importing HF libraries
-from dotenv import load_dotenv
+# Configure HuggingFace cache BEFORE importing HF libraries
+from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_memory, get_hf_token
 
-load_dotenv()
-
-HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-os.environ["HF_HOME"] = HF_HOME
-os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
-os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
-
-# Suppress non-critical warnings
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+configure_hf_cache()
+configure_pytorch_memory()
 
 # CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
 # This ensures Unsloth's PyTorch patches are applied correctly for optimal performance
@@ -28,7 +20,6 @@ from typing import cast
 
 # Then import other ML libraries AFTER unsloth
 from datasets import Dataset, load_dataset
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from transformers import TrainingArguments
 from trl.trainer.sft_trainer import SFTTrainer
@@ -47,7 +38,8 @@ from model_garden.training.utils import (
     get_training_precision_config,
 )
 
-console = Console()
+# Import centralized console
+from model_garden.utils.console import console
 
 
 class ModelTrainer(TextTrainer):
@@ -107,7 +99,7 @@ class ModelTrainer(TextTrainer):
             progress.add_task(description="Loading model...", total=None)
 
             # Get HuggingFace token from environment for private models
-            hf_token = os.getenv("HF_TOKEN")
+            hf_token = get_hf_token()
 
             # Unsloth supports both 4-bit and 8-bit quantization
             # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
@@ -228,7 +220,7 @@ class ModelTrainer(TextTrainer):
             Loaded dataset
         """
         # Get HuggingFace token from environment for private datasets
-        hf_token = os.getenv("HF_TOKEN")
+        hf_token = get_hf_token()
 
         # Check if dataset_name includes a specific file
         if "::" in dataset_name:

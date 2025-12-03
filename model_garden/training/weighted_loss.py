@@ -33,10 +33,9 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from rich.console import Console
 from transformers import Trainer
 
-console = Console()
+from model_garden.utils.console import console
 
 
 class WeightedLossTrainer(Trainer):

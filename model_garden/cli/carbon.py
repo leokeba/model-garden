@@ -9,12 +9,11 @@ from datetime import datetime
 from pathlib import Path
 
 import click
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
-console = Console()
+from model_garden.utils.console import console
 
 
 @click.group()

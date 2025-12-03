@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+from model_garden.utils.console import console
 
 # Import utility functions from the utils module
 from .utils import (
@@ -16,8 +16,6 @@ from .utils import (
     is_lora_adapter,
     is_vision_model,
 )
-
-console = Console()
 
 
 class InferenceService:

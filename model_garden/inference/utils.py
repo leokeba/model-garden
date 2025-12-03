@@ -6,21 +6,14 @@ Utility functions for model detection and GPU memory management:
 """
 
 import json
-import os
 from pathlib import Path
 
-from rich.console import Console
+# Configure HuggingFace cache BEFORE any HF imports
+from model_garden.utils.hf_cache import configure_hf_cache, get_hf_token
 
-# CRITICAL: Set HuggingFace cache directories BEFORE any HF imports
-if "HF_HOME" in os.environ:
-    hf_home = os.environ["HF_HOME"]
-    os.environ["TRANSFORMERS_CACHE"] = os.environ.get(
-        "TRANSFORMERS_CACHE", f"{hf_home}/transformers"
-    )
-    os.environ["HF_DATASETS_CACHE"] = os.environ.get("HF_DATASETS_CACHE", f"{hf_home}/datasets")
-    os.environ["HUGGINGFACE_HUB_CACHE"] = os.environ.get("HUGGINGFACE_HUB_CACHE", f"{hf_home}/hub")
+configure_hf_cache()
 
-console = Console()
+from model_garden.utils.console import console
 
 
 def get_gpu_memory_gb() -> float:
@@ -127,7 +120,7 @@ def is_lora_adapter(model_path: str) -> bool:
         try:
             from huggingface_hub import HfFileSystem
 
-            hf_token = os.getenv("HF_TOKEN")
+            hf_token = get_hf_token()
             fs = HfFileSystem(token=hf_token)
 
             adapter_config_path = f"{model_path}/adapter_config.json"
@@ -165,7 +158,7 @@ def get_base_model_from_adapter(adapter_path: str) -> str | None:
         if "/" in adapter_path and not Path(adapter_path).exists():
             from huggingface_hub import hf_hub_download
 
-            hf_token = os.getenv("HF_TOKEN")
+            hf_token = get_hf_token()
 
             config_file = hf_hub_download(
                 repo_id=adapter_path,
@@ -256,7 +249,7 @@ def is_vision_model(model_path: str) -> bool:
         try:
             from huggingface_hub import HfFileSystem
 
-            hf_token = os.getenv("HF_TOKEN")
+            hf_token = get_hf_token()
             fs = HfFileSystem(token=hf_token)
 
             processor_config_path = f"{model_path}/processor_config.json"

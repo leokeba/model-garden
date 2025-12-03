@@ -3,31 +3,23 @@
 Supports multimodal models like Qwen2.5-VL for fine-tuning on vision-language tasks.
 """
 
-import base64
 import gc
-import io
 import json
 import os
 from pathlib import Path
 from typing import Any, Literal, cast
 
-# Configure HuggingFace cache from environment before importing HF libraries
-from dotenv import load_dotenv
+# Configure HuggingFace cache BEFORE importing HF libraries
+from model_garden.utils.hf_cache import (
+    configure_hf_cache,
+    configure_pytorch_memory,
+    configure_unsloth_settings,
+    get_hf_token,
+)
 
-load_dotenv()
-
-HF_HOME = os.getenv("HF_HOME", str(Path.home() / ".cache" / "huggingface"))
-os.environ["HF_HOME"] = HF_HOME
-os.environ["TRANSFORMERS_CACHE"] = str(Path(HF_HOME) / "hub")
-os.environ["HF_DATASETS_CACHE"] = str(Path(HF_HOME) / "datasets")
-
-# Configure PyTorch CUDA memory allocator for better performance
-# max_split_size_mb limits memory fragmentation, expandable_segments allows dynamic growth
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512,expandable_segments:True"
-
-# Disable Unsloth statistics collection to avoid thread safety issues
-# (stats collection uses signal.alarm which must be called from main thread)
-os.environ["UNSLOTH_DISABLE_STATISTICS"] = "1"
+configure_hf_cache()
+configure_pytorch_memory()
+configure_unsloth_settings()
 
 # CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
 # This ensures Unsloth's PyTorch patches are applied correctly
@@ -35,7 +27,6 @@ os.environ["UNSLOTH_DISABLE_STATISTICS"] = "1"
 import torch
 from datasets import Dataset, load_dataset
 from PIL import Image
-from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from trl.trainer.sft_trainer import SFTTrainer  # type: ignore
 from unsloth import FastVisionModel  # FastVisionModel for vision-language models
@@ -54,7 +45,9 @@ from model_garden.training.utils import (
     get_training_precision_config,
 )
 
-console = Console()
+# Import centralized utilities
+from model_garden.utils.console import console
+from model_garden.utils.image import decode_base64_image, load_image
 
 
 class FixedSFTTrainer(SFTTrainer):
@@ -167,7 +160,7 @@ class VisionLanguageTrainer(VisionTrainer):
         console.print(f"[cyan]Precision: {precision}[/cyan]")
 
         # Get HuggingFace token from environment for private models
-        hf_token = os.getenv("HF_TOKEN")
+        hf_token = get_hf_token()
 
         try:
             with Progress(
@@ -400,7 +393,7 @@ class VisionLanguageTrainer(VisionTrainer):
             Loaded dataset
         """
         # Get HuggingFace token from environment for private datasets
-        hf_token = os.getenv("HF_TOKEN")
+        hf_token = get_hf_token()
 
         try:
             # Check if dataset_name includes a specific file
@@ -462,18 +455,9 @@ class VisionLanguageTrainer(VisionTrainer):
             PIL Image object
         """
         try:
-            # Remove data URI prefix if present (e.g., "data:image/jpeg;base64,")
-            if image_str.startswith("data:"):
-                image_str = image_str.split(",", 1)[1]
-
-            # Decode base64 to bytes
-            image_bytes = base64.b64decode(image_str)
-
-            # Convert bytes to PIL Image
-            image = Image.open(io.BytesIO(image_bytes))
-            return image
-        except Exception as e:
-            console.print(f"[yellow]⚠️  Failed to decode base64 image: {e}[/yellow]")
+            return decode_base64_image(image_str)
+        except ValueError as e:
+            console.print(f"[yellow]⚠️  {e}[/yellow]")
             # Return blank image as fallback
             return Image.new("RGB", (224, 224))
 
@@ -490,50 +474,20 @@ class VisionLanguageTrainer(VisionTrainer):
             Images are loaded once and kept in RAM for efficiency. The conversion to RGB
             ensures consistent format and forces full loading (avoiding lazy loading issues).
         """
-        # Already a PIL Image
-        if isinstance(image_data, Image.Image):
-            # Ensure RGB format for consistency
-            if image_data.mode != "RGB":
-                return image_data.convert("RGB")
-            return image_data
+        # Use centralized image loading with fallback warning
+        result = load_image(image_data, fallback_size=(224, 224), convert_to_rgb=True)
 
-        # Check for PIL.Image subclasses (PngImageFile, JpegImageFile, etc.)
-        if (
-            image_data is not None
-            and hasattr(image_data, "mode")
-            and hasattr(image_data, "convert")
-        ):
-            # It's an image object
-            if image_data.mode != "RGB":
-                return image_data.convert("RGB")
-            return image_data
+        # Warn if we got a fallback image
+        if result.size == (224, 224):
+            original_is_image = isinstance(image_data, Image.Image) or (
+                hasattr(image_data, "mode") and hasattr(image_data, "convert")
+            )
+            if not original_is_image:
+                console.print(
+                    f"[yellow]⚠️  Unknown image format (type: {type(image_data).__name__}), using blank image[/yellow]"
+                )
 
-        # File path
-        if isinstance(image_data, str):
-            if image_data.startswith("data:image") or (
-                len(image_data) > 100 and not os.path.exists(image_data)
-            ):
-                # Looks like base64
-                img = self._decode_base64_image(image_data)
-                # Ensure RGB format
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                return img
-            elif os.path.exists(image_data):
-                # Load image from file
-                img = Image.open(image_data)
-                # Convert to RGB to ensure consistent format and fully load pixels
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                # Force load to ensure pixels are in memory (avoid lazy loading)
-                img.load()
-                return img
-
-        # Fallback: create blank image
-        console.print(
-            f"[yellow]⚠️  Unknown image format (type: {type(image_data).__name__}), using blank image[/yellow]"
-        )
-        return Image.new("RGB", (224, 224))
+        return result
 
     def _convert_messages_to_simple_format(self, messages: list[dict]) -> dict[str, str | None]:
         """Convert OpenAI messages format to simple format.
@@ -1593,7 +1547,7 @@ def merge_vision_lora_adapter(
                 # HuggingFace model ID
                 from huggingface_hub import hf_hub_download
 
-                hf_token = os.getenv("HF_TOKEN")
+                hf_token = get_hf_token()
 
                 config_file = hf_hub_download(
                     repo_id=adapter_path, filename="adapter_config.json", token=hf_token
@@ -1624,7 +1578,7 @@ def merge_vision_lora_adapter(
     try:
         # Load base model and adapter
         console.print("[cyan]Loading base model...[/cyan]")
-        hf_token = os.getenv("HF_TOKEN")
+        hf_token = get_hf_token()
 
         # Use transformers AutoModelForVision2Seq instead of FastVisionModel for merging
         # This is more reliable for vision-language models

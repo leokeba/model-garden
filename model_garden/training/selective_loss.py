@@ -59,12 +59,11 @@ from typing import Any
 
 # Then import torch and other ML libraries
 import torch
-from rich.console import Console
 
 # CRITICAL: Import unsloth FIRST before torch (Unsloth requires this for optimizations)
 from unsloth.trainer import UnslothVisionDataCollator
 
-console = Console()
+from model_garden.utils.console import console
 
 
 class SelectiveLossVisionCollator(UnslothVisionDataCollator):

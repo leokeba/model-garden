@@ -48,8 +48,7 @@ class ChatMessage(BaseModel):
     content: str | list[dict] | dict
     name: str | None = None
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow"}
 
 
 class ResponseFormat(BaseModel):
@@ -80,8 +79,7 @@ class ChatCompletionRequest(BaseModel):
     user: str | None = None
     response_format: ResponseFormat | None = None
 
-    class Config:
-        extra = "allow"
+    model_config = {"extra": "allow"}
 
 
 class LoadModelRequest(BaseModel):

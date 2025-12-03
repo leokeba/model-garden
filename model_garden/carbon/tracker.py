@@ -6,11 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from codecarbon import EmissionsTracker
-from rich.console import Console
+
+from model_garden.utils.console import console
 
 from .database import get_emissions_db
-
-console = Console()
 
 
 class CarbonTracker:
