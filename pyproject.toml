@@ -41,7 +41,7 @@ dependencies = [
     "pynvml>=13.0.1",
     "python-dotenv>=1.1.1",
     "codecarbon>=2.4.0",
-    "transformers>=4.56.2",
+    "transformers==4.57.2",
     "unsloth>=2025.10.8",
     "seaborn>=0.13.2",
 ]

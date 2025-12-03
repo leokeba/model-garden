@@ -1,4 +1,5 @@
 // Training form components
+export { default as BackendSelector } from './BackendSelector.svelte';
 export { default as BaseModelSelector } from './BaseModelSelector.svelte';
 export { default as DatasetInput } from './DatasetInput.svelte';
 export { default as EarlyStoppingSection } from './EarlyStoppingSection.svelte';

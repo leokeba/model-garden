@@ -54,6 +54,7 @@ interface TrainingJob {
   lora_config?: any;
   model_type?: string;
   save_method?: string;
+  backend?: string;  // Training backend (unsloth, transformers, etc.)
   // Quality settings
   quality_mode?: boolean;
   load_in_16bit?: boolean;
@@ -256,6 +257,14 @@ interface RegistryModelsResponse {
   models: RegistryModelInfo[];
   total: number;
   category?: string;
+}
+
+// Training Backend Types
+interface TrainingBackend {
+  name: string;
+  description: string;
+  supports_text: boolean;
+  supports_vision: boolean;
 }
 
 interface Config {
@@ -470,6 +479,15 @@ class APIClient {
     });
   }
 
+  // Training Backends
+  async getBackends(): Promise<{ backends: TrainingBackend[]; total: number }> {
+    const response = await this.request<{ success: boolean; data: TrainingBackend[]; total: number }>('/system/backends');
+    return {
+      backends: response.data,
+      total: response.total,
+    };
+  }
+
   // Generic methods for other endpoints
   async get<T = any>(endpoint: string): Promise<T> {
     return this.request(endpoint);
@@ -499,6 +517,7 @@ class APIClient {
 export const api = new APIClient(API_BASE);
 export type {
   Config, Model, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemStatus,
+  TrainingBackend,
   TrainingJob
 };
 

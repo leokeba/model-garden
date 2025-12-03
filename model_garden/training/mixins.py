@@ -644,7 +644,12 @@ class TrainerMixin:
             # Merge LoRA weights into base model
             console.print("[cyan]Merging LoRA weights...[/cyan]")
             if isinstance(self.model, PeftModel):
-                merged_model = self.model.merge_and_unload()
+                # Type guard: ensure model has merge_and_unload method
+                merge_fn = getattr(self.model, "merge_and_unload", None)
+                if merge_fn is None or not callable(merge_fn):
+                    raise RuntimeError("PeftModel instance missing merge_and_unload method")
+                # Call the method directly on self.model to avoid type issues
+                merged_model = self.model.merge_and_unload()  # type: ignore[operator]
                 merged_model.save_pretrained(str(output_path), max_shard_size=max_shard_size)
             else:
                 self.model.save_pretrained(str(output_path), max_shard_size=max_shard_size)

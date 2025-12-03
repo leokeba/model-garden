@@ -23,6 +23,19 @@
             </div>
 
             <div>
+                <dt class="block text-gray-700 font-medium">Training Backend</dt>
+                <dd>
+                    <span
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {job.backend === 'unsloth'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-blue-100 text-blue-800'}"
+                    >
+                        {job.backend || "unsloth"}
+                    </span>
+                </dd>
+            </div>
+
+            <div>
                 <dt class="block text-gray-700 font-medium">
                     Validation Dataset
                 </dt>

@@ -1,10 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import type { RegistryModelInfo } from '$lib/api/client';
+  import type { RegistryModelInfo, TrainingBackend } from '$lib/api/client';
   import { api } from '$lib/api/client';
   import Button from '$lib/components/Button.svelte';
   import Card from '$lib/components/Card.svelte';
   import {
+    BackendSelector,
     ModelTypeSelector,
     BaseModelSelector,
     DatasetInput,
@@ -17,7 +18,7 @@
     SaveOptionsSection,
     SelectiveLossSection,
   } from '$lib/components/training';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
   let formData = $state({
     name: '',
@@ -26,6 +27,7 @@
     dataset_path: './data/sample.jsonl',
     validation_dataset_path: '',
     output_dir: '',
+    backend: 'unsloth',
     hyperparameters: {
       learning_rate: 0.00002,
       num_epochs: 3,
@@ -99,6 +101,10 @@
   let loadingModels = $state(true);
   let loadError = $state('');
 
+  // Training backends - loaded from API
+  let backends = $state<TrainingBackend[]>([]);
+  let loadingBackends = $state(true);
+
   // State for showing advanced settings
   let showAdvancedHyperparams = $state(false);
   let showAdvancedLora = $state(false);
@@ -118,6 +124,23 @@
 
   // Load models from registry on mount
   onMount(async () => {
+    // Load backends
+    try {
+      loadingBackends = true;
+      const backendsResponse = await api.getBackends();
+      backends = backendsResponse.backends;
+    } catch (err) {
+      console.error('Failed to load backends:', err);
+      // Fallback to default backends
+      backends = [
+        { name: 'unsloth', description: 'Unsloth-optimized training with 2x speedup and 60% memory savings', supports_text: true, supports_vision: true },
+        { name: 'transformers', description: 'Standard HuggingFace Transformers + PEFT (maximum compatibility, slower than Unsloth)', supports_text: true, supports_vision: true },
+      ];
+    } finally {
+      loadingBackends = false;
+    }
+
+    // Load models
     try {
       loadingModels = true;
       const [textResponse, visionResponse] = await Promise.all([
@@ -162,51 +185,67 @@
 
   // Update selected model info and apply defaults when base_model changes
   $effect(() => {
-    if (!useCustomModel) {
-      const currentModels = formData.model_type === 'vision' ? visionModels : textModels;
-      selectedModelInfo = currentModels.find((m) => m.id === formData.base_model) || null;
+    const baseModel = formData.base_model;
+    const modelType = formData.model_type;
+    const isCustom = useCustomModel;
+    
+    untrack(() => {
+      if (!isCustom) {
+        const currentModels = modelType === 'vision' ? visionModels : textModels;
+        selectedModelInfo = currentModels.find((m) => m.id === baseModel) || null;
 
-      if (selectedModelInfo?.training_defaults) {
-        const defaults = selectedModelInfo.training_defaults;
+        if (selectedModelInfo?.training_defaults) {
+          const defaults = selectedModelInfo.training_defaults;
 
-        if (defaults.hyperparameters) {
-          formData.hyperparameters = { ...formData.hyperparameters, ...defaults.hyperparameters };
+          if (defaults.hyperparameters) {
+            formData.hyperparameters = { ...formData.hyperparameters, ...defaults.hyperparameters };
+          }
+
+          if (defaults.lora_config) {
+            formData.lora_config = { ...formData.lora_config, ...defaults.lora_config };
+          }
+
+          if (defaults.save_method) {
+            formData.save_method = defaults.save_method;
+          }
         }
-
-        if (defaults.lora_config) {
-          formData.lora_config = { ...formData.lora_config, ...defaults.lora_config };
-        }
-
-        if (defaults.save_method) {
-          formData.save_method = defaults.save_method;
-        }
+      } else {
+        selectedModelInfo = null;
       }
-    } else {
-      selectedModelInfo = null;
-    }
+    });
   });
 
   // Update available models when type changes
+  let previousModelType = $state<string | null>(null);
+  
   $effect(() => {
-    if (!useCustomModel) {
-      if (formData.model_type === 'vision') {
-        if (visionModels.length > 0) {
-          formData.base_model = visionModels[0].id;
+    const modelType = formData.model_type;
+    
+    // Only run if model type actually changed
+    if (previousModelType === modelType) return;
+    previousModelType = modelType;
+    
+    untrack(() => {
+      if (!useCustomModel) {
+        if (modelType === 'vision') {
+          if (visionModels.length > 0) {
+            formData.base_model = visionModels[0].id;
+          }
+          formData.dataset_path = './data/vision_dataset.jsonl';
+        } else {
+          if (textModels.length > 0) {
+            formData.base_model = textModels[0].id;
+          }
+          formData.dataset_path = './data/sample.jsonl';
         }
-        formData.dataset_path = './data/vision_dataset.jsonl';
       } else {
-        if (textModels.length > 0) {
-          formData.base_model = textModels[0].id;
+        if (modelType === 'vision') {
+          formData.dataset_path = './data/vision_dataset.jsonl';
+        } else {
+          formData.dataset_path = './data/sample.jsonl';
         }
-        formData.dataset_path = './data/sample.jsonl';
       }
-    } else {
-      if (formData.model_type === 'vision') {
-        formData.dataset_path = './data/vision_dataset.jsonl';
-      } else {
-        formData.dataset_path = './data/sample.jsonl';
-      }
-    }
+    });
   });
 
   // Auto-update output directory when name changes
@@ -402,6 +441,15 @@
           onQualityModeChange={(value) => (formData.quality_mode = value)}
           onLoadIn16bitChange={(value) => (formData.load_in_16bit = value)}
           onLoadIn8bitChange={(value) => (formData.load_in_8bit = value)}
+        />
+
+        <!-- Training Backend -->
+        <BackendSelector
+          backend={formData.backend}
+          modelType={formData.model_type}
+          {backends}
+          loading={loadingBackends}
+          onBackendChange={(value) => (formData.backend = value)}
         />
 
         <!-- LoRA Configuration -->

@@ -142,6 +142,21 @@ async def system_status():
     }
 
 
+@router.get("/backends")
+async def list_training_backends():
+    """List all available training backends with their capabilities."""
+    from model_garden.backends import list_backends
+
+    backends = list_backends()
+
+    return {
+        "success": True,
+        "data": backends,
+        "total": len(backends),
+        "message": f"{len(backends)} training backends available",
+    }
+
+
 @router.post("/cleanup")
 async def cleanup_gpu_memory():
     """Force cleanup of GPU memory and Python garbage collection."""

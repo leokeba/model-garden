@@ -7,12 +7,14 @@ API routes organized by functionality:
 - datasets: Dataset management and validation
 - carbon: Carbon emissions tracking and BoAmps reports
 - system: System status and GPU management
+- registry: Model registry for supported models and their configurations
 """
 
 from .carbon import router as carbon_router
 from .datasets import router as datasets_router
 from .inference import router as inference_router
 from .models import router as models_router
+from .registry import router as registry_router
 from .system import router as system_router
 from .training import router as training_router
 
@@ -23,4 +25,5 @@ __all__ = [
     "datasets_router",
     "carbon_router",
     "system_router",
+    "registry_router",
 ]

@@ -20,6 +20,7 @@ from .routes import (
     datasets_router,
     inference_router,
     models_router,
+    registry_router,
     system_router,
     training_router,
 )
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets_router)
     app.include_router(carbon_router)
     app.include_router(system_router)
+    app.include_router(registry_router)
 
     # Mount frontend static files if available
     frontend_build_path = Path(__file__).parent.parent.parent / "frontend" / "build"
