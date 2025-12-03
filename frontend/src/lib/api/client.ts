@@ -273,6 +273,36 @@ interface Config {
   hf_home: string;
 }
 
+// Settings Types
+interface UnslothStatus {
+  installed: boolean;
+  version: string | null;
+  description: string;
+}
+
+interface PackageOperationStatus {
+  in_progress: boolean;
+  operation: string | null;
+  output: string[];
+  success: boolean | null;
+  error: string | null;
+}
+
+interface SystemSettings {
+  optional_dependencies: {
+    unsloth: UnslothStatus;
+  };
+  environment: {
+    python_version: string;
+    project_root: string;
+  };
+  service: {
+    is_systemd_service: boolean;
+    can_restart_service: boolean;
+  };
+  package_operation: PackageOperationStatus;
+}
+
 class APIClient {
   private baseURL: string;
 
@@ -553,6 +583,28 @@ class APIClient {
     };
   }
 
+  // System Settings
+  async getSettings(): Promise<SystemSettings> {
+    const response = await this.request<{ success: boolean; data: SystemSettings }>('/system/settings');
+    return response.data;
+  }
+
+  async installUnsloth(): Promise<{ success: boolean; message: string; data?: { operation: string; command: string } }> {
+    return this.request('/system/unsloth/install', { method: 'POST' });
+  }
+
+  async uninstallUnsloth(): Promise<{ success: boolean; message: string; data?: { operation: string; command: string } }> {
+    return this.request('/system/unsloth/uninstall', { method: 'POST' });
+  }
+
+  async getUnslothOperationStatus(): Promise<{ success: boolean; data: PackageOperationStatus }> {
+    return this.request('/system/unsloth/status');
+  }
+
+  async restartService(): Promise<{ success: boolean; message: string }> {
+    return this.request('/system/restart', { method: 'POST' });
+  }
+
   // Generic methods for other endpoints
   async get<T = any>(endpoint: string): Promise<T> {
     return this.request(endpoint);
@@ -581,8 +633,8 @@ class APIClient {
 
 export const api = new APIClient(API_BASE);
 export type {
-  Config, Model, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemStatus,
+  Config, Model, PackageOperationStatus, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemSettings, SystemStatus,
   TrainingBackend,
-  TrainingJob
+  TrainingJob, UnslothStatus
 };
 

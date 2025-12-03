@@ -2,12 +2,29 @@
 """
 Routes for system management:
 - GET /api/v1/system/status - Get system status (CPU, GPU, memory)
+- GET /api/v1/system/settings - Get system settings including optional dependencies
 - POST /api/v1/system/cleanup - Force GPU memory cleanup
+- POST /api/v1/system/unsloth/install - Install Unsloth package
+- POST /api/v1/system/unsloth/uninstall - Uninstall Unsloth package
+- POST /api/v1/system/restart - Restart the Model Garden service
 """
 
-from fastapi import APIRouter
+import subprocess
+import sys
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
+
+# Track package installation status
+_package_operation_status: dict = {
+    "in_progress": False,
+    "operation": None,
+    "output": [],
+    "success": None,
+    "error": None,
+}
 
 
 @router.get("/status")
@@ -202,3 +219,299 @@ async def cleanup_gpu_memory():
         result["actions"].append(f"Error: {str(e)}")
 
     return result
+
+
+@router.get("/settings")
+async def get_settings():
+    """Get system settings including optional dependencies status."""
+    from model_garden.utils.optional_deps import is_unsloth_installed
+
+    # Clear the lru_cache to get fresh status
+    is_unsloth_installed.cache_clear()
+
+    # Get Unsloth version if installed
+    unsloth_version = None
+    if is_unsloth_installed():
+        try:
+            import unsloth
+
+            unsloth_version = getattr(unsloth, "__version__", "unknown")
+        except Exception:
+            unsloth_version = "unknown"
+
+    # Get Python and uv info
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+    # Check if running as systemd service
+    is_systemd_service = False
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "model-garden.service"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        is_systemd_service = result.returncode == 0
+    except Exception:
+        pass
+
+    # Check if passwordless sudo is available for restart
+    can_restart_service = False
+    if is_systemd_service:
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", "systemctl", "restart", "model-garden.service", "--dry-run"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            # If no password prompt and command exists, we can restart
+            can_restart_service = result.returncode == 0 or "dry-run" in result.stderr.lower()
+        except Exception:
+            # Try simpler check - just see if sudo -n works for systemctl
+            try:
+                result = subprocess.run(
+                    ["sudo", "-n", "true"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                can_restart_service = result.returncode == 0
+            except Exception:
+                pass
+
+    return {
+        "success": True,
+        "data": {
+            "optional_dependencies": {
+                "unsloth": {
+                    "installed": is_unsloth_installed(),
+                    "version": unsloth_version,
+                    "description": "Optimized training backend (2x faster, 60% less memory)",
+                },
+            },
+            "environment": {
+                "python_version": python_version,
+                "project_root": str(Path(__file__).parent.parent.parent.parent),
+            },
+            "service": {
+                "is_systemd_service": is_systemd_service,
+                "can_restart_service": can_restart_service,
+            },
+            "package_operation": _package_operation_status,
+        },
+    }
+
+
+def _run_package_command(command: list[str], operation: str):
+    """Run a package management command in the background."""
+    global _package_operation_status
+
+    _package_operation_status = {
+        "in_progress": True,
+        "operation": operation,
+        "output": [],
+        "success": None,
+        "error": None,
+    }
+
+    try:
+        # Get project root
+        project_root = Path(__file__).parent.parent.parent.parent
+
+        # Run the command
+        process = subprocess.Popen(
+            command,
+            cwd=str(project_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        # Collect output
+        output_lines = []
+        if process.stdout:
+            for line in process.stdout:
+                output_lines.append(line.rstrip())
+                # Keep last 100 lines
+                if len(output_lines) > 100:
+                    output_lines.pop(0)
+
+        process.wait()
+
+        _package_operation_status["output"] = output_lines
+        _package_operation_status["success"] = process.returncode == 0
+        if process.returncode != 0:
+            _package_operation_status["error"] = f"Command exited with code {process.returncode}"
+
+    except Exception as e:
+        _package_operation_status["success"] = False
+        _package_operation_status["error"] = str(e)
+    finally:
+        _package_operation_status["in_progress"] = False
+
+    # Clear the unsloth cache so next check gets fresh status
+    from model_garden.utils.optional_deps import is_unsloth_installed
+
+    is_unsloth_installed.cache_clear()
+
+
+@router.post("/unsloth/install")
+async def install_unsloth(background_tasks: BackgroundTasks):
+    """Install the Unsloth package."""
+    from model_garden.utils.optional_deps import is_unsloth_installed
+
+    # Clear cache to get fresh status
+    is_unsloth_installed.cache_clear()
+
+    if is_unsloth_installed():
+        return {
+            "success": False,
+            "message": "Unsloth is already installed",
+        }
+
+    if _package_operation_status["in_progress"]:
+        return {
+            "success": False,
+            "message": f"Another package operation is in progress: {_package_operation_status['operation']}",
+        }
+
+    # Use uv to install unsloth extra
+    command = ["uv", "sync", "--extra", "unsloth"]
+
+    background_tasks.add_task(_run_package_command, command, "install_unsloth")
+
+    return {
+        "success": True,
+        "message": "Unsloth installation started. Check /api/v1/system/settings for progress.",
+        "data": {
+            "operation": "install_unsloth",
+            "command": " ".join(command),
+        },
+    }
+
+
+@router.post("/unsloth/uninstall")
+async def uninstall_unsloth(background_tasks: BackgroundTasks):
+    """Uninstall the Unsloth package."""
+    from model_garden.utils.optional_deps import is_unsloth_installed
+
+    # Clear cache to get fresh status
+    is_unsloth_installed.cache_clear()
+
+    if not is_unsloth_installed():
+        return {
+            "success": False,
+            "message": "Unsloth is not installed",
+        }
+
+    if _package_operation_status["in_progress"]:
+        return {
+            "success": False,
+            "message": f"Another package operation is in progress: {_package_operation_status['operation']}",
+        }
+
+    # Use uv pip uninstall
+    command = ["uv", "pip", "uninstall", "unsloth", "-y"]
+
+    background_tasks.add_task(_run_package_command, command, "uninstall_unsloth")
+
+    return {
+        "success": True,
+        "message": "Unsloth uninstallation started. Check /api/v1/system/settings for progress.",
+        "data": {
+            "operation": "uninstall_unsloth",
+            "command": " ".join(command),
+        },
+    }
+
+
+@router.get("/unsloth/status")
+async def get_unsloth_operation_status():
+    """Get the status of the current or last package operation."""
+    return {
+        "success": True,
+        "data": _package_operation_status,
+    }
+
+
+@router.post("/restart")
+async def restart_service():
+    """Restart the Model Garden service.
+
+    This endpoint requires:
+    1. The service to be running under systemd as 'model-garden.service'
+    2. Passwordless sudo configured for the restart command
+
+    To enable passwordless sudo, add to /etc/sudoers.d/model-garden:
+        <username> ALL=(root) NOPASSWD: /bin/systemctl restart model-garden.service
+    """
+    # Check if running as systemd service
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "model-garden.service"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Model Garden is not running as a systemd service. Please restart manually.",
+            )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=500,
+            detail="Timeout checking service status",
+        )
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=400,
+            detail="systemctl not found. Service restart requires systemd.",
+        )
+
+    # Try to restart with passwordless sudo
+    try:
+        # Use -n flag to prevent password prompt
+        result = subprocess.run(
+            ["sudo", "-n", "systemctl", "restart", "model-garden.service"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode != 0:
+            if "password is required" in result.stderr.lower() or "sudo:" in result.stderr.lower():
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Passwordless sudo not configured for service restart. "
+                        "Add to /etc/sudoers.d/model-garden:\n"
+                        "  <username> ALL=(root) NOPASSWD: /bin/systemctl restart model-garden.service"
+                    ),
+                )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to restart service: {result.stderr}",
+            )
+
+        # If we get here, restart was initiated successfully
+        # The response may not reach the client since the service is restarting
+        return {
+            "success": True,
+            "message": "Service restart initiated. The connection will be lost momentarily.",
+        }
+
+    except subprocess.TimeoutExpired:
+        # Timeout might mean restart is happening
+        return {
+            "success": True,
+            "message": "Service restart initiated (response timed out, which is expected).",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error restarting service: {str(e)}",
+        )

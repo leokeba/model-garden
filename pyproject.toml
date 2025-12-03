@@ -128,6 +128,7 @@ addopts = [
     "--strict-config",
     "--showlocals",
 ]
+asyncio_mode = "auto"
 
 [tool.uv]
 override-dependencies = [

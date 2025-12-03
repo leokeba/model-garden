@@ -518,7 +518,7 @@ class TestInferenceAPIRoutes:
     @pytest_asyncio.fixture
     async def loaded_model_client(self, text_model_path: str):
         """Create an async HTTP client with a model already loaded.
-        
+
         Uses httpx.AsyncClient with ASGITransport for proper async support
         with vLLM's async engine.
         """
@@ -539,7 +539,7 @@ class TestInferenceAPIRoutes:
         set_inference_service(service)
 
         app = create_app()
-        
+
         # Use httpx.AsyncClient with ASGITransport for truly async requests
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

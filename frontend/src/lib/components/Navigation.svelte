@@ -15,6 +15,7 @@
     { name: "Load Model", href: "/models/load", icon: "🔌" },
     { name: "Datasets", href: "/datasets", icon: "📊" },
     { name: "Emissions", href: "/emissions", icon: "🌱" },
+    { name: "Settings", href: "/settings", icon: "⚙️" },
   ];
 
   const currentPath = $derived($page.url.pathname);
