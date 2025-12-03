@@ -24,12 +24,12 @@ from transformers import (
 )
 
 from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
-from model_garden.backends.transformers_base import TransformersTrainerMixin
 from model_garden.training.config import TrainingConfig, VisionTrainingConfig
+from model_garden.training.mixins import TrainerMixin
 from model_garden.utils.console import console
 
 
-class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
+class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
     """Vision trainer using standard HuggingFace Transformers + PEFT for vision-language models.
 
     Note: This is a basic implementation that may not support all features of the Unsloth vision trainer.
@@ -150,7 +150,7 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         """Prepare model for LoRA fine-tuning using PEFT."""
         console.print("[cyan]Configuring LoRA adapters for vision model (PEFT)...[/cyan]")
         # Note: finetune_* parameters are Unsloth-specific, not used in standard PEFT
-        self._configure_lora(
+        self._configure_lora_peft(
             r=r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
@@ -163,12 +163,12 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
 
     def load_dataset_from_file(self, dataset_path: str) -> Dataset:
         """Load multimodal dataset from a local file."""
-        console.print(f"[cyan]Loading vision dataset from: {dataset_path}[/cyan]")
-        return self._load_dataset_from_local_file(dataset_path)
+        # Call the parent mixin method which handles all file formats
+        return TrainerMixin.load_dataset_from_file(self, dataset_path)
 
     def load_dataset_from_hub(self, dataset_name: str, split: str = "train", **kwargs) -> Dataset:
         """Load multimodal dataset from HuggingFace Hub."""
-        return self._load_dataset_from_hf_hub(dataset_name, split=split, **kwargs)
+        return TrainerMixin.load_dataset_from_hub(self, dataset_name, split=split, **kwargs)
 
     def format_dataset(
         self,
@@ -261,11 +261,8 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
             )
 
         # Set up carbon tracking
-        carbon_tracker = None
         if enable_carbon_tracking:
-            carbon_tracker = self._setup_carbon_tracking(
-                config.output_dir, job_id, "vision-training"
-            )
+            self._start_carbon_tracking(config.output_dir, job_id, "vision-training")
 
         # Create training arguments
         training_args = self._create_training_args(
@@ -296,7 +293,7 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
             remove_unused_columns=False,  # Important for vision models
         )
 
-        all_callbacks = self._get_callbacks(callbacks)
+        all_callbacks = self._get_default_callbacks(callbacks)
 
         # Create a simple data collator for vision-language models
         def collate_fn(examples):
@@ -391,7 +388,7 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         console.print("[green]✓[/green] Training completed")
 
         # Stop carbon tracking
-        self._stop_carbon_tracking(carbon_tracker)
+        self._stop_carbon_tracking()
 
         # Save the model after training
         console.print(f"[cyan]Saving model to: {config.output_dir}[/cyan]")
@@ -410,10 +407,10 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         max_shard_size: str = "5GB",
     ) -> None:
         """Save the fine-tuned vision-language model."""
-        self._save_model_internal(output_dir, save_method, max_shard_size)
+        self._save_model_merged(output_dir, save_method, max_shard_size)
 
 
-class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
+class TransformersTextTrainer(TrainerMixin, TextTrainer):
     """Text trainer using standard HuggingFace Transformers + PEFT."""
 
     def load_model(self) -> None:
@@ -518,7 +515,7 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
         loftq_config: dict | None = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning using PEFT."""
-        self._configure_lora(
+        self._configure_lora_peft(
             r=r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
@@ -531,11 +528,12 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
 
     def load_dataset_from_file(self, dataset_path: str) -> Dataset:
         """Load dataset from a local file."""
-        return self._load_dataset_from_local_file(dataset_path)
+        # Call the parent mixin method which handles all file formats
+        return TrainerMixin.load_dataset_from_file(self, dataset_path)
 
     def load_dataset_from_hub(self, dataset_name: str, split: str = "train") -> Dataset:
         """Load dataset from HuggingFace Hub."""
-        return self._load_dataset_from_hf_hub(dataset_name, split=split)
+        return TrainerMixin.load_dataset_from_hub(self, dataset_name, split=split)
 
     def format_dataset(
         self,
@@ -590,9 +588,8 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
         console.print("[cyan]Starting training with Transformers backend...[/cyan]")
 
         # Set up carbon tracking
-        carbon_tracker = None
         if enable_carbon_tracking:
-            carbon_tracker = self._setup_carbon_tracking(config.output_dir, job_id, "training")
+            self._start_carbon_tracking(config.output_dir, job_id, "training")
 
         # Create training arguments
         training_args = self._create_training_args(
@@ -622,7 +619,7 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
             metric_for_best_model=config.metric_for_best_model,
         )
 
-        all_callbacks = self._get_callbacks(callbacks)
+        all_callbacks = self._get_default_callbacks(callbacks)
 
         # Tokenize datasets
         def tokenize_function(examples):
@@ -663,7 +660,7 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
         console.print("[green]✓[/green] Training completed")
 
         # Stop carbon tracking
-        self._stop_carbon_tracking(carbon_tracker)
+        self._stop_carbon_tracking()
 
         # Save final model
         console.print(f"[cyan]Saving model to: {config.output_dir}[/cyan]")
@@ -680,7 +677,7 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
         max_shard_size: str = "5GB",
     ) -> None:
         """Save the trained model."""
-        self._save_model_internal(output_dir, save_method, max_shard_size)
+        self._save_model_merged(output_dir, save_method, max_shard_size)
 
 
 class TransformersBackend(TrainingBackend):

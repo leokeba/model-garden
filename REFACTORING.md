@@ -60,19 +60,25 @@ This document tracks the refactoring of `model_garden/` from a flat module struc
 - ✅ Old `cli.py` converted to re-export shim for backward compatibility
 - ✅ All 10 CLI commands verified working
 
-### Phase 9: Backends Deduplication (Latest)
+### Phase 9: Backends Deduplication (Previous)
 - ✅ Created `transformers_base.py` with `TransformersTrainerMixin` shared class
-- ✅ Extracted ~300 lines of duplicate code into mixin:
-  - `_get_hf_token()`, `_get_torch_dtype()`, `_get_quantization_config()`
-  - `_configure_lora()` - shared LoRA setup
-  - `_load_dataset_from_local_file()`, `_load_dataset_from_hf_hub()`
-  - `_setup_carbon_tracking()`, `_stop_carbon_tracking()`
-  - `_create_training_args()` - shared TrainingArguments creation
-  - `_get_callbacks()`, `_save_model_internal()`
-- ✅ Refactored `TransformersTextTrainer` to use mixin (reduced ~200 lines)
-- ✅ Refactored `TransformersVisionTrainer` to use mixin (reduced ~200 lines)
+- ✅ Extracted ~300 lines of duplicate code into mixin
+- ✅ Refactored `TransformersTextTrainer` to use mixin
+- ✅ Refactored `TransformersVisionTrainer` to use mixin
 - ✅ Decision: Keep `backends/` as top-level package (used by training, cli, api)
 - ✅ All backends verified working with `list-backends` command
+
+### Phase 10: Consolidate Mixins (Latest)
+- ✅ Removed `TransformersTrainerMixin` - consolidated into `TrainerMixin` in `training/mixins.py`
+- ✅ Deleted `backends/transformers_base.py` (redundant after consolidation)
+- ✅ Updated `TransformersTextTrainer` and `TransformersVisionTrainer` to inherit from `TrainerMixin`
+- ✅ Unified method names across all trainers:
+  - `load_dataset_from_file()`, `load_dataset_from_hub()` (dataset loading)
+  - `_start_carbon_tracking()`, `_stop_carbon_tracking()` (carbon tracking)
+  - `_create_training_args()` (training arguments)
+  - `_get_default_callbacks()` (callbacks)
+  - `_configure_lora_peft()`, `_save_model_merged()` (LoRA/PEFT operations)
+- ✅ Single source of truth for shared training functionality
 
 ## Current Package Structure
 
@@ -134,7 +140,6 @@ model_garden/
 │   ├── __init__.py      # Backend registry and exports
 │   ├── base.py          # Abstract base classes (TextTrainer, VisionTrainer, TrainingBackend)
 │   ├── registry.py      # get_backend, list_backends, register_backend
-│   ├── transformers_base.py  # TransformersTrainerMixin (shared logic)
 │   ├── transformers_backend.py  # TransformersTextTrainer, TransformersVisionTrainer
 │   └── unsloth_backend.py  # UnslothBackend (delegates to training/)
 │
