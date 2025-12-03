@@ -130,7 +130,15 @@ async def get_inference_stats():
 
 @router.get("/boamps/{job_id}")
 async def get_boamps_report(job_id: str):
-    """Get BoAmps report for a specific job."""
+    """Get BoAmps report for a specific job.
+
+    Generates a BoAmps v1.1.0 compliant report containing:
+    - Task information (stage, family, algorithms, datasets)
+    - Energy measurements (power consumption, duration)
+    - Infrastructure details (GPU, CPU, RAM)
+    - System and software environment
+    - Carbon intensity and location data
+    """
     try:
         from model_garden.carbon import get_boamps_generator, get_emissions_db
 
@@ -146,16 +154,55 @@ async def get_boamps_report(job_id: str):
                 detail=f"No emissions data found for job {job_id}",
             )
 
-        # Get job config if available
+        # Build comprehensive job config for BoAmps report
         job_config = {}
         if job_id in training_jobs:
             job = training_jobs[job_id]
             job_config = {
+                # Core model info
                 "base_model": job.get("base_model"),
+                "model_type": job.get("model_type"),
+                "is_vision": job.get("is_vision", False),
+                # Dataset info
                 "dataset_path": job.get("dataset_path"),
-                "hyperparameters": job.get("hyperparameters"),
+                "from_hub": job.get("from_hub", False),
+                "validation_dataset_path": job.get("validation_dataset_path"),
+                "validation_from_hub": job.get("validation_from_hub", False),
+                # Training config
+                "hyperparameters": job.get("hyperparameters", {}),
                 "lora_config": job.get("lora_config"),
+                "selective_loss": job.get("selective_loss", False),
+                "max_seq_length": job.get("max_seq_length"),
+                "save_method": job.get("save_method"),
+                # Progress/metrics
+                "current_step": job.get("current_step"),
+                "total_steps": job.get("total_steps"),
+                "current_epoch": job.get("current_epoch"),
             }
+
+            # Extract dataset size from metrics if available
+            metrics = job.get("metrics", {})
+            if metrics:
+                # Try to get dataset info from training metrics
+                training_metrics = metrics.get("training", [])
+                if training_metrics and len(training_metrics) > 0:
+                    # Estimate samples from steps and batch size
+                    hyperparams = job.get("hyperparameters", {})
+                    batch_size = hyperparams.get("batch_size", 1)
+                    grad_accum = hyperparams.get("gradient_accumulation_steps", 1)
+                    total_steps = job.get("total_steps", 0)
+                    epochs = hyperparams.get("num_epochs", 1)
+                    if total_steps > 0 and epochs > 0:
+                        # samples = steps * batch_size * grad_accum / epochs
+                        estimated_samples = int((total_steps * batch_size * grad_accum) / epochs)
+                        if estimated_samples > 0:
+                            job_config["dataset_num_samples"] = estimated_samples
+
+            # Get final loss if available
+            if metrics.get("training"):
+                last_metric = metrics["training"][-1]
+                if "loss" in last_metric:
+                    job_config["final_loss"] = last_metric["loss"]
 
         # Generate report
         generator = get_boamps_generator()

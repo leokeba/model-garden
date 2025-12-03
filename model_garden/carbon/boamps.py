@@ -1,4 +1,11 @@
-"""BoAmps report generator for standardized emissions reporting."""
+"""BoAmps report generator for standardized emissions reporting.
+
+Implements the BoAmps v1.1.0 specification from Boavizta for standardized
+reporting of AI/ML energy consumption and carbon emissions.
+
+Reference: https://github.com/Boavizta/BoAmps
+Schema: https://raw.githubusercontent.com/Boavizta/BoAmps/main/model/report_schema.json
+"""
 
 import json
 import re
@@ -10,8 +17,53 @@ from typing import Any
 from .hardware_detection import get_hardware_detector
 
 
+def _extract_model_params_from_name(model_name: str) -> float | None:
+    """Extract parameter count (in billions) from model name.
+
+    Examples:
+        "Qwen2.5-VL-7B-Instruct" -> 7.0
+        "llama-3.1-8b" -> 8.0
+        "mistral-7b-v0.1" -> 7.0
+    """
+    if not model_name:
+        return None
+
+    # Common patterns for parameter counts
+    patterns = [
+        r"(\d+(?:\.\d+)?)[bB](?:-|_|$|\s)",  # 7B, 8B, 3.5B
+        r"-(\d+(?:\.\d+)?)(?:-|_|$|\s)",  # -7-, -8-
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, model_name)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                continue
+
+    return None
+
+
+def _get_huggingface_model_uri(model_name: str) -> str | None:
+    """Generate HuggingFace URI for a model if it looks like a HF model."""
+    if not model_name:
+        return None
+
+    # If it already looks like a HF path (contains /)
+    if "/" in model_name:
+        return f"https://huggingface.co/{model_name}"
+
+    return None
+
+
 class BoAmpsReportGenerator:
-    """Generate BoAmps-compliant emissions reports from CodeCarbon data."""
+    """Generate BoAmps-compliant emissions reports from CodeCarbon data.
+
+    Follows the BoAmps v1.1.0 specification for standardized AI energy
+    consumption reporting. Reports can be validated against the official
+    BoAmps schema and contributed to the Boavizta open dataset.
+    """
 
     BOAMPS_VERSION = "1.1.0"
     BOAMPS_SPEC_URI = (
@@ -104,182 +156,450 @@ class BoAmpsReportGenerator:
     def _generate_task(
         self, emissions_data: dict[str, Any], job_config: dict[str, Any]
     ) -> dict[str, Any]:
-        """Generate task section with comprehensive job configuration."""
+        """Generate task section with comprehensive job configuration.
+
+        Per BoAmps schema, the task section must include:
+        - taskStage (required): training, finetuning, inference, etc.
+        - taskFamily (required): textGeneration, imageClassification, etc.
+        - algorithms (required): list of algorithm descriptions
+        - dataset (required): list of dataset descriptions
+        - nbRequest (optional): number of inference requests
+        - measuredAccuracy (optional): 0-1 accuracy value
+        - taskDescription (optional): free text description
+        """
         job_type = emissions_data.get("job_type", "training")
 
-        # Determine task stage and family
-        task_stage = {"training": "training", "inference": "inference"}.get(job_type, "finetuning")
+        # Determine task stage - BoAmps uses "finetuning" for fine-tuning scenarios
+        # Training with a pre-trained base model is typically "finetuning"
+        if job_type == "training":
+            # If we have a base_model and lora_config, it's fine-tuning
+            if job_config.get("base_model") or job_config.get("lora_config"):
+                task_stage = "finetuning"
+            else:
+                task_stage = "training"
+        elif job_type == "inference":
+            task_stage = "inference"
+        else:
+            task_stage = job_type
 
-        # Determine if vision model
+        # Determine if vision model - check config, then job_id/output_dir
         is_vision = job_config.get("is_vision", False)
-        task_family = "multiModalTextGeneration" if is_vision else "textGeneration"
+        model_type = job_config.get("model_type", "")
 
-        # Build algorithms section
-        algorithms = []
-        model_name = emissions_data.get("model_name") or job_config.get("base_model", "unknown")
+        # Also infer from emissions data if not in config
+        if not is_vision:
+            job_id = emissions_data.get("job_id", "")
+            output_dir = emissions_data.get("output_dir", "")
+            model_name = emissions_data.get("model_name", "") or job_config.get("base_model", "")
 
-        # Extract framework version if available
-        framework_version = "2.x"  # Default
+            # Check for vision indicators
+            vision_hints = [job_id, output_dir, model_name]
+            for hint in vision_hints:
+                hint_lower = hint.lower()
+                if any(
+                    v in hint_lower
+                    for v in ["vision", "-vl-", "-vl.", "qwen3-vl", "qwen2.5-vl", "qwen-vl"]
+                ):
+                    is_vision = True
+                    break
+
+        # Determine task family based on model capabilities
+        if is_vision or model_type == "vision":
+            task_family = "multiModalTextGeneration"
+        else:
+            task_family = "textGeneration"
+
+        # Build algorithms section (per algorithm_schema.json)
+        algorithms = self._build_algorithms(emissions_data, job_config, task_stage)
+
+        # Build dataset section (per dataset_schema.json)
+        datasets = self._build_datasets(emissions_data, job_config, is_vision, task_stage)
+
+        # Build result
+        result = {
+            "taskStage": task_stage,
+            "taskFamily": task_family,
+            "algorithms": algorithms,
+            "dataset": datasets,
+        }
+
+        # Add inference request count if applicable
+        if task_stage == "inference":
+            result["nbRequest"] = job_config.get("num_requests", 1)
+
+        # Add task description for context
+        task_description = self._build_task_description(
+            emissions_data, job_config, task_stage, is_vision
+        )
+        if task_description:
+            result["taskDescription"] = task_description
+
+        # Add measured accuracy if available from metrics
+        if "final_loss" in job_config:
+            # Note: loss is not accuracy, but we can include it in description
+            pass
+
+        return result
+
+    def _build_algorithms(
+        self,
+        emissions_data: dict[str, Any],
+        job_config: dict[str, Any],
+        task_stage: str,
+    ) -> list[dict[str, Any]]:
+        """Build algorithms section per BoAmps algorithm_schema.json.
+
+        Includes:
+        - trainingType: supervisedLearning, transferLearning, etc.
+        - algorithmType: llm, transformer, etc.
+        - algorithmName: name of the algorithm/architecture
+        - foundationModelName: name of the base model
+        - foundationModelUri: URI to model on HuggingFace etc.
+        - parametersNumber: billions of parameters
+        - framework: PyTorch, TensorFlow, etc.
+        - frameworkVersion: version string
+        - epochsNumber: number of training epochs
+        - optimizer: adam, sgd, lora, etc.
+        - quantization: fp32, fp16, int8, etc.
+        """
+        model_name = emissions_data.get("model_name") or job_config.get("base_model", "")
+
+        # Try to infer model name from output_dir or job_id if not set
+        if not model_name or model_name == "unknown" or model_name == "Unknown":
+            # Check output_dir for clues
+            output_dir = emissions_data.get("output_dir", "")
+            job_id = emissions_data.get("job_id", "")
+
+            # Try to extract model hints from paths
+            path_hints = output_dir + " " + job_id
+            path_lower = path_hints.lower()
+
+            # Look for known model patterns
+            if "qwen" in path_lower:
+                # Try to extract full model name
+                if "qwen3-vl" in path_lower:
+                    model_name = "Qwen/Qwen3-VL"
+                elif "qwen2.5-vl" in path_lower or "qwen-2.5-vl" in path_lower:
+                    model_name = "Qwen/Qwen2.5-VL"
+                elif "qwen-vl" in path_lower:
+                    model_name = "Qwen/Qwen-VL"
+                else:
+                    model_name = "Qwen"
+            elif "llama" in path_lower:
+                model_name = "Meta-Llama"
+            elif "mistral" in path_lower:
+                model_name = "Mistral"
+            elif "nanonets" in path_lower:
+                model_name = "nanonets/Nanonets-OCR"
+
+            # Extract size hints
+            for size in ["3b", "7b", "8b", "14b", "32b", "70b", "72b"]:
+                if size in path_lower:
+                    model_name = f"{model_name}-{size.upper()}"
+                    break
+
+        # Extract framework version
+        framework_version = "2.x"
         try:
             import torch
 
-            framework_version = torch.__version__.split("+")[0]  # Remove CUDA suffix
+            framework_version = torch.__version__.split("+")[0]
         except Exception:
             pass
 
-        # Base algorithm structure (BoAmps v1.1.0 compliant)
-        algorithm = {
-            "algorithmName": model_name,
-            "framework": "PyTorch",
-            "frameworkVersion": framework_version,
-        }
+        # Build algorithm entry per schema
+        algorithm: dict[str, Any] = {}
 
-        # Build hyperparameters object (BoAmps compliant structure)
-        hyperparameters_list = []
+        # Training type (for training/finetuning stages)
+        if task_stage in ["training", "finetuning"]:
+            if job_config.get("lora_config"):
+                algorithm["trainingType"] = "transferLearning"
+            else:
+                algorithm["trainingType"] = "supervisedLearning"
 
-        # Add training-specific hyperparameters
+        # Algorithm type - for LLMs/VLMs
+        is_vision = job_config.get("is_vision", False)
+
+        # Also check if it's a vision task from job_id hints
+        job_id = emissions_data.get("job_id", "")
+        output_dir = emissions_data.get("output_dir", "")
+        if (
+            "vision" in job_id.lower()
+            or "vision" in output_dir.lower()
+            or "vl" in model_name.lower()
+        ):
+            is_vision = True
+
+        if is_vision:
+            algorithm["algorithmType"] = "vlm"  # Vision Language Model
+        else:
+            algorithm["algorithmType"] = "llm"  # Large Language Model
+
+        # Algorithm name (architecture type)
+        # Try to extract architecture from model name
+        model_lower = (model_name or "").lower()
+        if "qwen" in model_lower:
+            algorithm["algorithmName"] = "transformer"
+        elif "llama" in model_lower:
+            algorithm["algorithmName"] = "transformer"
+        elif "mistral" in model_lower:
+            algorithm["algorithmName"] = "transformer"
+        else:
+            algorithm["algorithmName"] = "transformer"  # Default for LLMs
+
+        # Foundation model info
+        if model_name and model_name != "unknown" and model_name != "Unknown":
+            algorithm["foundationModelName"] = model_name
+
+            # Add HuggingFace URI
+            model_uri = _get_huggingface_model_uri(model_name)
+            if model_uri:
+                algorithm["foundationModelUri"] = model_uri
+
+        # Extract parameter count from model name
+        params = _extract_model_params_from_name(model_name or "")
+        if params:
+            algorithm["parametersNumber"] = params
+
+        # Framework info
+        algorithm["framework"] = "PyTorch"
+        algorithm["frameworkVersion"] = framework_version
+
+        # Training-specific fields
         if task_stage in ["training", "finetuning"]:
             job_hyperparams = job_config.get("hyperparameters", {})
-            lora_config = job_config.get("lora_config", {})
 
-            # Epochs
-            epochs = job_hyperparams.get("num_epochs", job_hyperparams.get("epochs", 3))
-            hyperparameters_list.append(
-                {"hyperparameterName": "epochs", "hyperparameterValue": str(epochs)}
-            )
-
-            # Batch size
-            if "batch_size" in job_config:
-                hyperparameters_list.append(
-                    {
-                        "hyperparameterName": "batch_size",
-                        "hyperparameterValue": str(job_config["batch_size"]),
-                    }
-                )
+            # Number of epochs
+            epochs = job_hyperparams.get("num_epochs", job_hyperparams.get("epochs"))
+            if epochs:
+                algorithm["epochsNumber"] = epochs
 
             # Optimizer
-            optimizer = job_hyperparams.get(
-                "optim", job_hyperparams.get("optimizer", "adamw_torch")
-            )
-            hyperparameters_list.append(
-                {"hyperparameterName": "optimizer", "hyperparameterValue": optimizer}
-            )
+            optimizer = job_hyperparams.get("optim", job_hyperparams.get("optimizer"))
+            if optimizer:
+                algorithm["optimizer"] = optimizer
+            elif job_config.get("lora_config"):
+                algorithm["optimizer"] = "lora"  # LoRA is an optimization technique
 
-            # Learning rate
-            if "learning_rate" in job_hyperparams:
-                hyperparameters_list.append(
-                    {
-                        "hyperparameterName": "learning_rate",
-                        "hyperparameterValue": str(job_hyperparams["learning_rate"]),
-                    }
-                )
+        # Quantization info
+        if job_config.get("lora_config") or job_config.get("load_in_4bit"):
+            algorithm["quantization"] = "int4"
+        elif job_config.get("load_in_8bit"):
+            algorithm["quantization"] = "int8"
+        else:
+            algorithm["quantization"] = "fp16"  # Default for modern training
 
-            # LoRA-specific parameters
-            if lora_config:
-                if "r" in lora_config:
-                    hyperparameters_list.append(
-                        {
-                            "hyperparameterName": "lora_r",
-                            "hyperparameterValue": str(lora_config["r"]),
-                        }
-                    )
-                if "lora_alpha" in lora_config:
-                    hyperparameters_list.append(
-                        {
-                            "hyperparameterName": "lora_alpha",
-                            "hyperparameterValue": str(lora_config["lora_alpha"]),
-                        }
-                    )
-                if "lora_dropout" in lora_config:
-                    hyperparameters_list.append(
-                        {
-                            "hyperparameterName": "lora_dropout",
-                            "hyperparameterValue": str(lora_config["lora_dropout"]),
-                        }
-                    )
+        return [algorithm]
 
-            # Max sequence length
-            if "max_seq_length" in job_config:
-                hyperparameters_list.append(
-                    {
-                        "hyperparameterName": "max_seq_length",
-                        "hyperparameterValue": str(job_config["max_seq_length"]),
-                    }
-                )
+    def _build_datasets(
+        self,
+        emissions_data: dict[str, Any],
+        job_config: dict[str, Any],
+        is_vision: bool,
+        task_stage: str,
+    ) -> list[dict[str, Any]]:
+        """Build dataset section per BoAmps dataset_schema.json.
 
-        # Add hyperparameters if any exist
-        if hyperparameters_list:
-            tuning_method = "standard"
-            if "lora_config" in job_config:
-                tuning_method = "lora"
-            elif job_config.get("selective_loss", False):
-                tuning_method = "selective_loss"
+        Includes:
+        - dataUsage (required): input or output
+        - dataType (required): text, image, tabular, etc.
+        - dataFormat: json, csv, parquet, etc.
+        - dataSize: size in GB
+        - dataQuantity: number of samples
+        - shape: shape of data (e.g., for images)
+        - source: public, private, other
+        - sourceUri: URI to dataset
+        - owner: dataset owner
+        """
+        datasets = []
 
-            algorithm["hyperparameters"] = {
-                "tuningMethod": tuning_method,
-                "values": hyperparameters_list,
-            }
+        # Infer vision from emissions data if not set
+        if not is_vision:
+            job_id = emissions_data.get("job_id", "")
+            output_dir = emissions_data.get("output_dir", "")
+            if "vision" in job_id.lower() or "vision" in output_dir.lower():
+                is_vision = True
+            # Also check for VL (Vision-Language) models
+            model_name = emissions_data.get("model_name", "") or job_config.get("base_model", "")
+            if "-vl-" in model_name.lower() or "-vl." in model_name.lower():
+                is_vision = True
 
-        # Add quantization info if available (must be string like "fp16", "int8", "q4")
-        if "lora_config" in job_config or "load_in_4bit" in job_config:
-            algorithm["quantization"] = "q4"  # 4-bit quantization
-        elif "load_in_8bit" in job_config:
-            algorithm["quantization"] = "int8"  # 8-bit quantization
+        # Determine data type - vision models use multimodal data
+        if is_vision:
+            # Vision-language models process both text and images
+            primary_data_type = "image"  # Primary modality
+        else:
+            primary_data_type = "text"
 
-        algorithms.append(algorithm)
-
-        # Build dataset section (note: singular "dataset" per BoAmps schema)
-        dataset = []
-
-        # Training dataset
+        # Training/input dataset
         if "dataset_path" in job_config:
-            # Map source type to BoAmps enum: public, private, other
             source_type = "public" if job_config.get("from_hub", False) else "private"
-
-            dataset_entry = {
-                "dataUsage": "input",
-                "dataType": "image" if is_vision else "text",
-                "source": source_type,
-                "sourceUri": job_config["dataset_path"],
-            }
-            # Add dataFormat if we can determine it
             dataset_path = job_config["dataset_path"]
+
+            dataset_entry: dict[str, Any] = {
+                "dataUsage": "input",
+                "dataType": primary_data_type,
+                "source": source_type,
+            }
+
+            # Add source URI
+            if source_type == "public" and "/" in dataset_path:
+                # HuggingFace dataset
+                dataset_entry["sourceUri"] = f"https://huggingface.co/datasets/{dataset_path}"
+            else:
+                dataset_entry["sourceUri"] = dataset_path
+
+            # Determine data format from file extension or assume json for HF
             if dataset_path.endswith(".jsonl") or dataset_path.endswith(".json"):
                 dataset_entry["dataFormat"] = "json"
             elif dataset_path.endswith(".csv"):
                 dataset_entry["dataFormat"] = "csv"
             elif dataset_path.endswith(".parquet"):
                 dataset_entry["dataFormat"] = "parquet"
+            elif source_type == "public":
+                # HuggingFace datasets typically use parquet internally
+                dataset_entry["dataFormat"] = "parquet"
 
-            dataset.append(dataset_entry)
+            # Add dataset size info if available
+            if "dataset_size" in job_config:
+                # dataSize is in GB per schema
+                size_bytes = job_config["dataset_size"]
+                if size_bytes > 0:
+                    dataset_entry["dataSize"] = round(size_bytes / (1024**3), 4)
+
+            # Add number of samples if available (dataQuantity per schema)
+            if "dataset_num_samples" in job_config:
+                dataset_entry["dataQuantity"] = job_config["dataset_num_samples"]
+            elif "num_samples" in job_config:
+                dataset_entry["dataQuantity"] = job_config["num_samples"]
+
+            # Add shape info for vision datasets
+            if is_vision and "image_size" in job_config:
+                img_size = job_config["image_size"]
+                if isinstance(img_size, (list, tuple)) and len(img_size) >= 2:
+                    dataset_entry["shape"] = f"({img_size[0]}, {img_size[1]})"
+                elif isinstance(img_size, int):
+                    dataset_entry["shape"] = f"({img_size}, {img_size})"
+
+            # Add owner if from Hub (extract from path)
+            if source_type == "public" and "/" in dataset_path:
+                owner = dataset_path.split("/")[0]
+                dataset_entry["owner"] = owner
+
+            datasets.append(dataset_entry)
 
         # Validation dataset if present
         if "validation_dataset_path" in job_config:
             source_type = "public" if job_config.get("validation_from_hub", False) else "private"
+            val_path = job_config["validation_dataset_path"]
 
-            val_dataset_entry = {
-                "dataUsage": "input",  # Validation is also input data per BoAmps
-                "dataType": "image" if is_vision else "text",
+            val_entry: dict[str, Any] = {
+                "dataUsage": "input",  # Validation is input data
+                "dataType": primary_data_type,
                 "source": source_type,
-                "sourceUri": job_config["validation_dataset_path"],
             }
-            dataset.append(val_dataset_entry)
+
+            if source_type == "public" and "/" in val_path:
+                val_entry["sourceUri"] = f"https://huggingface.co/datasets/{val_path}"
+            else:
+                val_entry["sourceUri"] = val_path
+
+            datasets.append(val_entry)
+
+        # For inference, add output dataset description
+        if task_stage == "inference":
+            output_entry: dict[str, Any] = {
+                "dataUsage": "output",
+                "dataType": "text",  # LLM/VLM outputs are text
+            }
+            if "num_requests" in job_config:
+                output_entry["dataQuantity"] = job_config["num_requests"]
+            datasets.append(output_entry)
 
         # Ensure at least one dataset entry (required by schema)
-        if not dataset:
-            dataset.append(
+        if not datasets:
+            datasets.append(
                 {
                     "dataUsage": "input",
-                    "dataType": "image" if is_vision else "text",
+                    "dataType": primary_data_type,
                 }
             )
 
-        return {
-            "taskFamily": task_family,
-            "taskStage": task_stage,
-            "algorithms": algorithms,
-            "dataset": dataset,  # Singular "dataset" per BoAmps schema
-        }
+        return datasets
+
+    def _build_task_description(
+        self,
+        emissions_data: dict[str, Any],
+        job_config: dict[str, Any],
+        task_stage: str,
+        is_vision: bool,
+    ) -> str:
+        """Build a descriptive task description for the report."""
+        parts = []
+
+        model_name = emissions_data.get("model_name") or job_config.get("base_model", "")
+
+        # Try to infer model name from paths if not available
+        if not model_name or model_name == "Unknown":
+            output_dir = emissions_data.get("output_dir", "")
+            job_id = emissions_data.get("job_id", "")
+            path_hints = (output_dir + " " + job_id).lower()
+
+            if "qwen" in path_hints:
+                if "3b" in path_hints:
+                    model_name = "Qwen-3B"
+                elif "7b" in path_hints:
+                    model_name = "Qwen-7B"
+                elif "8b" in path_hints:
+                    model_name = "Qwen-8B"
+                else:
+                    model_name = "Qwen"
+            elif "llama" in path_hints:
+                model_name = "LLaMA"
+            elif "nanonets" in path_hints:
+                model_name = "Nanonets-OCR"
+
+        if task_stage == "finetuning":
+            if is_vision:
+                parts.append("Vision-language model fine-tuning")
+            else:
+                parts.append("Language model fine-tuning")
+
+            if model_name:
+                parts.append(f"using {model_name}")
+
+            if job_config.get("lora_config"):
+                lora = job_config["lora_config"]
+                r = lora.get("r", "")
+                alpha = lora.get("lora_alpha", "")
+                if r and alpha:
+                    parts.append(f"with LoRA (r={r}, alpha={alpha})")
+                else:
+                    parts.append("with LoRA adapter")
+
+            dataset_path = job_config.get("dataset_path", "")
+            if dataset_path:
+                parts.append(f"on dataset: {dataset_path}")
+
+        elif task_stage == "inference":
+            if is_vision:
+                parts.append("Vision-language model inference")
+            else:
+                parts.append("Language model inference")
+
+            if model_name:
+                parts.append(f"using {model_name}")
+
+        elif task_stage == "training":
+            if is_vision:
+                parts.append("Vision-language model training")
+            else:
+                parts.append("Language model training")
+
+            if model_name:
+                parts.append(f"({model_name})")
+
+        return " ".join(parts) if parts else ""
 
     def _generate_measures(self, emissions_data: dict[str, Any]) -> list[dict[str, Any]]:
         """Generate measures section with real hardware utilization data."""
@@ -587,20 +907,40 @@ class BoAmpsReportGenerator:
         - high: percentage error +/-10%
         - medium: percentage error +/-25%
         - low: percentage error +/-50%
+
+        Quality is determined by:
+        - Tracking method (hardware-based vs constant)
+        - Completeness of data (CPU, GPU, RAM energy breakdown)
+        - Duration of measurement
         """
-        # Check how much data we have to assess quality
+        # Check what data we have available
         has_gpu_data = emissions_data.get("gpu_energy_kwh", 0) > 0
         has_cpu_data = emissions_data.get("cpu_energy_kwh", 0) > 0
+        has_ram_data = emissions_data.get("ram_energy_kwh", 0) > 0
         has_duration = emissions_data.get("duration_seconds", 0) > 0
+        has_power_data = (
+            emissions_data.get("gpu_power_watts", 0) > 0
+            or emissions_data.get("cpu_power_watts", 0) > 0
+        )
         tracking_mode = emissions_data.get("tracking_mode", "constant")
 
-        # NVML/RAPL tracking is more accurate than constant mode
-        if tracking_mode in ["nvml", "rapl", "machine"]:
-            if has_gpu_data and has_cpu_data and has_duration:
+        # Determine if we have accurate hardware-based tracking
+        # "process" mode with NVML/RAPL data is accurate
+        # "machine" mode is also accurate
+        is_accurate_tracking = tracking_mode in ["process", "machine", "nvml", "rapl"]
+
+        if is_accurate_tracking:
+            # High quality: Have GPU+CPU+RAM breakdown with power data
+            if has_gpu_data and has_cpu_data and has_ram_data and has_duration and has_power_data:
                 return "high"
+            # Medium quality: Have GPU and CPU data with duration
+            elif has_duration and has_gpu_data and has_cpu_data:
+                return "medium"
+            # Medium quality: Have GPU or CPU data with accurate tracking
             elif has_duration and (has_gpu_data or has_cpu_data):
                 return "medium"
 
+        # Low quality: Constant mode or missing key data
         return "low"
 
     def save_report(self, report: dict[str, Any], output_path: Path) -> None:

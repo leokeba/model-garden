@@ -130,7 +130,7 @@ class TestBoAmpsReportGenerator:
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_generate_task_training(self, mock_hw_detector):
-        """Test task section for training job."""
+        """Test task section for training job (fine-tuning with base model)."""
         mock_hw_detector.return_value = create_mock_hardware_detector()
 
         from model_garden.carbon.boamps import BoAmpsReportGenerator
@@ -155,7 +155,8 @@ class TestBoAmpsReportGenerator:
         # Task should have BoAmps v1.1.0 compliant structure
         assert "taskFamily" in task
         assert "taskStage" in task
-        assert task["taskStage"] == "training"
+        # With a base_model, this is fine-tuning, not training from scratch
+        assert task["taskStage"] == "finetuning"
         assert "algorithms" in task
         # BoAmps uses singular "dataset" (not "datasets")
         assert "dataset" in task
@@ -385,3 +386,246 @@ class TestBoAmpsVersionCompliance:
 
         assert hasattr(BoAmpsReportGenerator, "BOAMPS_SPEC_URI")
         assert "Boavizta/BoAmps" in BoAmpsReportGenerator.BOAMPS_SPEC_URI
+
+
+class TestBoAmpsVisionModels:
+    """Tests for vision-language model support."""
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_vision_model_detection_from_job_id(self, mock_hw_detector):
+        """Test that VL models are detected from job_id."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "inference-Qwen-Qwen3-VL-8B-Instruct-123456",
+            "job_type": "inference",
+        }
+
+        report = generator.generate_report(emissions_data)
+        task = report["task"]
+
+        # Should detect as vision-language model
+        assert task["taskFamily"] == "multiModalTextGeneration"
+        assert task["algorithms"][0]["algorithmType"] == "vlm"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_vision_model_detection_from_config(self, mock_hw_detector):
+        """Test that is_vision config is respected."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "training-123", "job_type": "training"}
+        job_config = {"is_vision": True, "base_model": "Qwen/Qwen2.5-VL-3B"}
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        task = report["task"]
+
+        assert task["taskFamily"] == "multiModalTextGeneration"
+        assert task["algorithms"][0]["algorithmType"] == "vlm"
+        assert task["dataset"][0]["dataType"] == "image"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_vision_model_task_description(self, mock_hw_detector):
+        """Test that vision models get proper task description."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "vision-training-123456",
+            "job_type": "training",
+        }
+
+        report = generator.generate_report(emissions_data)
+        task = report["task"]
+
+        assert "taskDescription" in task
+        assert "Vision-language" in task["taskDescription"]
+
+
+class TestBoAmpsModelExtraction:
+    """Tests for model name and parameter extraction."""
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_extract_model_from_job_id(self, mock_hw_detector):
+        """Test model name extraction from job_id."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "inference-Qwen-Qwen3-VL-8B-Instruct-123",
+            "job_type": "inference",
+        }
+
+        report = generator.generate_report(emissions_data)
+        algorithms = report["task"]["algorithms"]
+
+        assert len(algorithms) > 0
+        assert "foundationModelName" in algorithms[0]
+        # Should extract Qwen-related model name
+        assert (
+            "Qwen" in algorithms[0]["foundationModelName"]
+            or "qwen" in algorithms[0]["foundationModelName"].lower()
+        )
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_extract_parameters_from_model_name(self, mock_hw_detector):
+        """Test parameter extraction from model name."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "test"}
+        job_config = {"base_model": "Meta-Llama/Llama-3.1-8B-Instruct"}
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        algorithms = report["task"]["algorithms"]
+
+        assert algorithms[0]["parametersNumber"] == 8.0
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_huggingface_uri_generation(self, mock_hw_detector):
+        """Test HuggingFace URI generation."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "test"}
+        job_config = {"base_model": "Qwen/Qwen2.5-VL-7B-Instruct"}
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        algorithms = report["task"]["algorithms"]
+
+        assert "foundationModelUri" in algorithms[0]
+        assert "huggingface.co" in algorithms[0]["foundationModelUri"]
+
+
+class TestBoAmpsDatasetMetadata:
+    """Tests for dataset metadata in reports."""
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_dataset_quantity_from_config(self, mock_hw_detector):
+        """Test that dataset quantity is included when available."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "test"}
+        job_config = {
+            "dataset_path": "org/dataset",
+            "from_hub": True,
+            "dataset_num_samples": 10000,
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        dataset = report["task"]["dataset"][0]
+
+        assert dataset["dataQuantity"] == 10000
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_dataset_owner_extraction(self, mock_hw_detector):
+        """Test that dataset owner is extracted from HuggingFace path."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {"job_id": "test"}
+        job_config = {
+            "dataset_path": "Barth371/cmr-all",
+            "from_hub": True,
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        dataset = report["task"]["dataset"][0]
+
+        assert dataset["owner"] == "Barth371"
+        assert "huggingface.co/datasets" in dataset["sourceUri"]
+
+
+class TestBoAmpsQualityEstimation:
+    """Tests for quality field estimation."""
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_high_quality_with_full_data(self, mock_hw_detector):
+        """Test high quality when all data is available."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "test",
+            "tracking_mode": "process",
+            "gpu_energy_kwh": 0.5,
+            "cpu_energy_kwh": 0.1,
+            "ram_energy_kwh": 0.05,
+            "duration_seconds": 3600,
+            "gpu_power_watts": 300,
+            "cpu_power_watts": 50,
+        }
+
+        report = generator.generate_report(emissions_data)
+
+        assert report["quality"] == "high"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_medium_quality_with_partial_data(self, mock_hw_detector):
+        """Test medium quality with partial data."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "test",
+            "tracking_mode": "process",
+            "gpu_energy_kwh": 0.5,
+            "cpu_energy_kwh": 0.1,
+            "duration_seconds": 3600,
+            # No power data or RAM data
+        }
+
+        report = generator.generate_report(emissions_data)
+
+        assert report["quality"] == "medium"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_low_quality_with_constant_tracking(self, mock_hw_detector):
+        """Test low quality with constant tracking mode."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+
+        emissions_data = {
+            "job_id": "test",
+            "tracking_mode": "constant",
+            "duration_seconds": 3600,
+        }
+
+        report = generator.generate_report(emissions_data)
+
+        assert report["quality"] == "low"
