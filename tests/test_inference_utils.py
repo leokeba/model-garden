@@ -323,3 +323,231 @@ class TestBaseModelDetection:
 
         base_model = get_base_model_from_adapter(str(model_dir))
         assert base_model is None
+
+    def test_get_base_model_from_adapter_missing_key(self, tmp_path: Path):
+        """Test getting base model when adapter config doesn't have the key."""
+        from model_garden.inference.utils import get_base_model_from_adapter
+
+        adapter_dir = tmp_path / "incomplete-adapter"
+        adapter_dir.mkdir()
+
+        # Adapter config without base_model_name_or_path
+        adapter_config = adapter_dir / "adapter_config.json"
+        adapter_config.write_text(
+            json.dumps(
+                {
+                    "r": 16,
+                    "lora_alpha": 16,
+                }
+            )
+        )
+
+        base_model = get_base_model_from_adapter(str(adapter_dir))
+        assert base_model is None
+
+
+class TestModelSizeEstimationExtended:
+    """Extended tests for model size estimation."""
+
+    def test_estimate_model_size_multiple_weight_files(self, tmp_path: Path):
+        """Test estimating model size with multiple weight files."""
+        from model_garden.inference.utils import estimate_model_size_gb
+
+        model_dir = tmp_path / "large-model"
+        model_dir.mkdir()
+
+        # Create multiple safetensors files (each 1MB)
+        for i in range(5):
+            (model_dir / f"model-{i:05d}-of-00005.safetensors").write_bytes(b"\x00" * (1024 * 1024))
+
+        size = estimate_model_size_gb(str(model_dir))
+        # Should be approximately 5MB but rounded up to at least 1.0
+        assert size >= 1.0
+
+    def test_estimate_model_size_bin_files(self, tmp_path: Path):
+        """Test estimating model size from .bin files."""
+        from model_garden.inference.utils import estimate_model_size_gb
+
+        model_dir = tmp_path / "pytorch-model"
+        model_dir.mkdir()
+
+        # Create a pytorch_model.bin file
+        (model_dir / "pytorch_model.bin").write_bytes(b"\x00" * (2 * 1024 * 1024))
+
+        size = estimate_model_size_gb(str(model_dir))
+        assert size >= 1.0
+
+    def test_estimate_model_size_from_name_various_formats(self):
+        """Test model size estimation from various name formats."""
+        from model_garden.inference.utils import estimate_model_size_gb
+
+        # Various naming conventions
+        assert estimate_model_size_gb("org/model-7B-fp16") >= 7.0
+        assert estimate_model_size_gb("org/model-3b-instruct") >= 3.0
+        assert estimate_model_size_gb("org/model-70B-chat") >= 70.0
+
+        # Non-matching name should return default
+        assert estimate_model_size_gb("org/model-large") == 7.0
+
+
+class TestVisionModelDetectionExtended:
+    """Extended tests for vision model detection."""
+
+    def test_is_vision_model_with_processor_config(self, tmp_path: Path):
+        """Test detecting vision model by processor_config.json."""
+        from model_garden.inference.utils import is_vision_model
+
+        model_dir = tmp_path / "vision-model-2"
+        model_dir.mkdir()
+
+        # Only processor_config.json, no config.json
+        (model_dir / "processor_config.json").write_text(
+            json.dumps({"processor_class": "Qwen2VLProcessor"})
+        )
+
+        assert is_vision_model(str(model_dir)) is True
+
+    def test_is_vision_model_from_architectures(self, tmp_path: Path):
+        """Test detecting vision model from architectures in config."""
+        from model_garden.inference.utils import is_vision_model
+
+        model_dir = tmp_path / "vision-model-arch"
+        model_dir.mkdir()
+
+        (model_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_type": "qwen2",
+                    "architectures": ["Qwen2VLForConditionalGeneration"],
+                }
+            )
+        )
+
+        assert is_vision_model(str(model_dir)) is True
+
+    def test_is_vision_model_with_visual_config(self, tmp_path: Path):
+        """Test detecting vision model with visual_config in config."""
+        from model_garden.inference.utils import is_vision_model
+
+        model_dir = tmp_path / "vision-model-vc"
+        model_dir.mkdir()
+
+        (model_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_type": "llava",
+                    "visual_config": {"hidden_size": 1024},
+                }
+            )
+        )
+
+        assert is_vision_model(str(model_dir)) is True
+
+
+class TestQuantizationDetectionExtended:
+    """Extended tests for quantization detection."""
+
+    def test_detect_quantization_from_weight_filename_awq(self, tmp_path: Path):
+        """Test detecting AWQ from weight file name."""
+        from model_garden.inference.utils import detect_quantization_method
+
+        model_dir = tmp_path / "awq-named-model"
+        model_dir.mkdir()
+
+        # Weight file with AWQ in the name
+        (model_dir / "model-awq.safetensors").write_bytes(b"\x00" * 100)
+        (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}))
+
+        result = detect_quantization_method(str(model_dir))
+        assert result == "awq"
+
+    def test_detect_quantization_from_weight_filename_gptq(self, tmp_path: Path):
+        """Test detecting GPTQ from weight file name."""
+        from model_garden.inference.utils import detect_quantization_method
+
+        model_dir = tmp_path / "gptq-named-model"
+        model_dir.mkdir()
+
+        # Weight file with GPTQ in the name
+        (model_dir / "model-gptq.safetensors").write_bytes(b"\x00" * 100)
+        (model_dir / "config.json").write_text(json.dumps({"model_type": "llama"}))
+
+        result = detect_quantization_method(str(model_dir))
+        assert result == "gptq"
+
+    def test_detect_quantization_adapter_returns_none(self, tmp_path: Path):
+        """Test that LoRA adapters return None for quantization."""
+        from model_garden.inference.utils import detect_quantization_method
+
+        adapter_dir = tmp_path / "lora-adapter"
+        adapter_dir.mkdir()
+
+        (adapter_dir / "adapter_config.json").write_text(
+            json.dumps({"r": 16, "base_model_name_or_path": "meta-llama/Llama-3-8B"})
+        )
+
+        result = detect_quantization_method(str(adapter_dir))
+        assert result is None
+
+    def test_detect_quantization_bnb_fallback(self, tmp_path: Path):
+        """Test BitsAndBytes detection falls back to None for merged models."""
+        from model_garden.inference.utils import detect_quantization_method
+
+        model_dir = tmp_path / "merged-bnb-model"
+        model_dir.mkdir()
+
+        # BitsAndBytes config in a merged model should return None
+        (model_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "quantization_config": {"quant_method": "bitsandbytes"},
+                }
+            )
+        )
+        # Regular safetensors file (no quant in name)
+        (model_dir / "model.safetensors").write_bytes(b"\x00" * 100)
+
+        result = detect_quantization_method(str(model_dir))
+        # Should detect as merged model, not quantized
+        assert result is None
+
+    def test_detect_quantization_empty_dir(self, tmp_path: Path):
+        """Test quantization detection on empty directory."""
+        from model_garden.inference.utils import detect_quantization_method
+
+        model_dir = tmp_path / "empty-model"
+        model_dir.mkdir()
+
+        result = detect_quantization_method(str(model_dir))
+        assert result is None
+
+
+class TestGPUMemoryUtilizationEdgeCases:
+    """Edge case tests for GPU memory utilization."""
+
+    def test_calculate_utilization_very_small_model(self):
+        """Test utilization for very small models."""
+        from model_garden.inference.utils import calculate_gpu_memory_utilization
+
+        util = calculate_gpu_memory_utilization("tiny/model-100M")
+        assert 0.5 <= util <= 0.95
+
+    def test_calculate_utilization_very_large_model(self):
+        """Test utilization for very large models."""
+        from model_garden.inference.utils import calculate_gpu_memory_utilization
+
+        util = calculate_gpu_memory_utilization("big/model-70B")
+        # For large models, should maximize utilization
+        assert 0.5 <= util <= 0.95
+
+    def test_calculate_utilization_various_tensor_parallel(self):
+        """Test utilization with various tensor parallel sizes."""
+        from model_garden.inference.utils import calculate_gpu_memory_utilization
+
+        base_util = calculate_gpu_memory_utilization("test/model-7B", tensor_parallel_size=1)
+
+        for tp_size in [2, 4, 8]:
+            util = calculate_gpu_memory_utilization("test/model-7B", tensor_parallel_size=tp_size)
+            # More GPUs should generally mean lower per-GPU utilization
+            assert util <= base_util
+            assert 0.5 <= util <= 0.95

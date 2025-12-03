@@ -437,6 +437,14 @@ class TestBackendRegistry:
 class TestRealBackends:
     """Tests for actual registered backends (integration tests)."""
 
+    @pytest.fixture(autouse=True)
+    def clear_unsloth_cache(self):
+        """Clear the is_unsloth_installed cache before each test."""
+        from model_garden.utils.optional_deps import is_unsloth_installed
+
+        is_unsloth_installed.cache_clear()
+        yield
+
     def test_unsloth_backend_registered_when_available(self):
         """Test that unsloth backend is registered when unsloth is installed."""
         from model_garden.utils.optional_deps import is_unsloth_installed

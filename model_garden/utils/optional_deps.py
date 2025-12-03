@@ -16,12 +16,18 @@ def is_unsloth_installed() -> bool:
 
     Note:
         Result is cached after first call for performance.
+        Catches both ImportError (not installed) and other exceptions
+        that may occur during import (e.g., version incompatibilities
+        with dependencies like datasets).
     """
     try:
         import unsloth  # noqa: F401
 
         return True
-    except ImportError:
+    except (ImportError, NotImplementedError, Exception):
+        # ImportError: Unsloth not installed
+        # NotImplementedError: Unsloth has version conflicts (e.g., datasets 4.4.0)
+        # Exception: Other import-time errors
         return False
 
 
