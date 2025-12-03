@@ -21,7 +21,7 @@ class TestEarlyStoppingCallback:
 
     def test_init_default_values(self):
         """Test default initialization values."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback()
         assert callback.patience == 3
@@ -34,7 +34,7 @@ class TestEarlyStoppingCallback:
 
     def test_init_custom_values(self):
         """Test custom initialization values."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(
             patience=5,
@@ -49,7 +49,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_first_eval(self):
         """Test first evaluation sets best_metric."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback()
         control = MagicMock()
@@ -65,7 +65,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_improvement_lower_is_better(self):
         """Test improvement detection when lower is better."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(greater_is_better=False)
         callback.best_metric = 0.5
@@ -81,7 +81,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_improvement_higher_is_better(self):
         """Test improvement detection when higher is better."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(metric="eval_accuracy", greater_is_better=True)
         callback.best_metric = 0.8
@@ -97,7 +97,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_no_improvement(self):
         """Test patience counter increments on no improvement."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(patience=3)
         callback.best_metric = 0.5
@@ -115,7 +115,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_patience_reached(self):
         """Test training stops when patience is reached."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(patience=2)
         callback.best_metric = 0.5
@@ -133,7 +133,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_missing_metric(self):
         """Test that missing metric doesn't crash."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(metric="eval_loss")
         control = MagicMock()
@@ -149,7 +149,7 @@ class TestEarlyStoppingCallback:
 
     def test_on_evaluate_with_threshold(self):
         """Test that threshold is applied to improvements."""
-        from model_garden.training.early_stopping import EarlyStoppingCallback
+        from model_garden.training.callbacks import EarlyStoppingCallback
 
         callback = EarlyStoppingCallback(threshold=0.1)
         callback.best_metric = 0.5
@@ -173,7 +173,7 @@ class TestDetectModelDtype:
 
     def test_quantized_4bit_returns_bfloat16(self):
         """Test that 4-bit quantized models return bfloat16."""
-        from model_garden.training.utils import detect_model_dtype
+        from model_garden.training.mixins import detect_model_dtype
 
         model = MagicMock()
         dtype = detect_model_dtype(model, load_in_4bit=True, load_in_8bit=False)
@@ -181,7 +181,7 @@ class TestDetectModelDtype:
 
     def test_quantized_8bit_returns_bfloat16(self):
         """Test that 8-bit quantized models return bfloat16."""
-        from model_garden.training.utils import detect_model_dtype
+        from model_garden.training.mixins import detect_model_dtype
 
         model = MagicMock()
         dtype = detect_model_dtype(model, load_in_4bit=False, load_in_8bit=True)
@@ -189,7 +189,7 @@ class TestDetectModelDtype:
 
     def test_detect_from_parameter_dtype(self):
         """Test detecting dtype from model parameters."""
-        from model_garden.training.utils import detect_model_dtype
+        from model_garden.training.mixins import detect_model_dtype
 
         # Create a real tensor with bfloat16 dtype (isinstance check needs real tensor)
         real_param = torch.zeros(1, dtype=torch.bfloat16)
@@ -202,7 +202,7 @@ class TestDetectModelDtype:
 
     def test_detect_from_parameter_dtype_float16(self):
         """Test detecting float16 dtype from parameters."""
-        from model_garden.training.utils import detect_model_dtype
+        from model_garden.training.mixins import detect_model_dtype
 
         # Create a real tensor with float16 dtype
         real_param = torch.zeros(1, dtype=torch.float16)
@@ -215,7 +215,7 @@ class TestDetectModelDtype:
 
     def test_detect_fallback_to_float32(self):
         """Test fallback to float32 when detection fails."""
-        from model_garden.training.utils import detect_model_dtype
+        from model_garden.training.mixins import detect_model_dtype
 
         # Model with no accessible parameters or config
         model = MagicMock()
@@ -240,7 +240,7 @@ class TestGetTrainingPrecisionConfig:
 
     def test_bfloat16_config(self):
         """Test config for bfloat16 model."""
-        from model_garden.training.utils import get_training_precision_config
+        from model_garden.training.mixins import get_training_precision_config
 
         # Use real tensor for proper dtype detection
         real_param = torch.zeros(1, dtype=torch.bfloat16)
@@ -253,7 +253,7 @@ class TestGetTrainingPrecisionConfig:
 
     def test_float16_config(self):
         """Test config for float16 model."""
-        from model_garden.training.utils import get_training_precision_config
+        from model_garden.training.mixins import get_training_precision_config
 
         # Use real tensor for proper dtype detection
         real_param = torch.zeros(1, dtype=torch.float16)
@@ -266,7 +266,7 @@ class TestGetTrainingPrecisionConfig:
 
     def test_quantized_config(self):
         """Test config for quantized model."""
-        from model_garden.training.utils import get_training_precision_config
+        from model_garden.training.mixins import get_training_precision_config
 
         model = MagicMock()
         config = get_training_precision_config(model, load_in_4bit=True, load_in_8bit=False)
@@ -278,7 +278,7 @@ class TestMemoryMonitorCallback:
 
     def test_on_step_end_logs_at_interval(self):
         """Test that callback logs at correct intervals."""
-        from model_garden.training.utils import MemoryMonitorCallback
+        from model_garden.training.callbacks import MemoryMonitorCallback
 
         callback = MemoryMonitorCallback()
         state = MagicMock()
@@ -290,7 +290,7 @@ class TestMemoryMonitorCallback:
 
     def test_on_step_end_skips_non_interval(self):
         """Test that callback skips non-interval steps."""
-        from model_garden.training.utils import MemoryMonitorCallback
+        from model_garden.training.callbacks import MemoryMonitorCallback
 
         callback = MemoryMonitorCallback()
         state = MagicMock()

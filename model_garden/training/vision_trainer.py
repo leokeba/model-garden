@@ -30,7 +30,6 @@ import torch
 from datasets import Dataset, load_dataset
 from PIL import Image
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from trl.trainer.sft_trainer import SFTTrainer  # type: ignore
 from unsloth import FastVisionModel  # FastVisionModel for vision-language models
 
 # Import backend base class
@@ -41,174 +40,21 @@ from model_garden.training.config import VisionTrainingConfig
 
 # Import shared training mixin and utilities (consolidated location)
 from model_garden.training.mixins import (
-    MemoryMonitorCallback,
     TrainerMixin,
     cleanup_memory,
     detect_model_dtype,
     get_training_precision_config,
 )
 
+# Import extracted modules
+from model_garden.training.lazy_dataset import LazyVisionDataset
+from model_garden.training.sft_trainer import FixedSFTTrainer
+from model_garden.training.chat_template import ChatTemplateDetector
+from model_garden.training.callbacks import MemoryMonitorCallback
+
 # Import centralized utilities
 from model_garden.utils.console import console
 from model_garden.utils.image import decode_base64_image, load_image
-
-
-class LazyVisionDataset:
-    """A dataset wrapper that loads images on-demand to prevent memory exhaustion.
-
-    Instead of loading all PIL Images into RAM at format time (which can easily
-    exhaust memory with 1000+ images), this class stores only the image references
-    (file paths or base64 strings) and loads them lazily when accessed.
-
-    This is particularly important for:
-    - Large vision datasets (1000+ images)
-    - High-resolution images
-    - Multi-epoch training where data is iterated multiple times
-
-    The tradeoff is slightly more I/O during training, but dramatically reduced
-    memory usage. For SSD storage, the I/O overhead is minimal.
-
-    Attributes:
-        examples: List of example metadata (text, image reference, response, etc.)
-        system_message: System message to use for all examples
-        image_loader: Function to load images from references
-        _cache: Optional LRU cache for recently accessed images
-
-    Example:
-        >>> dataset = LazyVisionDataset(examples, system_message, loader)
-        >>> len(dataset)  # Fast - just returns count
-        1000
-        >>> dataset[0]  # Loads image on-demand
-        {"messages": [...]}  # With PIL Image loaded
-    """
-
-    def __init__(
-        self,
-        examples: list[dict],
-        system_message: str,
-        image_loader: "Callable[[Any], Image.Image]",
-        cache_size: int = 0,
-    ):
-        """Initialize the lazy dataset.
-
-        Args:
-            examples: List of example dicts with text, image reference, and response.
-                     Image references can be file paths, base64 strings, or URLs.
-            system_message: System message to prepend to each example.
-            image_loader: Function to load PIL Image from image reference.
-            cache_size: Number of images to cache in memory (0 = no caching).
-                       Caching can help if the same images are accessed repeatedly,
-                       but uses memory proportional to cache_size * avg_image_size.
-        """
-        self.examples = examples
-        self.system_message = system_message
-        self.image_loader = image_loader
-        self._cache: dict[int, Image.Image] | None = None
-        self._cache_size = cache_size
-        if cache_size > 0:
-            self._cache = {}
-            self._cache_order: list[int] = []
-
-    def __len__(self) -> int:
-        """Return the number of examples (fast, no I/O)."""
-        return len(self.examples)
-
-    def __getitem__(self, idx: int) -> dict:
-        """Load and return a single example with its image.
-
-        This method is called by the DataLoader during training. The image
-        is loaded on-demand here, keeping memory usage proportional to
-        batch_size rather than dataset_size.
-
-        Args:
-            idx: Index of the example to load
-
-        Returns:
-            Formatted message dict with PIL Image loaded
-        """
-        example = self.examples[idx]
-
-        # Check cache first
-        pil_image = None
-        if self._cache is not None and idx in self._cache:
-            pil_image = self._cache[idx]
-        else:
-            # Load image on-demand
-            image_ref = example.get("image")
-            pil_image = self.image_loader(image_ref)
-
-            # Update cache if enabled
-            if self._cache is not None:
-                # Simple LRU eviction
-                if len(self._cache) >= self._cache_size:
-                    oldest = self._cache_order.pop(0)
-                    del self._cache[oldest]
-                self._cache[idx] = pil_image
-                self._cache_order.append(idx)
-
-        # Get text and response
-        text = example.get("text", "")
-        response = example.get("response", "")
-        effective_system = example.get("system", self.system_message)
-
-        # Format as OpenAI messages
-        return {
-            "messages": [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": effective_system}],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": pil_image},
-                        {"type": "text", "text": text},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": response}],
-                },
-            ],
-        }
-
-    def clear_cache(self) -> None:
-        """Clear the image cache to free memory."""
-        if self._cache is not None:
-            self._cache.clear()
-            self._cache_order.clear()
-
-
-class FixedSFTTrainer(SFTTrainer):
-    """Custom SFTTrainer that fixes the eval loss computation bug.
-
-    The bug: Trainer.prediction_step() doesn't pass num_items_in_batch to compute_loss,
-    causing incorrect loss normalization during evaluation when using masked tokens.
-
-    Training path: compute_loss(model, inputs, num_items_in_batch=...) → correct
-    Eval path: compute_loss(model, inputs, return_outputs=True) → MISSING num_items_in_batch!
-
-    This fixes the eval path to also pass num_items_in_batch for correct loss computation.
-    """
-
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        """Override to disable num_items_in_batch entirely.
-
-        The issue: Training sums tokens across gradient_accumulation_steps batches (~1700 tokens)
-        and computes loss = sum / 1700. Eval uses a single batch (~425 tokens) with loss = sum / 425.
-        Even though both are "per-token averages", they differ due to batch composition.
-
-        Solution: Force num_items_in_batch=None for both train and eval to use consistent
-        reduction='mean' behavior across all tokens in each batch independently.
-        """
-        # Force num_items_in_batch=None for both training and eval
-        # This makes both use reduction='mean' (default behavior)
-        num_items_in_batch = None
-
-        # Call parent with num_items_in_batch=None
-        return super().compute_loss(
-            model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch
-        )
 
 
 def _cleanup_memory_after_merge():
@@ -767,108 +613,23 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
     def _detect_chat_markers(self, processor) -> tuple[str, str]:
         """Detect instruction and response markers from tokenizer's chat template.
 
-        This method automatically extracts the chat markers used by the model's tokenizer,
-        making the code work with any chat model (Qwen, Llama, Phi, Mistral, etc.) without
-        hardcoding model-specific templates.
+        Delegates to the ChatTemplateDetector module for actual detection.
+        Kept as a method for backwards compatibility and easy access from
+        VisionLanguageTrainer instances.
 
         Args:
             processor: The model's processor (contains tokenizer)
 
         Returns:
             Tuple of (instruction_marker, response_marker)
-            - instruction_marker: The marker before user messages (e.g., "<|im_start|>user")
-            - response_marker: The marker before assistant messages (e.g., "<|im_start|>assistant")
 
         Example:
             >>> instruction, response = trainer._detect_chat_markers(processor)
             >>> print(f"User: {instruction}, Assistant: {response}")
             User: <|im_start|>user, Assistant: <|im_start|>assistant
         """
-        try:
-            # Apply template to sample messages with placeholders
-            sample = [
-                {"role": "user", "content": "__USER_PLACEHOLDER__"},
-                {"role": "assistant", "content": "__ASSISTANT_PLACEHOLDER__"},
-            ]
-
-            formatted = processor.apply_chat_template(
-                sample, tokenize=False, add_generation_prompt=False
-            )
-
-            # Find placeholder positions
-            user_idx = formatted.find("__USER_PLACEHOLDER__")
-            assistant_idx = formatted.find("__ASSISTANT_PLACEHOLDER__")
-
-            if user_idx > 0 and assistant_idx > 0:
-                # Extract the line before user content
-                lines_before_user = formatted[:user_idx].split("\n")
-                instruction_marker = None
-                for line in reversed(lines_before_user):
-                    if line.strip() and not line.strip().endswith("_PLACEHOLDER__"):
-                        instruction_marker = line.strip()
-                        break
-
-                # Extract the line before assistant content
-                lines_before_assistant = formatted[:assistant_idx].split("\n")
-                response_marker = None
-                for line in reversed(lines_before_assistant):
-                    if line.strip() and not line.strip().endswith("_PLACEHOLDER__"):
-                        response_marker = line.strip()
-                        break
-
-                if instruction_marker and response_marker:
-                    console.print("[green]✓ Auto-detected chat markers:[/green]")
-                    console.print(f"  instruction_part: {repr(instruction_marker)}")
-                    console.print(f"  response_part: {repr(response_marker)}")
-                    return instruction_marker, response_marker
-
-        except Exception as e:
-            console.print(f"[yellow]⚠️  Could not auto-detect chat markers: {e}[/yellow]")
-
-        # Fallback to model-specific markers
-        return self._fallback_markers(processor)
-
-    def _fallback_markers(self, processor) -> tuple[str, str]:
-        """Fallback chat markers for models without templates or when detection fails.
-
-        Uses model type to select appropriate markers from common patterns.
-
-        Args:
-            processor: The model's processor
-
-        Returns:
-            Tuple of (instruction_marker, response_marker)
-        """
-        try:
-            model_type = processor.tokenizer.config.model_type.lower()
-        except:
-            model_type = ""
-
-        # Common chat template patterns
-        if "qwen" in model_type:
-            markers = ("<|im_start|>user", "<|im_start|>assistant")
-        elif "llama" in model_type:
-            markers = ("[INST]", "[/INST]")
-        elif "phi" in model_type:
-            markers = ("<|user|>", "<|assistant|>")
-        elif "mistral" in model_type:
-            markers = ("[INST]", "[/INST]")
-        elif "gemma" in model_type:
-            markers = ("<start_of_turn>user", "<start_of_turn>model")
-        else:
-            # Generic fallback
-            console.print(
-                "[yellow]⚠️  Using generic markers - training may not work optimally[/yellow]"
-            )
-            console.print(
-                "[yellow]    Consider adding model-specific markers to _fallback_markers()[/yellow]"
-            )
-            markers = ("User:", "Assistant:")
-
-        console.print(f"[cyan]Using fallback markers for {model_type or 'unknown'}:[/cyan]")
-        console.print(f"  instruction_part: {repr(markers[0])}")
-        console.print(f"  response_part: {repr(markers[1])}")
-        return markers
+        detector = ChatTemplateDetector(verbose=True)
+        return detector.detect(processor)
 
     def _detect_vqa_format(self, example: dict) -> bool:
         """Detect if example uses VQA format (question + answer/answers).

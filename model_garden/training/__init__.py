@@ -5,38 +5,44 @@ Training components for Model Garden:
 - vision_trainer.py: Vision-language model training (VisionLanguageTrainer)
 - config.py: Training configuration dataclasses
 - mixins.py: Shared trainer mixin with common functionality
-- callbacks.py: Training callbacks (metrics, progress estimation)
+- callbacks/: Training callbacks package (consolidated)
+  - metrics.py: TrainingMetricsCallback
+  - progress.py: ProgressEstimationCallback
+  - early_stopping.py: EarlyStoppingCallback
+  - memory.py: MemoryMonitorCallback
 - protocols.py: Protocol-based interfaces for duck typing
 - pipeline.py: Unified training pipeline
 - selective_loss.py: Selective loss for structured outputs
-- early_stopping.py: Early stopping callback
 - weighted_loss.py: Weighted loss trainers
-- utils.py: Training utilities (deprecated, use mixins.py)
 - subprocess_runner.py: Subprocess-based training execution
+- dataset_formats.py: Dataset format detection and conversion
+- chat_template.py: Chat template detection utilities
+- model_loading.py: Model loading with retry support
 """
 
 # Configuration dataclasses
 from .config import (
     LoRAConfig,
     ModelConfig,
+    SelectiveLossConfig,
     TrainingConfig,
     VisionLoRAConfig,
     VisionModelConfig,
     VisionTrainingConfig,
 )
 
-# Callbacks
+# Callbacks (consolidated in callbacks package)
 from .callbacks import (
+    EarlyStoppingCallback,
+    MemoryMonitorCallback,
     ProgressEstimate,
     ProgressEstimationCallback,
     TrainingMetrics,
     TrainingMetricsCallback,
 )
-from .early_stopping import EarlyStoppingCallback
 
 # Shared mixin and utilities (consolidated location)
 from .mixins import (
-    MemoryMonitorCallback,
     TrainerMixin,
     cleanup_memory,
     detect_model_dtype,
@@ -79,20 +85,35 @@ from .subprocess_runner import (
 # Main trainers
 from .trainer import ModelTrainer, create_sample_dataset, create_text_trainer
 from .vision_trainer import (
-    LazyVisionDataset,
     VisionLanguageTrainer,
     create_vision_sample_dataset,
     create_vision_trainer,
     merge_vision_lora_adapter,
 )
 
+# Lazy dataset for vision models
+from .lazy_dataset import LazyVisionDataset, LazyVisionDatasetWithMultipleImages
+
+# Custom SFT trainer
+from .sft_trainer import FixedSFTTrainer, ConsistentLossSFTTrainer
+
 # Weighted loss trainers
 from .weighted_loss import WeightedLossTrainer, WeightedLossTrainerWithMetrics
+
+# Dataset format utilities
+from .dataset_formats import DatasetFormatConverter
+
+# Chat template utilities
+from .chat_template import ChatTemplateDetector, FALLBACK_MARKERS
+
+# Model loading utilities
+from .model_loading import ModelLoaderWithFallback, ModelLoadingError
 
 __all__ = [
     # Configuration
     "TrainingConfig",
     "VisionTrainingConfig",
+    "SelectiveLossConfig",
     "LoRAConfig",
     "VisionLoRAConfig",
     "ModelConfig",
@@ -102,6 +123,9 @@ __all__ = [
     "VisionLanguageTrainer",
     "TrainerMixin",
     "LazyVisionDataset",
+    "LazyVisionDatasetWithMultipleImages",
+    "FixedSFTTrainer",
+    "ConsistentLossSFTTrainer",
     "create_text_trainer",
     "create_vision_trainer",
     "create_sample_dataset",
@@ -142,4 +166,12 @@ __all__ = [
     # Subprocess
     "run_training_in_subprocess",
     "execute_training_job_in_subprocess",
+    # Dataset format utilities
+    "DatasetFormatConverter",
+    # Chat template utilities
+    "ChatTemplateDetector",
+    "FALLBACK_MARKERS",
+    # Model loading utilities
+    "ModelLoaderWithFallback",
+    "ModelLoadingError",
 ]

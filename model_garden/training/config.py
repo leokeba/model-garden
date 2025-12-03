@@ -2,9 +2,19 @@
 
 This module provides dataclasses for training configuration, reducing the parameter
 sprawl in train() methods and providing a single source of truth for defaults.
+
+Configuration is organized hierarchically:
+- ModelConfig / VisionModelConfig: Model loading settings
+- LoRAConfig / VisionLoRAConfig: LoRA adapter settings
+- TrainingConfig: Base training hyperparameters
+- SelectiveLossConfig: Selective loss masking settings (vision)
+- VisionTrainingConfig: Vision training with composed configs
+
+This modular approach allows reusing individual configs and makes the
+API cleaner with related settings grouped together.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from model_garden.training.constants import (
@@ -257,11 +267,120 @@ class TrainingConfig:
 
 
 @dataclass
+class SelectiveLossConfig:
+    """Configuration for selective loss masking.
+
+    Selective loss masking improves structured output quality by reducing
+    the loss contribution from structural tokens (JSON syntax, schema keys)
+    so the model focuses on learning content values rather than formatting.
+
+    This configuration groups all selective loss related settings, making
+    the VisionTrainingConfig cleaner and enabling reuse of selective loss
+    settings across different training configurations.
+
+    Attributes:
+        enabled: Whether to enable selective loss masking.
+        level: Masking aggressiveness level.
+            - "conservative": Mask only obvious structural tokens
+            - "moderate": Mask structural tokens + common patterns
+            - "aggressive": Maximum masking, may affect content learning
+        schema_keys: List of JSON schema keys to mask. If None, auto-detected
+            from the dataset.
+        masking_strategy: How to apply masking over time.
+            - "epoch_based": Start masking after masking_start_epoch
+            - "alternating": Cycle between masked/unmasked every N steps
+            - "weighted": Use structural_weight instead of full masking
+        masking_start_epoch: For epoch_based strategy, delay masking until
+            this epoch to let the model learn basic structure first.
+        mask_every_n_steps: For alternating strategy, the cycle length.
+        mask_for_n_steps: For alternating strategy, steps with masking ON
+            per cycle.
+        structural_weight: For weighted strategy, the loss weight for
+            structural tokens (0.0 = ignore, 1.0 = full weight).
+        verbose: Print masking statistics during training for debugging.
+
+    Example:
+        >>> # Conservative masking starting from epoch 1
+        >>> config = SelectiveLossConfig(
+        ...     enabled=True,
+        ...     level="conservative",
+        ...     masking_strategy="epoch_based",
+        ...     masking_start_epoch=1.0,
+        ... )
+
+        >>> # Aggressive masking with alternating cycles
+        >>> config = SelectiveLossConfig(
+        ...     enabled=True,
+        ...     level="aggressive",
+        ...     masking_strategy="alternating",
+        ...     mask_every_n_steps=100,
+        ...     mask_for_n_steps=80,
+        ... )
+
+        >>> # Weighted masking (soft)
+        >>> config = SelectiveLossConfig(
+        ...     enabled=True,
+        ...     masking_strategy="weighted",
+        ...     structural_weight=0.1,  # 10% weight for structural tokens
+        ... )
+    """
+
+    enabled: bool = False
+    level: Literal["conservative", "moderate", "aggressive"] = DEFAULT_SELECTIVE_LOSS_LEVEL  # type: ignore[assignment]
+    schema_keys: list[str] | None = None
+    masking_strategy: Literal["epoch_based", "alternating", "weighted"] = DEFAULT_SELECTIVE_LOSS_STRATEGY  # type: ignore[assignment]
+    masking_start_epoch: float = 0.0
+    mask_every_n_steps: int = DEFAULT_MASK_EVERY_N_STEPS
+    mask_for_n_steps: int = DEFAULT_MASK_FOR_N_STEPS
+    structural_weight: float = DEFAULT_STRUCTURAL_WEIGHT
+    verbose: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary with prefixed keys for VisionTrainingConfig."""
+        return {
+            "selective_loss": self.enabled,
+            "selective_loss_level": self.level,
+            "selective_loss_schema_keys": self.schema_keys,
+            "selective_loss_masking_strategy": self.masking_strategy,
+            "selective_loss_masking_start_epoch": self.masking_start_epoch,
+            "selective_loss_mask_every_n_steps": self.mask_every_n_steps,
+            "selective_loss_mask_for_n_steps": self.mask_for_n_steps,
+            "selective_loss_structural_weight": self.structural_weight,
+            "selective_loss_verbose": self.verbose,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SelectiveLossConfig":
+        """Create config from dictionary (handles both prefixed and unprefixed keys)."""
+        # Handle both "selective_loss_level" and "level" style keys
+        prefix = "selective_loss_"
+        normalized = {}
+
+        for key, value in d.items():
+            # Remove prefix if present
+            if key.startswith(prefix) and key != "selective_loss":
+                clean_key = key[len(prefix):]
+            elif key == "selective_loss":
+                clean_key = "enabled"
+            else:
+                clean_key = key
+
+            if clean_key in cls.__dataclass_fields__:
+                normalized[clean_key] = value
+
+        return cls(**normalized)
+
+
+@dataclass
 class VisionTrainingConfig(TrainingConfig):
     """Extended training config for vision-language models.
 
     Vision models have different defaults and additional options for
     selective loss masking during structured output training.
+
+    Supports two configuration styles:
+    1. Flat style (backwards compatible): Set individual selective_loss_* fields
+    2. Composed style (recommended): Pass a SelectiveLossConfig object
 
     Attributes:
         batch_size: Smaller default (1) for vision models due to memory.
@@ -270,22 +389,30 @@ class VisionTrainingConfig(TrainingConfig):
         lr_scheduler_type: Cosine scheduler works better for vision.
         dataloader_pin_memory: Disabled by default to prevent RAM accumulation.
         lazy_loading: Load images on-demand instead of all at once (saves memory).
-        selective_loss: Enable selective loss masking for structured outputs.
-        selective_loss_level: Masking level ("conservative", "moderate", "aggressive").
-        selective_loss_schema_keys: Schema keys to mask (auto-detected if None).
-        selective_loss_masking_strategy: Strategy ("epoch_based", "alternating", "weighted").
-        selective_loss_masking_start_epoch: Delay masking until this epoch.
-        selective_loss_mask_every_n_steps: Cycle length for alternating strategy.
-        selective_loss_mask_for_n_steps: Steps with masking ON per cycle.
-        selective_loss_structural_weight: Weight for structural tokens (weighted strategy).
-        selective_loss_verbose: Print masking statistics during training.
+        selective_loss_config: Composed config object (preferred).
+        selective_loss: Enable selective loss masking (flat style).
+        selective_loss_level: Masking level (flat style).
+        ... (other selective_loss_* fields for backwards compatibility)
 
-    Example:
+    Example (composed style - recommended):
+        >>> sl_config = SelectiveLossConfig(
+        ...     enabled=True,
+        ...     level="aggressive",
+        ...     masking_strategy="epoch_based",
+        ...     masking_start_epoch=1.0,
+        ... )
+        >>> config = VisionTrainingConfig(
+        ...     output_dir="./models/vision-model",
+        ...     selective_loss_config=sl_config,
+        ...     lazy_loading=True
+        ... )
+
+    Example (flat style - backwards compatible):
         >>> config = VisionTrainingConfig(
         ...     output_dir="./models/vision-model",
         ...     selective_loss=True,
         ...     selective_loss_level="aggressive",
-        ...     lazy_loading=True  # Recommended for large datasets
+        ...     lazy_loading=True
         ... )
     """
 
@@ -299,7 +426,10 @@ class VisionTrainingConfig(TrainingConfig):
     # Memory optimization
     lazy_loading: bool = False  # Load images on-demand to prevent memory exhaustion
 
-    # Selective loss options
+    # Composed selective loss config (preferred)
+    selective_loss_config: SelectiveLossConfig | None = None
+
+    # Flat selective loss options (for backwards compatibility)
     selective_loss: bool = False
     selective_loss_level: str = DEFAULT_SELECTIVE_LOSS_LEVEL
     selective_loss_schema_keys: list[str] | None = None
@@ -309,6 +439,40 @@ class VisionTrainingConfig(TrainingConfig):
     selective_loss_mask_for_n_steps: int = DEFAULT_MASK_FOR_N_STEPS
     selective_loss_structural_weight: float = DEFAULT_STRUCTURAL_WEIGHT
     selective_loss_verbose: bool = False
+
+    def __post_init__(self):
+        """Sync composed config with flat fields."""
+        if self.selective_loss_config is not None:
+            # Composed config takes priority - sync flat fields from it
+            self.selective_loss = self.selective_loss_config.enabled
+            self.selective_loss_level = self.selective_loss_config.level
+            self.selective_loss_schema_keys = self.selective_loss_config.schema_keys
+            self.selective_loss_masking_strategy = self.selective_loss_config.masking_strategy
+            self.selective_loss_masking_start_epoch = self.selective_loss_config.masking_start_epoch
+            self.selective_loss_mask_every_n_steps = self.selective_loss_config.mask_every_n_steps
+            self.selective_loss_mask_for_n_steps = self.selective_loss_config.mask_for_n_steps
+            self.selective_loss_structural_weight = self.selective_loss_config.structural_weight
+            self.selective_loss_verbose = self.selective_loss_config.verbose
+
+    def get_selective_loss_config(self) -> SelectiveLossConfig:
+        """Get a SelectiveLossConfig from this training config.
+
+        Returns the composed config if set, otherwise creates one from flat fields.
+        """
+        if self.selective_loss_config is not None:
+            return self.selective_loss_config
+
+        return SelectiveLossConfig(
+            enabled=self.selective_loss,
+            level=self.selective_loss_level,  # type: ignore[arg-type]
+            schema_keys=self.selective_loss_schema_keys,
+            masking_strategy=self.selective_loss_masking_strategy,  # type: ignore[arg-type]
+            masking_start_epoch=self.selective_loss_masking_start_epoch,
+            mask_every_n_steps=self.selective_loss_mask_every_n_steps,
+            mask_for_n_steps=self.selective_loss_mask_for_n_steps,
+            structural_weight=self.selective_loss_structural_weight,
+            verbose=self.selective_loss_verbose,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for passing to trainer methods."""
