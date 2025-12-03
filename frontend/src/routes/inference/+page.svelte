@@ -3,6 +3,7 @@
   import Badge from "$lib/components/Badge.svelte";
   import Button from "$lib/components/Button.svelte";
   import Card from "$lib/components/Card.svelte";
+  import ModelLoader from "$lib/components/ModelLoader.svelte";
   import { onMount } from "svelte";
 
   // Inference status
@@ -15,12 +16,20 @@
     role: "user" | "assistant" | "system";
     content: string;
     timestamp: Date;
+    image?: string; // Base64 or URL
+    imagePreview?: string; // For display
   };
 
   let messages: Message[] = $state([]);
   let currentInput = $state("");
   let isGenerating = $state(false);
   let streamingContent = $state("");
+
+  // Image input
+  let currentImage = $state<string | null>(null);
+  let currentImagePreview = $state<string | null>(null);
+  let imageInputRef: HTMLInputElement | null = $state(null);
+  let isDragging = $state(false);
 
   // Settings
   let mode = $state<"chat" | "completion">("chat");
@@ -51,24 +60,33 @@
   }
 
   async function sendMessage() {
-    if (!currentInput.trim() || !inferenceStatus?.loaded || isGenerating)
+    if (
+      (!currentInput.trim() && !currentImage) ||
+      !inferenceStatus?.loaded ||
+      isGenerating
+    )
       return;
 
     const userMessage: Message = {
       role: "user",
       content: currentInput.trim(),
       timestamp: new Date(),
+      image: currentImage || undefined,
+      imagePreview: currentImagePreview || undefined,
     };
 
     messages = [...messages, userMessage];
     const inputToSend = currentInput;
+    const imageToSend = currentImage;
     currentInput = "";
+    currentImage = null;
+    currentImagePreview = null;
     isGenerating = true;
     streamingContent = "";
 
     try {
       if (mode === "chat") {
-        await streamChatCompletion(inputToSend);
+        await streamChatCompletion(inputToSend, imageToSend);
       } else {
         await streamCompletion(inputToSend);
       }
@@ -87,7 +105,10 @@
     }
   }
 
-  async function streamChatCompletion(userInput: string) {
+  async function streamChatCompletion(
+    userInput: string,
+    image?: string | null,
+  ) {
     const assistantMessage: Message = {
       role: "assistant",
       content: "",
@@ -97,13 +118,49 @@
 
     try {
       // Prepare chat messages with system prompt
-      const chatMessages = [
+      const chatMessages: any[] = [
         { role: "system", content: systemPrompt },
-        ...messages
-          .slice(0, -1)
-          .map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content: userInput },
+        ...messages.slice(0, -1).map((m) => {
+          // Include image in message if present (OpenAI multimodal format)
+          if (m.image) {
+            return {
+              role: m.role,
+              content: [
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: m.image.startsWith("data:")
+                      ? m.image
+                      : `data:image/jpeg;base64,${m.image}`,
+                  },
+                },
+                { type: "text", text: m.content || "What is in this image?" },
+              ],
+            };
+          }
+          return { role: m.role, content: m.content };
+        }),
       ];
+
+      // Add current user message with optional image
+      if (image) {
+        chatMessages.push({
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: image.startsWith("data:")
+                  ? image
+                  : `data:image/jpeg;base64,${image}`,
+              },
+            },
+            { type: "text", text: userInput || "What is in this image?" },
+          ],
+        });
+      } else {
+        chatMessages.push({ role: "user", content: userInput });
+      }
 
       const response = await fetch(`/api/v1/chat/completions`, {
         method: "POST",
@@ -254,6 +311,68 @@
     }
   }
 
+  // Image handling functions
+  function handleImageSelect(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files[0]) {
+      processImageFile(input.files[0]);
+    }
+  }
+
+  function processImageFile(file: File) {
+    if (!file.type.startsWith("image/")) {
+      alert("Please select an image file");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      currentImage = result; // Full data URL
+      currentImagePreview = result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handlePaste(event: ClipboardEvent) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        event.preventDefault();
+        const file = item.getAsFile();
+        if (file) processImageFile(file);
+        break;
+      }
+    }
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDragging = false;
+
+    const files = event.dataTransfer?.files;
+    if (files && files[0]) {
+      processImageFile(files[0]);
+    }
+  }
+
+  function handleDragOver(event: DragEvent) {
+    event.preventDefault();
+    isDragging = true;
+  }
+
+  function handleDragLeave() {
+    isDragging = false;
+  }
+
+  function clearImage() {
+    currentImage = null;
+    currentImagePreview = null;
+    if (imageInputRef) imageInputRef.value = "";
+  }
+
   onMount(() => {
     loadInferenceStatus();
     // Refresh status every 10 seconds
@@ -308,7 +427,12 @@
                   Start a Conversation
                 </h3>
                 <p class="text-gray-500">
-                  Select a model and type a message below
+                  {inferenceStatus?.model_info?.is_vision_adapter ||
+                  inferenceStatus?.model_info?.model_path
+                    ?.toLowerCase()
+                    .includes("vl")
+                    ? "Vision model loaded! You can send images with your messages."
+                    : "Select a model and type a message below"}
                 </p>
               </div>
             {:else}
@@ -331,6 +455,16 @@
                             message.timestamp,
                           )}
                         </div>
+                        <!-- Show image if present -->
+                        {#if message.imagePreview}
+                          <div class="mb-2">
+                            <img
+                              src={message.imagePreview}
+                              alt="Attached"
+                              class="max-w-[200px] max-h-[150px] rounded-lg object-cover"
+                            />
+                          </div>
+                        {/if}
                         <div class="whitespace-pre-wrap break-words">
                           {message.content}{#if isGenerating && index === messages.length - 1 && message.role === "assistant"}<span
                               class="inline-block w-1 h-4 bg-gray-600 animate-pulse ml-1"
@@ -345,15 +479,67 @@
           </div>
 
           <!-- Input Area -->
-          <div class="border-t border-gray-200 p-4">
+          <div
+            class="border-t border-gray-200 p-4 {isDragging
+              ? 'bg-primary-50 border-primary-300'
+              : ''}"
+            ondrop={handleDrop}
+            ondragover={handleDragOver}
+            ondragleave={handleDragLeave}
+            role="region"
+          >
+            <!-- Image Preview -->
+            {#if currentImagePreview}
+              <div class="mb-3 flex items-start gap-2">
+                <div class="relative inline-block">
+                  <img
+                    src={currentImagePreview}
+                    alt="To send"
+                    class="max-w-[120px] max-h-[80px] rounded-lg object-cover border border-gray-300"
+                  />
+                  <button
+                    type="button"
+                    onclick={clearImage}
+                    class="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center text-xs hover:bg-red-600"
+                    aria-label="Remove image"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <span class="text-xs text-gray-500 mt-1">Image attached</span>
+              </div>
+            {/if}
+
             <div class="flex gap-3">
+              <!-- Image Upload Button -->
+              <input
+                type="file"
+                accept="image/*"
+                onchange={handleImageSelect}
+                bind:this={imageInputRef}
+                class="hidden"
+                id="image-input"
+              />
+              <button
+                type="button"
+                onclick={() => imageInputRef?.click()}
+                disabled={isGenerating ||
+                  !inferenceStatus?.loaded ||
+                  loadingStatus}
+                class="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 text-gray-600 self-end"
+                title="Attach image (or paste/drag)"
+              >
+                🖼️
+              </button>
+
               <textarea
                 bind:value={currentInput}
                 onkeydown={handleKeyDown}
+                onpaste={handlePaste}
                 placeholder={isGenerating
                   ? "Generating..."
                   : inferenceStatus?.loaded
-                    ? "Type your message... (Enter to send, Shift+Enter for new line)"
+                    ? "Type your message... (Enter to send, Ctrl+V to paste image)"
                     : "Load a model first..."}
                 rows="2"
                 disabled={isGenerating ||
@@ -364,118 +550,33 @@
               <Button
                 onclick={sendMessage}
                 variant="primary"
-                disabled={!currentInput.trim() ||
+                disabled={(!currentInput.trim() && !currentImage) ||
                   isGenerating ||
                   !inferenceStatus?.loaded ||
                   loadingStatus}
                 loading={isGenerating}
                 class="self-end"
               >
-                {isGenerating ? "Generating..." : "Send"}
+                {isGenerating ? "..." : "Send"}
               </Button>
             </div>
+            {#if isDragging}
+              <div class="mt-2 text-sm text-primary-600 text-center">
+                Drop image here
+              </div>
+            {/if}
           </div>
         </Card>
       </div>
 
       <!-- Sidebar -->
       <div class="space-y-6">
-        <!-- Model Status -->
-        <Card>
-          <div class="p-4">
-            <h3 class="text-lg font-semibold text-gray-900 mb-3">
-              Model Status
-            </h3>
-            {#if loadingStatus}
-              <div class="flex items-center justify-center py-4">
-                <div
-                  class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"
-                ></div>
-              </div>
-            {:else if statusError}
-              <div class="text-sm text-red-600 mb-3">{statusError}</div>
-              <Button
-                onclick={loadInferenceStatus}
-                variant="secondary"
-                size="sm"
-                fullWidth
-              >
-                Retry
-              </Button>
-            {:else if !inferenceStatus?.loaded}
-              <div class="space-y-3">
-                <p class="text-sm text-gray-500">
-                  No model currently loaded for inference.
-                </p>
-                <Button
-                  href="/models/load"
-                  variant="primary"
-                  size="sm"
-                  fullWidth
-                >
-                  🔌 Load Model
-                </Button>
-              </div>
-            {:else}
-              <div class="space-y-3">
-                <div class="flex items-center gap-2 mb-2">
-                  <Badge variant="success">Loaded</Badge>
-                </div>
-                <div class="space-y-2 text-sm">
-                  <div>
-                    <div class="text-xs text-gray-500">Model Path</div>
-                    <div class="font-medium text-gray-900 break-all">
-                      {inferenceStatus.model_info.model_path.split("/").pop()}
-                    </div>
-                    <div class="text-xs text-gray-400 mt-0.5">
-                      {inferenceStatus.model_info.model_path}
-                    </div>
-                  </div>
-                  {#if inferenceStatus.model_info.max_model_len}
-                    <div>
-                      <div class="text-xs text-gray-500">Max Length</div>
-                      <div class="font-medium text-gray-900">
-                        {inferenceStatus.model_info.max_model_len} tokens
-                      </div>
-                    </div>
-                  {/if}
-                  <div>
-                    <div class="text-xs text-gray-500">GPU Memory</div>
-                    <div class="font-medium text-gray-900">
-                      {(
-                        inferenceStatus.model_info.gpu_memory_utilization * 100
-                      ).toFixed(0)}%
-                    </div>
-                  </div>
-                  <div>
-                    <div class="text-xs text-gray-500">Data Type</div>
-                    <div class="font-medium text-gray-900">
-                      {inferenceStatus.model_info.dtype}
-                    </div>
-                  </div>
-                  {#if inferenceStatus.model_info.quantization}
-                    <div>
-                      <div class="text-xs text-gray-500">Quantization</div>
-                      <div class="font-medium text-gray-900">
-                        {inferenceStatus.model_info.quantization}
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-                <div class="pt-2 mt-2 border-t border-gray-200">
-                  <Button
-                    href="/models/load"
-                    variant="secondary"
-                    size="sm"
-                    fullWidth
-                  >
-                    Switch Model
-                  </Button>
-                </div>
-              </div>
-            {/if}
-          </div>
-        </Card>
+        <!-- Model Loader -->
+        <ModelLoader
+          compact
+          onModelLoaded={loadInferenceStatus}
+          onModelUnloaded={loadInferenceStatus}
+        />
 
         <!-- Mode Selection -->
         <Card>

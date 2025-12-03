@@ -396,14 +396,39 @@ class APIClient {
   // Inference
   async getInferenceStatus(): Promise<{
     loaded: boolean;
+    loading?: {
+      job_id: string;
+      model_path: string;
+      started_at: string;
+      status_message: string;
+    };
+    queue?: {
+      count: number;
+      jobs: Array<{
+        job_id: string;
+        model_path: string;
+        queued_at: string;
+        position: number;
+      }>;
+    };
     model_info: {
       model_path: string;
       is_loaded: boolean;
       tensor_parallel_size: number;
       gpu_memory_utilization: number;
       max_model_len: number | null;
+      max_num_seqs?: number;
+      enforce_eager?: boolean;
       dtype: string;
       quantization: string | null;
+      // LoRA adapter info
+      is_lora_adapter?: boolean;
+      base_model?: string;
+      adapter_path?: string;
+      lora_enabled?: boolean;
+      is_vision_adapter?: boolean;
+      merged_automatically?: boolean;
+      note?: string;
     } | null;
   }> {
     return this.request('/inference/status');
@@ -414,19 +439,59 @@ class APIClient {
     tensor_parallel_size?: number;
     gpu_memory_utilization?: number;
     max_model_len?: number | null;
+    max_num_seqs?: number | null;
+    enforce_eager?: boolean | null;
+    limit_mm_per_prompt?: Record<string, number> | null;
     dtype?: string;
     quantization?: string | null;
   }): Promise<{ success: boolean; message: string; data?: any }> {
+    const body: Record<string, any> = {
+      model_path: params.model_path,
+      tensor_parallel_size: params.tensor_parallel_size ?? 1,
+      gpu_memory_utilization: params.gpu_memory_utilization ?? 0.0,  // Use ?? to allow 0
+      dtype: params.dtype || 'auto',
+    };
+
+    // Only include optional params if explicitly set
+    if (params.max_model_len !== undefined && params.max_model_len !== null) {
+      body.max_model_len = params.max_model_len;
+    }
+    if (params.max_num_seqs !== undefined && params.max_num_seqs !== null) {
+      body.max_num_seqs = params.max_num_seqs;
+    }
+    if (params.enforce_eager !== undefined && params.enforce_eager !== null) {
+      body.enforce_eager = params.enforce_eager;
+    }
+    if (params.limit_mm_per_prompt !== undefined && params.limit_mm_per_prompt !== null) {
+      body.limit_mm_per_prompt = params.limit_mm_per_prompt;
+    }
+    if (params.quantization !== undefined && params.quantization !== null) {
+      body.quantization = params.quantization;
+    }
+
     return this.request('/inference/load', {
       method: 'POST',
-      body: JSON.stringify({
-        model_path: params.model_path,
-        tensor_parallel_size: params.tensor_parallel_size ?? 1,
-        gpu_memory_utilization: params.gpu_memory_utilization ?? 0.0,  // Use ?? to allow 0
-        max_model_len: params.max_model_len,
-        dtype: params.dtype || 'auto',
-        quantization: params.quantization,
-      }),
+      body: JSON.stringify(body),
+    });
+  }
+
+  async reloadModel(): Promise<{ success: boolean; message: string; data?: any }> {
+    // Get current model info, unload, then reload with same settings
+    const status = await this.getInferenceStatus();
+    if (!status.loaded || !status.model_info) {
+      return { success: false, message: 'No model currently loaded to reload' };
+    }
+
+    const modelInfo = status.model_info;
+    await this.unloadModel();
+
+    return this.loadModel({
+      model_path: modelInfo.model_path,
+      tensor_parallel_size: modelInfo.tensor_parallel_size,
+      gpu_memory_utilization: modelInfo.gpu_memory_utilization,
+      max_model_len: modelInfo.max_model_len,
+      dtype: modelInfo.dtype,
+      quantization: modelInfo.quantization,
     });
   }
 

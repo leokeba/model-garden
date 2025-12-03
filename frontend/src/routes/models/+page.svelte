@@ -3,6 +3,7 @@
   import Badge from "$lib/components/Badge.svelte";
   import Button from "$lib/components/Button.svelte";
   import Card from "$lib/components/Card.svelte";
+  import ModelLoader from "$lib/components/ModelLoader.svelte";
   import UploadToHubModal from "$lib/components/UploadToHubModal.svelte";
   import { onMount } from "svelte";
 
@@ -11,17 +12,38 @@
   let error = $state("");
   let uploadModalOpen = $state(false);
   let selectedModel: Model | null = $state(null);
+  let inferenceStatus = $state<any>(null);
 
   onMount(async () => {
+    await loadData();
+  });
+
+  async function loadData() {
     try {
-      const response = await api.getModels();
-      models = response.items;
+      loading = true;
+      const [modelsResponse, statusResponse] = await Promise.all([
+        api.getModels(),
+        api.getInferenceStatus(),
+      ]);
+      models = modelsResponse.items;
+      inferenceStatus = statusResponse;
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to load models";
     } finally {
       loading = false;
     }
-  });
+  }
+
+  function isModelLoaded(modelPath: string): boolean {
+    if (!inferenceStatus?.loaded || !inferenceStatus?.model_info) return false;
+    const loadedPath = inferenceStatus.model_info.model_path;
+    // Check if paths match (handle both full path and just model name)
+    return (
+      loadedPath === modelPath ||
+      loadedPath.endsWith(modelPath) ||
+      modelPath.endsWith(loadedPath)
+    );
+  }
 
   function formatBytes(bytes: number): string {
     if (bytes === 0) return "0 Bytes";
@@ -100,134 +122,171 @@
         <Button href="/models/browse" variant="secondary">
           🤗 Browse HuggingFace
         </Button>
-        <Button href="/models/load" variant="secondary">🔌 Load Model</Button>
         <Button href="/training/new" variant="primary">
           + Train New Model
         </Button>
       </div>
     </div>
-    {#if loading}
-      <div class="text-center py-12">
-        <div
-          class="inline-block w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"
-        ></div>
-        <p class="mt-2 text-gray-600">Loading models...</p>
-      </div>
-    {:else if error}
-      <div class="text-center py-12">
-        <div class="text-red-600 text-lg">{error}</div>
-        <Button
-          onclick={() => window.location.reload()}
-          variant="primary"
-          class="mt-4"
-        >
-          Retry
-        </Button>
-      </div>
-    {:else if models.length === 0}
-      <div class="text-center py-12">
-        <div class="text-gray-400 text-6xl mb-4">📦</div>
-        <h3 class="text-xl font-semibold text-gray-900 mb-2">No models yet</h3>
-        <p class="text-gray-500 mb-6">
-          Start by training your first model to see it here.
-        </p>
-        <Button href="/training/new" variant="primary">
-          Train Your First Model
-        </Button>
-      </div>
-    {:else}
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {#each models as model}
-          <Card hoverable>
-            <div class="space-y-4">
-              <!-- Header -->
-              <div class="flex items-start justify-between">
-                <div>
-                  <h3 class="text-lg font-semibold text-gray-900">
-                    <a
-                      href={`/models/${encodeURIComponent(model.id)}`}
-                      class="hover:underline"
-                    >
-                      {model.name}
-                    </a>
-                  </h3>
-                  <p class="text-sm text-gray-500">{model.base_model}</p>
-                </div>
-                <Badge
-                  variant={model.status === "available" ? "success" : "warning"}
-                >
-                  {model.status}
-                </Badge>
-              </div>
 
-              <!-- Metrics -->
-              <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <div class="text-xs text-gray-500">Size</div>
-                  <div class="font-medium">
-                    {model.size_bytes
-                      ? formatBytes(model.size_bytes)
-                      : "Unknown"}
-                  </div>
-                </div>
-                <div>
-                  <div class="text-xs text-gray-500">Files</div>
-                  <div class="font-medium">
-                    {#if model.file_exists}
-                      <span class="text-green-600"
-                        >✓ {model.file_count || 0}</span
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <!-- Main Content -->
+      <div class="lg:col-span-3">
+        {#if loading}
+          <div class="text-center py-12">
+            <div
+              class="inline-block w-8 h-8 border-4 border-primary-600 border-t-transparent rounded-full animate-spin"
+            ></div>
+            <p class="mt-2 text-gray-600">Loading models...</p>
+          </div>
+        {:else if error}
+          <div class="text-center py-12">
+            <div class="text-red-600 text-lg">{error}</div>
+            <Button
+              onclick={() => window.location.reload()}
+              variant="primary"
+              class="mt-4"
+            >
+              Retry
+            </Button>
+          </div>
+        {:else if models.length === 0}
+          <div class="text-center py-12">
+            <div class="text-gray-400 text-6xl mb-4">📦</div>
+            <h3 class="text-xl font-semibold text-gray-900 mb-2">
+              No models yet
+            </h3>
+            <p class="text-gray-500 mb-6">
+              Start by training your first model to see it here.
+            </p>
+            <Button href="/training/new" variant="primary">
+              Train Your First Model
+            </Button>
+          </div>
+        {:else}
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {#each models as model}
+              <Card hoverable>
+                <div class="space-y-4">
+                  <!-- Header -->
+                  <div class="flex items-start justify-between">
+                    <div>
+                      <h3 class="text-lg font-semibold text-gray-900">
+                        <a
+                          href={`/models/${encodeURIComponent(model.id)}`}
+                          class="hover:underline"
+                        >
+                          {model.name}
+                        </a>
+                      </h3>
+                      <p class="text-sm text-gray-500">{model.base_model}</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      {#if isModelLoaded(model.path)}
+                        <Badge variant="success">Loaded</Badge>
+                      {/if}
+                      <Badge
+                        variant={model.status === "available"
+                          ? "success"
+                          : "warning"}
                       >
+                        {model.status}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <!-- Metrics -->
+                  <div class="grid grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-xs text-gray-500">Size</div>
+                      <div class="font-medium">
+                        {model.size_bytes
+                          ? formatBytes(model.size_bytes)
+                          : "Unknown"}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-xs text-gray-500">Files</div>
+                      <div class="font-medium">
+                        {#if model.file_exists}
+                          <span class="text-green-600"
+                            >✓ {model.file_count || 0}</span
+                          >
+                        {:else}
+                          <span class="text-red-600">✗ Missing</span>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Actions -->
+                  <div class="space-y-2 pt-2 border-t">
+                    {#if isModelLoaded(model.path)}
+                      <Button
+                        href="/inference"
+                        variant="primary"
+                        size="sm"
+                        fullWidth
+                      >
+                        💬 Go to Inference
+                      </Button>
                     {:else}
-                      <span class="text-red-600">✗ Missing</span>
+                      <Button
+                        href={`/models/load?model=${encodeURIComponent(model.path)}`}
+                        variant="primary"
+                        size="sm"
+                        fullWidth
+                      >
+                        🔌 Load for Inference
+                      </Button>
                     {/if}
+                    <div class="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        fullWidth
+                        onclick={() => handleUploadClick(model)}
+                        disabled={!model.file_exists}
+                        title={!model.file_exists
+                          ? "Model files not found on disk"
+                          : "Upload model to HuggingFace Hub"}
+                      >
+                        🤗 Upload to Hub
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onclick={() => handleRename(model)}
+                      >
+                        ✏️ Rename
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onclick={() => handleDelete(model.id)}
+                      >
+                        🗑️
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              <!-- Actions -->
-              <div class="space-y-2 pt-2 border-t">
-                <Button
-                  href={`/models/load?model=${encodeURIComponent(model.path)}`}
-                  variant="primary"
-                  size="sm"
-                  fullWidth
-                >
-                  🔌 Load for Inference
-                </Button>
-                <div class="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    fullWidth
-                    onclick={() => handleUploadClick(model)}
-                    disabled={!model.file_exists}
-                    title={!model.file_exists
-                      ? "Model files not found on disk"
-                      : "Upload model to HuggingFace Hub"}
-                  >
-                    🤗 Upload to Hub
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onclick={() => handleRename(model)}
-                  >
-                    ✏️ Rename
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onclick={() => handleDelete(model.id)}
-                  >
-                    🗑️
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </Card>
-        {/each}
+              </Card>
+            {/each}
+          </div>
+        {/if}
       </div>
-    {/if}
+
+      <!-- Sidebar - Model Loader -->
+      <div class="lg:col-span-1">
+        <div class="sticky top-6">
+          <h2 class="text-lg font-semibold text-gray-900 mb-3">Model Loader</h2>
+          <ModelLoader
+            compact
+            onModelLoaded={loadData}
+            onModelUnloaded={loadData}
+          />
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
