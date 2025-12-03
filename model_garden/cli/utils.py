@@ -8,6 +8,7 @@ Contains:
 import click
 
 from model_garden.utils.console import console
+from model_garden.utils.optional_deps import get_unsloth_import_error, is_unsloth_installed
 
 
 @click.command()
@@ -39,7 +40,25 @@ def generate(model_path: str, prompt: str, max_tokens: int, temperature: float) 
         uv run model-garden generate ./models/my-model \\
             --prompt "Explain quantum computing" \\
             --max-tokens 256
+
+    Note: This command requires Unsloth to be installed. For production inference,
+    consider using 'model-garden serve-model' which uses vLLM.
     """
+    # Check if Unsloth is available
+    if not is_unsloth_installed():
+        console.print("\n[bold red]❌ Error: Unsloth is not installed[/bold red]")
+        console.print(
+            "[yellow]The 'generate' command requires Unsloth for quick text generation.[/yellow]"
+        )
+        console.print("\nAlternatives:")
+        console.print("  1. Install Unsloth: [cyan]pip install unsloth[/cyan]")
+        console.print(
+            "  2. Use vLLM inference: [cyan]model-garden serve-model --model-path <path>[/cyan]"
+        )
+        if get_unsloth_import_error():
+            console.print(f"\n[dim]Import error: {get_unsloth_import_error()}[/dim]")
+        raise click.Abort()
+
     try:
         from unsloth import FastLanguageModel
 

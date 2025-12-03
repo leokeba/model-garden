@@ -2244,7 +2244,6 @@ dependencies = [
     { name = "torchvision" },
     { name = "transformers" },
     { name = "trl" },
-    { name = "unsloth" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "vllm" },
     { name = "xformers" },
@@ -2256,10 +2255,16 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+full = [
+    { name = "unsloth" },
+]
 test = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+]
+unsloth = [
+    { name = "unsloth" },
 ]
 
 [package.metadata]
@@ -2291,12 +2296,13 @@ requires-dist = [
     { name = "transformers", specifier = "==4.57.2" },
     { name = "trl", specifier = ">=0.23.0" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a7" },
-    { name = "unsloth", specifier = ">=2025.10.8" },
+    { name = "unsloth", marker = "extra == 'full'", specifier = ">=2025.10.8" },
+    { name = "unsloth", marker = "extra == 'unsloth'", specifier = ">=2025.10.8" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.37.0" },
     { name = "vllm", specifier = ">=0.11.2" },
     { name = "xformers", specifier = ">=0.0.32" },
 ]
-provides-extras = ["dev", "test"]
+provides-extras = ["unsloth", "dev", "test", "full"]
 
 [[package]]
 name = "model-hosting-container-standards"

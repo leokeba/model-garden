@@ -437,21 +437,35 @@ class TestBackendRegistry:
 class TestRealBackends:
     """Tests for actual registered backends (integration tests)."""
 
-    def test_unsloth_backend_registered(self):
-        """Test that unsloth backend is registered."""
-        # This tests the actual backends registered at module import
-        assert is_backend_available("unsloth")
+    def test_unsloth_backend_registered_when_available(self):
+        """Test that unsloth backend is registered when unsloth is installed."""
+        from model_garden.utils.optional_deps import is_unsloth_installed
+
+        if is_unsloth_installed():
+            assert is_backend_available("unsloth")
+        else:
+            # Unsloth not installed, backend should not be registered
+            assert not is_backend_available("unsloth")
 
     def test_transformers_backend_registered(self):
         """Test that transformers backend is registered."""
         assert is_backend_available("transformers")
 
-    def test_get_unsloth_backend(self):
-        """Test getting the unsloth backend."""
-        backend = get_backend("unsloth")
-        assert backend.name == "unsloth"
-        assert backend.supports_text_training()
-        assert backend.supports_vision_training()
+    def test_get_unsloth_backend_when_available(self):
+        """Test getting the unsloth backend when available."""
+        from model_garden.utils.optional_deps import is_unsloth_installed
+
+        if is_unsloth_installed():
+            backend = get_backend("unsloth")
+            assert backend.name == "unsloth"
+            assert backend.supports_text_training()
+            assert backend.supports_vision_training()
+        else:
+            # Unsloth not installed, should raise ValueError
+            import pytest
+
+            with pytest.raises(ValueError, match="Backend 'unsloth' not found"):
+                get_backend("unsloth")
 
     def test_get_transformers_backend(self):
         """Test getting the transformers backend."""
@@ -460,7 +474,12 @@ class TestRealBackends:
         assert backend.supports_text_training()
         assert backend.supports_vision_training()
 
-    def test_default_backend_is_unsloth(self):
-        """Test that the default backend is unsloth."""
+    def test_default_backend_dynamic(self):
+        """Test that the default backend is dynamically selected based on availability."""
+        from model_garden.utils.optional_deps import is_unsloth_installed
+
         backend = get_backend()  # No argument = default
-        assert backend.name == "unsloth"
+        if is_unsloth_installed():
+            assert backend.name == "unsloth"
+        else:
+            assert backend.name == "transformers"

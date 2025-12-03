@@ -1,14 +1,14 @@
 # Training package
 """
 Training components for Model Garden:
-- trainer.py: Text model training (ModelTrainer)
-- vision_trainer.py: Vision-language model training (VisionLanguageTrainer)
 - config.py: Training configuration dataclasses
 - mixins.py: Shared trainer mixin with common functionality
 - backends/: Training backends (Unsloth, Transformers)
   - base.py: Abstract base classes (TextTrainer, VisionTrainer, TrainingBackend)
   - registry.py: Backend registration system
   - unsloth_backend.py: Unsloth-optimized backend
+  - unsloth_text_trainer.py: Unsloth text trainer (ModelTrainer)
+  - unsloth_vision_trainer.py: Unsloth vision trainer (VisionLanguageTrainer)
   - transformers_backend.py: Standard HuggingFace + PEFT backend
 - callbacks/: Training callbacks package (consolidated)
   - metrics.py: TrainingMetricsCallback
@@ -22,6 +22,10 @@ Training components for Model Garden:
 - subprocess_runner.py: Subprocess-based training execution
 - dataset_formats.py: Dataset format detection and conversion
 - chat_template.py: Chat template detection utilities
+
+NOTE: ModelTrainer and VisionLanguageTrainer are Unsloth-specific and have been
+moved to the backends folder. Use create_text_trainer() and create_vision_trainer()
+with backend selection, or import directly from backends for Unsloth-specific usage.
 """
 
 # Training backends
@@ -30,6 +34,7 @@ from .backends import (
     TrainingBackend,
     VisionTrainer,
     get_backend,
+    get_default_backend,
     list_backends,
     register_backend,
 )
@@ -71,9 +76,11 @@ from .mixins import (
     get_training_precision_config,
 )
 
-# Unified training pipeline
+# Unified training pipeline and factory functions (backend-agnostic)
 from .pipeline import (
     TrainingResult,
+    create_text_trainer,
+    create_vision_trainer,
     is_vision_model,
     train,
     train_text,
@@ -90,15 +97,12 @@ from .protocols import (
     is_vision_trainer,
 )
 
-# Selective loss
+# Selective loss (generic parts only - Unsloth-specific parts are in backends)
 from .selective_loss import (
     SelectiveLossCollator,
     SelectiveLossMixin,
-    SelectiveLossUnslothCollator,
-    SelectiveLossVisionCollator,  # Backwards compatibility alias
     create_selective_loss_collator,
     detect_schema_keys_from_dataset,
-    is_unsloth_available,
 )
 
 # Custom SFT trainer
@@ -110,17 +114,74 @@ from .subprocess_runner import (
     run_training_in_subprocess,
 )
 
-# Main trainers
-from .trainer import ModelTrainer, create_sample_dataset, create_text_trainer
-from .vision_trainer import (
-    VisionLanguageTrainer,
-    create_vision_sample_dataset,
-    create_vision_trainer,
-    merge_vision_lora_adapter,
-)
-
 # Weighted loss trainers
 from .weighted_loss import WeightedLossTrainer, WeightedLossTrainerWithMetrics
+
+# =============================================================================
+# Backwards Compatibility: Lazy imports for ModelTrainer and VisionLanguageTrainer
+# These are Unsloth-specific and now live in backends/
+# =============================================================================
+
+
+def __getattr__(name: str):
+    """Lazy import for backwards compatibility with Unsloth-specific trainers."""
+    if name == "ModelTrainer":
+        # Backwards compatibility - import from Unsloth backend (requires Unsloth)
+        from model_garden.utils.optional_deps import require_unsloth
+
+        require_unsloth("ModelTrainer is an Unsloth-specific class")
+        from model_garden.training.backends.unsloth_text_trainer import ModelTrainer
+
+        return ModelTrainer
+    elif name == "VisionLanguageTrainer":
+        # Backwards compatibility - import from Unsloth backend (requires Unsloth)
+        from model_garden.utils.optional_deps import require_unsloth
+
+        require_unsloth("VisionLanguageTrainer is an Unsloth-specific class")
+        from model_garden.training.backends.unsloth_vision_trainer import VisionLanguageTrainer
+
+        return VisionLanguageTrainer
+    elif name == "create_sample_dataset":
+        # Unsloth-specific sample dataset creator
+        from model_garden.utils.optional_deps import require_unsloth
+
+        require_unsloth("create_sample_dataset is an Unsloth-specific function")
+        from model_garden.training.backends.unsloth_text_trainer import create_sample_dataset
+
+        return create_sample_dataset
+    elif name == "create_vision_sample_dataset":
+        # Unsloth-specific sample dataset creator
+        from model_garden.utils.optional_deps import require_unsloth
+
+        require_unsloth("create_vision_sample_dataset is an Unsloth-specific function")
+        from model_garden.training.backends.unsloth_vision_trainer import (
+            create_vision_sample_dataset,
+        )
+
+        return create_vision_sample_dataset
+    elif name == "merge_vision_lora_adapter":
+        # Unsloth-specific function
+        from model_garden.utils.optional_deps import require_unsloth
+
+        require_unsloth("merge_vision_lora_adapter is an Unsloth-specific function")
+        from model_garden.training.backends.unsloth_vision_trainer import merge_vision_lora_adapter
+
+        return merge_vision_lora_adapter
+    # Selective loss Unsloth-specific exports (backwards compat)
+    elif name == "SelectiveLossUnslothCollator":
+        from model_garden.training.selective_loss import SelectiveLossUnslothCollator
+
+        return SelectiveLossUnslothCollator
+    elif name == "SelectiveLossVisionCollator":
+        from model_garden.training.selective_loss import SelectiveLossVisionCollator
+
+        return SelectiveLossVisionCollator
+    elif name == "is_unsloth_available":
+        from model_garden.utils.optional_deps import is_unsloth_installed
+
+        return is_unsloth_installed
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Configuration
@@ -131,7 +192,7 @@ __all__ = [
     "VisionLoRAConfig",
     "ModelConfig",
     "VisionModelConfig",
-    # Trainers
+    # Trainers (backwards compat - lazy loaded)
     "ModelTrainer",
     "VisionLanguageTrainer",
     "TrainerMixin",
@@ -192,6 +253,7 @@ __all__ = [
     "VisionTrainer",
     "TrainingBackend",
     "get_backend",
+    "get_default_backend",
     "list_backends",
     "register_backend",
 ]

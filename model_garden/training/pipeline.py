@@ -511,3 +511,88 @@ def train_vision(
         force_vision=True,
         **kwargs,
     )
+
+
+# =============================================================================
+# Factory Functions for Creating Trainers
+# =============================================================================
+
+
+def create_text_trainer(
+    base_model: str,
+    max_seq_length: int = 2048,
+    load_in_4bit: bool = True,
+    load_in_8bit: bool = False,
+    dtype: str | None = None,
+    backend: str | None = None,
+):
+    """Create a text trainer using the specified backend.
+
+    This is a backend-agnostic factory function that creates a text trainer
+    through the backend registry system.
+
+    Args:
+        base_model: HuggingFace model identifier or local path
+        max_seq_length: Maximum sequence length
+        load_in_4bit: Whether to load model in 4-bit quantization
+        load_in_8bit: Whether to load model in 8-bit quantization
+        dtype: Data type (None for auto-detection)
+        backend: Backend to use (None for default, 'unsloth', 'transformers', etc.)
+
+    Returns:
+        A text trainer instance from the specified backend
+
+    Example:
+        >>> trainer = create_text_trainer("unsloth/tinyllama-bnb-4bit")
+        >>> trainer.load_model()
+    """
+    from model_garden.training.backends import get_backend
+
+    backend_instance = get_backend(backend)
+    return backend_instance.create_text_trainer(
+        base_model=base_model,
+        max_seq_length=max_seq_length,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
+        dtype=dtype,
+    )
+
+
+def create_vision_trainer(
+    base_model: str,
+    max_seq_length: int = 8192,
+    load_in_4bit: bool = True,
+    load_in_8bit: bool = False,
+    dtype: str | None = None,
+    backend: str | None = None,
+):
+    """Create a vision trainer using the specified backend.
+
+    This is a backend-agnostic factory function that creates a vision trainer
+    through the backend registry system.
+
+    Args:
+        base_model: HuggingFace model identifier or local path
+        max_seq_length: Maximum sequence length
+        load_in_4bit: Whether to load model in 4-bit quantization
+        load_in_8bit: Whether to load model in 8-bit quantization
+        dtype: Data type (None for auto-detection)
+        backend: Backend to use (None for default, 'unsloth', 'transformers', etc.)
+
+    Returns:
+        A vision trainer instance from the specified backend
+
+    Example:
+        >>> trainer = create_vision_trainer("Qwen/Qwen2.5-VL-3B-Instruct")
+        >>> trainer.load_model()
+    """
+    from model_garden.training.backends import get_backend
+
+    backend_instance = get_backend(backend)
+    return backend_instance.create_vision_trainer(
+        base_model=base_model,
+        max_seq_length=max_seq_length,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
+        dtype=dtype,
+    )

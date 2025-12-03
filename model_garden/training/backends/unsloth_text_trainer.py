@@ -18,13 +18,13 @@ from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_me
 configure_hf_cache()
 configure_pytorch_memory()
 
-# NOTE: Unsloth is imported lazily inside methods that need it to avoid
-# ImportError when unsloth is not installed. The availability check happens
-# in the backend registry.
-
+# CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
+# This ensures Unsloth can apply its optimizations before other libraries initialize.
+# This file is only loaded when Unsloth is available (checked in backends/__init__.py)
 from datasets import Dataset
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from trl.trainer.sft_trainer import SFTTrainer
+from unsloth import FastLanguageModel
 
 # Import backend base class
 from model_garden.training.backends.base import TextTrainer

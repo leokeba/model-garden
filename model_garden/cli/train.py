@@ -220,8 +220,8 @@ from model_garden.utils.console import console
 @click.option(
     "--backend",
     type=str,
-    default="unsloth",
-    help="Training backend to use (default: unsloth). Use 'model-garden list-backends' to see available options.",
+    default=None,
+    help="Training backend to use (default: auto-select best available). Use 'model-garden list-backends' to see available options.",
 )
 def train(
     base_model: str,
@@ -259,9 +259,11 @@ def train(
     use_rslora: bool,
     optim: str,
     quality_mode: bool,
-    backend: str,
+    backend: str | None,
 ) -> None:
-    """Fine-tune a language model using Unsloth.
+    """Fine-tune a language model.
+
+    Uses the best available backend (Unsloth if installed, otherwise Transformers).
 
     Example:
 
@@ -292,11 +294,15 @@ def train(
             --from-hub
     """
     try:
-        # Lazy import to avoid loading unsloth for inference commands
+        # Lazy import to avoid loading heavy deps for other commands
         from model_garden.training import create_text_trainer
+        from model_garden.training.backends import get_default_backend
+
+        # Determine actual backend to use
+        actual_backend = backend if backend else get_default_backend()
 
         console.print("\n[bold cyan]🌱 Model Garden - Fine-tuning[/bold cyan]\n")
-        console.print(f"[cyan]Backend: {backend}[/cyan]\n")
+        console.print(f"[cyan]Backend: {actual_backend}[/cyan]\n")
 
         # Apply quality mode overrides
         if quality_mode:
@@ -673,8 +679,8 @@ def train(
 @click.option(
     "--backend",
     type=str,
-    default="unsloth",
-    help="Training backend to use (default: unsloth). Use 'model-garden list-backends' to see available options.",
+    default=None,
+    help="Training backend to use (default: auto-select best available). Use 'model-garden list-backends' to see available options.",
 )
 def train_vision(
     base_model: str,
@@ -724,9 +730,11 @@ def train_vision(
     finetune_language_layers: bool,
     finetune_attention_modules: bool,
     finetune_mlp_modules: bool,
-    backend: str,
+    backend: str | None,
 ) -> None:
     """Fine-tune a vision-language model (e.g., Qwen2.5-VL).
+
+    Uses the best available backend (Unsloth if installed, otherwise Transformers).
 
     Examples:
 
@@ -758,9 +766,13 @@ def train_vision(
     """
     try:
         from model_garden.training import create_vision_trainer
+        from model_garden.training.backends import get_default_backend
+
+        # Determine actual backend to use
+        actual_backend = backend if backend else get_default_backend()
 
         console.print("\n[bold cyan]🌱 Model Garden - Vision-Language Fine-tuning[/bold cyan]\n")
-        console.print(f"[cyan]Backend: {backend}[/cyan]\n")
+        console.print(f"[cyan]Backend: {actual_backend}[/cyan]\n")
 
         if from_hub:
             console.print(f"[cyan]Loading dataset from HuggingFace Hub: {dataset}[/cyan]")

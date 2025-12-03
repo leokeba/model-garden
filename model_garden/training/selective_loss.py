@@ -903,6 +903,9 @@ class SelectiveLossCollator(SelectiveLossMixin):
 # =============================================================================
 
 
+# Import from centralized optional deps
+from model_garden.utils.optional_deps import is_unsloth_installed
+
 # Store reference to avoid repeated imports
 _UnslothVisionDataCollator: type | None = None
 
@@ -911,6 +914,8 @@ def _get_unsloth_collator_class() -> type | None:
     """Lazily import UnslothVisionDataCollator."""
     global _UnslothVisionDataCollator
     if _UnslothVisionDataCollator is None:
+        if not is_unsloth_installed():
+            return None
         try:
             from unsloth.trainer import UnslothVisionDataCollator
 
@@ -921,8 +926,11 @@ def _get_unsloth_collator_class() -> type | None:
 
 
 def is_unsloth_available() -> bool:
-    """Check if Unsloth is available."""
-    return _get_unsloth_collator_class() is not None
+    """Check if Unsloth is available.
+
+    Deprecated: Use model_garden.utils.optional_deps.is_unsloth_installed() instead.
+    """
+    return is_unsloth_installed()
 
 
 class SelectiveLossUnslothCollator(SelectiveLossMixin):

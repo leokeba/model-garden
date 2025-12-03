@@ -30,8 +30,21 @@ class BackendInfo(TypedDict):
 # Global registry of available backends
 _BACKENDS: dict[str, BackendClass] = {}
 
-# Default backend name
-DEFAULT_BACKEND: str = "unsloth"
+
+def get_default_backend() -> str:
+    """Get the default backend name based on available backends.
+
+    Returns 'unsloth' if available, otherwise 'transformers'.
+    """
+    if "unsloth" in _BACKENDS:
+        return "unsloth"
+    elif "transformers" in _BACKENDS:
+        return "transformers"
+    elif _BACKENDS:
+        # Return first available backend
+        return next(iter(_BACKENDS.keys()))
+    else:
+        return "unsloth"  # Will fail with helpful error when accessed
 
 
 def register_backend(name: str, backend_class: BackendClass) -> None:
@@ -58,11 +71,12 @@ def register_backend(name: str, backend_class: BackendClass) -> None:
     _BACKENDS[name.lower()] = backend_class
 
 
-def get_backend(name: str = DEFAULT_BACKEND) -> TrainingBackend:
+def get_backend(name: str | None = None) -> TrainingBackend:
     """Get a training backend instance by name.
 
     Args:
-        name: Name of the backend to instantiate (default: 'unsloth')
+        name: Name of the backend to instantiate. If None, uses the default
+              backend (Unsloth if available, otherwise Transformers).
 
     Returns:
         An instance of the requested backend
@@ -70,6 +84,9 @@ def get_backend(name: str = DEFAULT_BACKEND) -> TrainingBackend:
     Raises:
         ValueError: If the backend is not registered
     """
+    if name is None:
+        name = get_default_backend()
+
     name_lower = name.lower()
 
     if name_lower not in _BACKENDS:

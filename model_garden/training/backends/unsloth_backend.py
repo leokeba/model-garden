@@ -2,27 +2,24 @@
 
 This backend provides Unsloth-optimized training for both text and vision-language models.
 Unsloth offers significant speedups and memory savings through specialized optimizations.
+
+Note: This backend requires the 'unsloth' package to be installed.
+Install with: pip install 'model-garden[unsloth]' or pip install unsloth
 """
 
 from typing import Any
 
-# Configure HuggingFace cache BEFORE importing HF libraries
-from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_memory
-
-configure_hf_cache()
-configure_pytorch_memory()
-
 from model_garden.training.backends.base import TextTrainer, TrainingBackend, VisionTrainer
-
-# DON'T import the trainer classes at module level - causes circular imports!
-# They will be imported lazily when create_*_trainer() is called
+from model_garden.utils.optional_deps import require_unsloth
 
 
 class UnslothBackend(TrainingBackend):
     """Unsloth training backend.
 
     Unsloth provides optimized training with significant speedups and memory savings.
-    It's the default backend for Model Garden.
+    It's the default backend for Model Garden when installed.
+
+    Requires the 'unsloth' package to be installed.
     """
 
     @property
@@ -47,11 +44,18 @@ class UnslothBackend(TrainingBackend):
         load_in_8bit: bool = False,
         dtype: str | None = None,
     ) -> TextTrainer:
-        """Create an Unsloth text trainer."""
-        # Lazy import to avoid circular dependencies
-        from model_garden.training import ModelTrainer as UnslothTextTrainer
+        """Create an Unsloth text trainer.
 
-        # Return the existing Unsloth trainer - it already implements the interface
+        Raises:
+            ImportError: If Unsloth is not installed
+        """
+        require_unsloth("Unsloth text training")
+
+        # Import from the backends folder where Unsloth-specific code lives
+        from model_garden.training.backends.unsloth_text_trainer import (
+            ModelTrainer as UnslothTextTrainer,
+        )
+
         return UnslothTextTrainer(
             base_model=base_model,
             max_seq_length=max_seq_length,
@@ -68,11 +72,18 @@ class UnslothBackend(TrainingBackend):
         load_in_8bit: bool = False,
         dtype: Any | None = None,
     ) -> VisionTrainer:
-        """Create an Unsloth vision trainer."""
-        # Lazy import to avoid circular dependencies
-        from model_garden.training import VisionLanguageTrainer as UnslothVisionTrainer
+        """Create an Unsloth vision trainer.
 
-        # Return the existing Unsloth vision trainer
+        Raises:
+            ImportError: If Unsloth is not installed
+        """
+        require_unsloth("Unsloth vision training")
+
+        # Import from the backends folder where Unsloth-specific code lives
+        from model_garden.training.backends.unsloth_vision_trainer import (
+            VisionLanguageTrainer as UnslothVisionTrainer,
+        )
+
         return UnslothVisionTrainer(
             base_model=base_model,
             max_seq_length=max_seq_length,
