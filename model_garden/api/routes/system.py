@@ -376,8 +376,8 @@ async def install_unsloth(background_tasks: BackgroundTasks):
             "message": f"Another package operation is in progress: {_package_operation_status['operation']}",
         }
 
-    # Use uv to install unsloth extra
-    command = ["uv", "sync", "--extra", "unsloth"]
+    # Use uv pip install to add unsloth without affecting other dependencies
+    command = ["uv", "pip", "install", "unsloth"]
 
     background_tasks.add_task(_run_package_command, command, "install_unsloth")
 
