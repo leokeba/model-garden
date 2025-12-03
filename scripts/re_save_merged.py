@@ -8,8 +8,8 @@ Usage:
 
 This script forces loading on CPU to avoid GPU OOM and prints full tracebacks.
 """
-import sys
 import os
+import sys
 import traceback
 
 from transformers import AutoModelForVision2Seq

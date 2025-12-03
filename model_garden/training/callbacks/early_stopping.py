@@ -4,7 +4,6 @@ This module provides the EarlyStoppingCallback that stops training
 when validation loss stops improving.
 """
 
-from typing import Optional
 
 from transformers import TrainerCallback, TrainerControl, TrainerState, TrainingArguments
 
@@ -61,7 +60,7 @@ class EarlyStoppingCallback(TrainerCallback):
         self.metric = metric
         self.greater_is_better = greater_is_better
 
-        self.best_metric: Optional[float] = None
+        self.best_metric: float | None = None
         self.patience_counter = 0
         self.should_stop = False
 
@@ -112,7 +111,7 @@ class EarlyStoppingCallback(TrainerCallback):
 
                 if self.patience_counter >= self.patience:
                     console.print(
-                        f"[red]🛑 Early stopping: Stopping training (patience reached)[/red]"
+                        "[red]🛑 Early stopping: Stopping training (patience reached)[/red]"
                     )
                     control.should_training_stop = True
                     self.should_stop = True

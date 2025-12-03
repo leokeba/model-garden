@@ -1,15 +1,15 @@
 """Carbon tracking and emissions monitoring."""
 
-from .tracker import CarbonTracker
+from .boamps import BoAmpsReportGenerator, get_boamps_generator
 from .database import EmissionsDatabase, get_emissions_db
+from .hardware_detection import HardwareDetector, get_hardware_detector
 from .inference_tracking import (
     InferenceEmissionsTracker,
     get_inference_tracker,
     init_inference_tracker,
     stop_inference_tracker,
 )
-from .boamps import BoAmpsReportGenerator, get_boamps_generator
-from .hardware_detection import HardwareDetector, get_hardware_detector
+from .tracker import CarbonTracker
 
 __all__ = [
     "CarbonTracker",

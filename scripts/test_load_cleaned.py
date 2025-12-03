@@ -6,10 +6,8 @@ Usage:
 
 Exits with non-zero on failure.
 """
-import sys
 import asyncio
-
-from pathlib import Path
+import sys
 
 if len(sys.argv) < 2:
     print("Usage: python scripts/test_load_cleaned.py <model_path>")
@@ -19,6 +17,7 @@ MODEL_PATH = sys.argv[1]
 print(f"Attempting to load model: {MODEL_PATH}")
 
 from model_garden.inference import InferenceService
+
 
 async def main():
     svc = InferenceService(model_path=MODEL_PATH, gpu_memory_utilization=0.2)

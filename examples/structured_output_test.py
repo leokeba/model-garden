@@ -1,7 +1,8 @@
 """Test structured output feature with Model Garden API."""
 
-import requests
 import json
+
+import requests
 from pydantic import BaseModel
 
 # API endpoint
@@ -12,7 +13,7 @@ def test_json_object_format():
     print("\n" + "="*60)
     print("Test 1: Generic JSON Object Format")
     print("="*60)
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -29,17 +30,17 @@ def test_json_object_format():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
+        print("\n✅ Success!")
         print(f"Response: {content}")
-        
+
         # Try to parse as JSON
         try:
             parsed = json.loads(content)
-            print(f"\n✅ Valid JSON structure:")
+            print("\n✅ Valid JSON structure:")
             print(json.dumps(parsed, indent=2))
         except json.JSONDecodeError as e:
             print(f"\n❌ Failed to parse as JSON: {e}")
@@ -53,7 +54,7 @@ def test_json_schema_format():
     print("\n" + "="*60)
     print("Test 2: Specific JSON Schema Format")
     print("="*60)
-    
+
     # Define a Pydantic model for the expected response
     class LandmarkInfo(BaseModel):
         name: str
@@ -61,13 +62,13 @@ def test_json_schema_format():
         height_meters: int
         year_built: int
         description: str
-    
+
     # Get JSON schema from Pydantic model
     schema = LandmarkInfo.model_json_schema()
-    
-    print(f"\nUsing schema:")
+
+    print("\nUsing schema:")
     print(json.dumps(schema, indent=2))
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -89,18 +90,18 @@ def test_json_schema_format():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
+        print("\n✅ Success!")
         print(f"Response: {content}")
-        
+
         # Try to parse and validate
         try:
             parsed = json.loads(content)
             validated = LandmarkInfo(**parsed)
-            print(f"\n✅ Valid and matches schema:")
+            print("\n✅ Valid and matches schema:")
             print(f"  Name: {validated.name}")
             print(f"  Location: {validated.location}")
             print(f"  Height: {validated.height_meters}m")
@@ -120,24 +121,24 @@ def test_complex_schema():
     print("\n" + "="*60)
     print("Test 3: Complex Nested Schema")
     print("="*60)
-    
+
     class Address(BaseModel):
         street: str
         city: str
         country: str
-    
+
     class Person(BaseModel):
         name: str
         age: int
         email: str
         address: Address
         hobbies: list[str]
-    
+
     schema = Person.model_json_schema()
-    
-    print(f"\nUsing complex schema:")
+
+    print("\nUsing complex schema:")
     print(json.dumps(schema, indent=2))
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -158,17 +159,17 @@ def test_complex_schema():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
+        print("\n✅ Success!")
         print(f"Response: {content}")
-        
+
         try:
             parsed = json.loads(content)
             validated = Person(**parsed)
-            print(f"\n✅ Valid and matches complex schema:")
+            print("\n✅ Valid and matches complex schema:")
             print(f"  Name: {validated.name}")
             print(f"  Age: {validated.age}")
             print(f"  Email: {validated.email}")
@@ -188,7 +189,7 @@ def test_without_structured_output():
     print("\n" + "="*60)
     print("Test 4: Without Structured Output (Control)")
     print("="*60)
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -202,11 +203,11 @@ def test_without_structured_output():
             "temperature": 0.7
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
+        print("\n✅ Success!")
         print(f"Response: {content}")
     else:
         print(f"\n❌ Request failed: {response.status_code}")
@@ -219,26 +220,26 @@ if __name__ == "__main__":
     print("Make sure Model Garden API is running with a model loaded!")
     print("Run: model-garden serve --model <your-model>")
     print()
-    
+
     try:
         # Check if API is available
         health = requests.get(f"{API_BASE}/api/v1/system/status", timeout=5)
         if health.status_code != 200:
             print("❌ API is not responding. Please start the server first.")
             exit(1)
-        
+
         print("✅ API is available")
-        
+
         # Run tests
         test_without_structured_output()
         test_json_object_format()
         test_json_schema_format()
         test_complex_schema()
-        
+
         print("\n" + "="*60)
         print("✅ All tests completed!")
         print("="*60)
-        
+
     except requests.exceptions.ConnectionError:
         print("❌ Could not connect to API. Make sure the server is running at http://localhost:8000")
     except Exception as e:

@@ -11,10 +11,10 @@ Prerequisites:
 2. Start Model Garden API: model-garden serve --model Qwen/Qwen2.5-3B-Instruct
 """
 
+import json
+
 from openai import OpenAI
 from pydantic import BaseModel
-from typing import List
-import json
 
 # Initialize OpenAI client pointing to Model Garden
 client = OpenAI(
@@ -30,7 +30,7 @@ class Product(BaseModel):
     name: str
     category: str
     price: float
-    features: List[str]
+    features: list[str]
     in_stock: bool
 
 
@@ -54,7 +54,7 @@ def example_1_generic_json():
     print("\n" + "="*60)
     print("Example 1: Generic JSON Object")
     print("="*60)
-    
+
     completion = client.chat.completions.create(
         model="Qwen/Qwen2.5-3B-Instruct",
         messages=[
@@ -65,7 +65,7 @@ def example_1_generic_json():
         ],
         response_format={"type": "json_object"}
     )
-    
+
     result = json.loads(completion.choices[0].message.content)
     print(json.dumps(result, indent=2))
 
@@ -75,9 +75,9 @@ def example_2_specific_schema():
     print("\n" + "="*60)
     print("Example 2: Specific Schema - Landmark Info")
     print("="*60)
-    
+
     schema = LandmarkInfo.model_json_schema()
-    
+
     completion = client.chat.completions.create(
         model="Qwen/Qwen2.5-3B-Instruct",
         messages=[
@@ -94,12 +94,12 @@ def example_2_specific_schema():
             }
         }
     )
-    
+
     # Validate response against schema
     landmark = LandmarkInfo.model_validate_json(
         completion.choices[0].message.content
     )
-    
+
     print(f"Name: {landmark.name}")
     print(f"Location: {landmark.location}")
     print(f"Height: {landmark.height_meters}m")
@@ -112,9 +112,9 @@ def example_3_product_extraction():
     print("\n" + "="*60)
     print("Example 3: Product Information Extraction")
     print("="*60)
-    
+
     schema = Product.model_json_schema()
-    
+
     completion = client.chat.completions.create(
         model="Qwen/Qwen2.5-3B-Instruct",
         messages=[
@@ -138,15 +138,15 @@ def example_3_product_extraction():
             }
         }
     )
-    
+
     product = Product.model_validate_json(
         completion.choices[0].message.content
     )
-    
+
     print(f"📦 Product: {product.name}")
     print(f"📁 Category: {product.category}")
     print(f"💰 Price: ${product.price}")
-    print(f"✨ Features:")
+    print("✨ Features:")
     for feature in product.features:
         print(f"   - {feature}")
     print(f"📦 In Stock: {'Yes' if product.in_stock else 'No'}")
@@ -157,9 +157,9 @@ def example_4_function_calling():
     print("\n" + "="*60)
     print("Example 4: Function Calling")
     print("="*60)
-    
+
     schema = FunctionCall.model_json_schema()
-    
+
     completion = client.chat.completions.create(
         model="Qwen/Qwen2.5-3B-Instruct",
         messages=[
@@ -181,13 +181,13 @@ def example_4_function_calling():
             }
         }
     )
-    
+
     function_call = FunctionCall.model_validate_json(
         completion.choices[0].message.content
     )
-    
+
     print(f"🔧 Function: {function_call.function_name}")
-    print(f"📋 Arguments:")
+    print("📋 Arguments:")
     for key, value in function_call.arguments.items():
         print(f"   {key}: {value}")
 
@@ -197,17 +197,17 @@ def example_5_batch_extraction():
     print("\n" + "="*60)
     print("Example 5: Batch Data Extraction")
     print("="*60)
-    
+
     class Item(BaseModel):
         title: str
         category: str
         price: float
-    
+
     class ItemList(BaseModel):
-        items: List[Item]
-    
+        items: list[Item]
+
     schema = ItemList.model_json_schema()
-    
+
     completion = client.chat.completions.create(
         model="Qwen/Qwen2.5-3B-Instruct",
         messages=[
@@ -231,11 +231,11 @@ def example_5_batch_extraction():
             }
         }
     )
-    
+
     items = ItemList.model_validate_json(
         completion.choices[0].message.content
     )
-    
+
     print(f"📦 Found {len(items.items)} items:")
     total = 0
     for item in items.items:
@@ -248,7 +248,7 @@ def main():
     print("🌱 Model Garden Structured Outputs - OpenAI Client Examples")
     print("=" * 60)
     print("Using OpenAI Python client with Model Garden backend")
-    
+
     try:
         # Run all examples
         example_1_generic_json()
@@ -256,11 +256,11 @@ def main():
         example_3_product_extraction()
         example_4_function_calling()
         example_5_batch_extraction()
-        
+
         print("\n" + "="*60)
         print("✅ All examples completed successfully!")
         print("="*60)
-        
+
     except Exception as e:
         print(f"\n❌ Error: {e}")
         print("\nMake sure:")

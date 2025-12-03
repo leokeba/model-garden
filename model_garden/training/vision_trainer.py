@@ -6,7 +6,6 @@ Supports multimodal models like Qwen2.5-VL for fine-tuning on vision-language ta
 import gc
 import json
 import os
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -34,9 +33,15 @@ from unsloth import FastVisionModel  # FastVisionModel for vision-language model
 
 # Import backend base class
 from model_garden.backends.base import VisionTrainer
+from model_garden.training.callbacks import MemoryMonitorCallback
+from model_garden.training.chat_template import ChatTemplateDetector
 
 # Import configuration dataclasses
 from model_garden.training.config import VisionTrainingConfig
+from model_garden.training.dataset_formats import DatasetFormatConverter
+
+# Import extracted modules
+from model_garden.training.lazy_dataset import LazyVisionDataset
 
 # Import shared training mixin and utilities (consolidated location)
 from model_garden.training.mixins import (
@@ -45,12 +50,7 @@ from model_garden.training.mixins import (
     detect_model_dtype,
     get_training_precision_config,
 )
-
-# Import extracted modules
-from model_garden.training.lazy_dataset import LazyVisionDataset
 from model_garden.training.sft_trainer import FixedSFTTrainer
-from model_garden.training.chat_template import ChatTemplateDetector
-from model_garden.training.callbacks import MemoryMonitorCallback
 
 # Import centralized utilities
 from model_garden.utils.console import console
@@ -121,18 +121,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         Note: Qwen2.5-VL requires special handling as it's a multimodal model.
         Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
-
-        Includes retry logic with exponential backoff for handling network
-        failures during model download from HuggingFace Hub.
         """
-        # Import retry constants
-        from model_garden.training.constants import (
-            DEFAULT_RETRY_ATTEMPTS,
-            RETRY_BASE_DELAY_SECONDS,
-            RETRY_EXPONENTIAL_BACKOFF,
-            RETRY_MAX_DELAY_SECONDS,
-        )
-
         # Determine precision for logging
         if self.load_in_8bit:
             precision = "8-bit (balanced quality/memory)"
@@ -147,106 +136,32 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         # Get HuggingFace token from environment for private models
         hf_token = get_hf_token()
 
-        last_error: Exception | None = None
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            progress.add_task(description="Loading model...", total=None)
 
-        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
-            try:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    console=console,
-                ) as progress:
-                    progress.add_task(description="Loading model...", total=None)
+            # Use FastVisionModel for vision-language models (optimized for VLMs)
+            # Supports both 4-bit and 8-bit quantization
+            # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
+            # IMPORTANT: FastVisionModel returns (model, tokenizer) tuple, NOT (model, processor)
+            # We need to load the processor separately from transformers
+            from transformers import AutoProcessor
 
-                    try:
-                        # Use FastVisionModel for vision-language models (optimized for VLMs)
-                        # Supports both 4-bit and 8-bit quantization
-                        # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
-                        # IMPORTANT: FastVisionModel returns (model, tokenizer) tuple, NOT (model, processor)
-                        # We need to load the processor separately from transformers
-                        from transformers import AutoProcessor
+            self.model, self.tokenizer = FastVisionModel.from_pretrained(
+                model_name=self.base_model,
+                max_seq_length=self.max_seq_length,
+                dtype=self.dtype,
+                load_in_4bit=self.load_in_4bit,
+                load_in_8bit=self.load_in_8bit,
+                token=hf_token,
+            )
+            # Load processor separately (vision models need both tokenizer and processor)
+            self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
 
-                        self.model, self.tokenizer = FastVisionModel.from_pretrained(
-                            model_name=self.base_model,
-                            max_seq_length=self.max_seq_length,
-                            dtype=self.dtype,
-                            load_in_4bit=self.load_in_4bit,
-                            load_in_8bit=self.load_in_8bit,
-                            token=hf_token,
-                        )
-                        # Load processor separately (vision models need both tokenizer and processor)
-                        self.processor = AutoProcessor.from_pretrained(
-                            self.base_model, token=hf_token
-                        )
-                        console.print(
-                            "[green]✓[/green] Model loaded with Unsloth FastVisionModel optimizations"
-                        )
-                    except Exception as unsloth_error:
-                        # Print the actual error for debugging
-                        console.print(
-                            f"[yellow]⚠️  FastVisionModel failed: {unsloth_error}[/yellow]"
-                        )
-                        # Fall back to transformers for vision models
-                        console.print(
-                            "[yellow]⚠️  Unsloth not supported, using transformers[/yellow]"
-                        )
-                        import torch
-                        from transformers import AutoModelForVision2Seq, AutoProcessor
-
-                        self.processor = AutoProcessor.from_pretrained(
-                            self.base_model, token=hf_token
-                        )
-                        self.tokenizer = self.processor.tokenizer
-
-                        # Determine torch_dtype based on quantization settings
-                        # For 16-bit (no quantization), explicitly use bfloat16
-                        if not self.load_in_4bit and not self.load_in_8bit:
-                            # For 16-bit precision, explicitly use bfloat16 (Qwen2.5-VL's native precision)
-                            # Using None doesn't always work - model can load as float32 then convert
-                            torch_dtype = torch.bfloat16 if self.dtype is None else self.dtype
-                        else:
-                            # For quantized models, let BitsAndBytes handle dtype
-                            torch_dtype = None
-
-                        # Transformers supports 4-bit and 8-bit via BitsAndBytes
-                        # Build kwargs conditionally - only pass load_in_Xbit if True (not False or None)
-                        model_kwargs = {
-                            "device_map": "auto",
-                            "torch_dtype": torch_dtype,
-                            "token": hf_token,
-                        }
-                        if self.load_in_4bit:
-                            model_kwargs["load_in_4bit"] = True
-                        if self.load_in_8bit:
-                            model_kwargs["load_in_8bit"] = True
-
-                        self.model = AutoModelForVision2Seq.from_pretrained(
-                            self.base_model,
-                            **model_kwargs,
-                        )
-                        console.print("[green]✓[/green] Model loaded with transformers")
-
-                # If we get here, loading succeeded
-                return
-
-            except Exception as e:
-                last_error = e
-                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
-                    delay = min(
-                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
-                        RETRY_MAX_DELAY_SECONDS,
-                    )
-                    console.print(
-                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
-                        f"failed: {e}[/yellow]"
-                    )
-                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
-                    time.sleep(delay)
-
-        # All retries failed
-        raise RuntimeError(
-            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
-        )
+        console.print("[green]✓[/green] Model loaded with Unsloth FastVisionModel optimizations")
 
     def prepare_for_training(
         self,
@@ -512,103 +427,15 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
     def _convert_messages_to_simple_format(self, messages: list[dict]) -> dict[str, str | None]:
         """Convert OpenAI messages format to simple format.
 
-        Extracts the system message, first image and text from user message, and assistant's response.
-        This ensures compatibility with UnslothVisionDataCollator while preserving the original system prompt.
+        Delegates to DatasetFormatConverter.convert_messages_to_simple().
 
         Args:
             messages: List of OpenAI-style messages
 
         Returns:
             Dict with 'text', 'image', 'response', and 'system' keys
-
-        Raises:
-            ValueError: If messages is not a list or contains invalid entries
         """
-        # Validate input
-        if not isinstance(messages, list):
-            raise ValueError(
-                f"Expected 'messages' to be a list, got {type(messages).__name__}. "
-                f"Check your dataset format - it should have a 'messages' field containing a list."
-            )
-
-        if len(messages) == 0:
-            console.print("[yellow]⚠️  Empty messages list in dataset example[/yellow]")
-            return {"text": "", "image": None, "response": "", "system": ""}
-
-        result: dict[str, str | None] = {"text": "", "image": None, "response": "", "system": ""}
-
-        for idx, msg in enumerate(messages):
-            # Validate each message is a dict
-            if not isinstance(msg, dict):
-                console.print(
-                    f"[yellow]⚠️  Message at index {idx} is not a dict (got {type(msg).__name__}), skipping[/yellow]"
-                )
-                continue
-
-            role = msg.get("role", "")
-            content = msg.get("content", [])
-
-            # Validate content is iterable (list or similar)
-            if not isinstance(content, (list, tuple)):
-                # Content might be a plain string (simplified format)
-                if isinstance(content, str):
-                    if role == "system" and not result["system"]:
-                        result["system"] = content
-                    elif role == "user" and not result["text"]:
-                        result["text"] = content
-                    elif role == "assistant" and not result["response"]:
-                        result["response"] = content
-                    continue
-                else:
-                    console.print(
-                        f"[yellow]⚠️  Message content at index {idx} is not a list or string "
-                        f"(got {type(content).__name__}), skipping[/yellow]"
-                    )
-                    continue
-
-            if role == "system":
-                # Extract system message
-                for item in content:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("type") == "text" and not result["system"]:
-                        result["system"] = item.get("text", "")
-
-            elif role == "user":
-                # Extract text and image from user message
-                for item in content:
-                    if not isinstance(item, dict):
-                        continue
-                    item_type = item.get("type", "")
-                    if item_type == "text" and not result["text"]:
-                        result["text"] = item.get("text", "")
-                    elif item_type in ("image", "image_url") and not result["image"]:
-                        # Handle both old format (type: "image", image: "...")
-                        # and new format (type: "image_url", image_url: {url: "..."})
-                        image_data = item.get("image", item.get("image_url", {}))
-                        if isinstance(image_data, dict):
-                            image_data = image_data.get("url", "")
-                        result["image"] = image_data
-
-            elif role == "assistant":
-                # Extract response from assistant message
-                for item in content:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("type") == "text" and not result["response"]:
-                        result["response"] = item.get("text", "")
-
-        # Warn if essential fields are missing
-        if not result["text"] and not result["image"]:
-            console.print(
-                "[yellow]⚠️  No text or image found in user message - check dataset format[/yellow]"
-            )
-        if not result["response"]:
-            console.print(
-                "[yellow]⚠️  No response found in assistant message - check dataset format[/yellow]"
-            )
-
-        return result
+        return DatasetFormatConverter.convert_messages_to_simple(messages)
 
     def _detect_chat_markers(self, processor) -> tuple[str, str]:
         """Detect instruction and response markers from tokenizer's chat template.
@@ -634,82 +461,16 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
     def _detect_vqa_format(self, example: dict) -> bool:
         """Detect if example uses VQA format (question + answer/answers).
 
-        Args:
-            example: A single dataset example to check
-
-        Returns:
-            True if the example appears to be in VQA format
+        Delegates to DatasetFormatConverter.detect_vqa_format().
         """
-        if not isinstance(example, dict):
-            return False
-        has_question = "question" in example
-        has_answer = "answer" in example or "answers" in example
-        has_image = "image" in example
-        return has_question and has_answer and has_image
+        return DatasetFormatConverter.detect_vqa_format(example)
 
     def _convert_vqa_to_simple(self, example: dict) -> dict[str, Any]:
         """Convert VQA-style formats to simple format.
 
-        Handles formats like:
-        - ScienceQA: {question, choices, answer (index), solution, image}
-        - VQA: {question, answers (list), image}
-        - DocVQA: {question, answers (list), image}
-
-        Args:
-            example: A VQA-style dataset example
-
-        Returns:
-            Dict with 'text', 'image', and 'response' keys
-
-        Raises:
-            ValueError: If example is not a dict
+        Delegates to DatasetFormatConverter.convert_vqa_to_simple().
         """
-        if not isinstance(example, dict):
-            raise ValueError(f"Expected VQA example to be a dict, got {type(example).__name__}")
-
-        result = {
-            "text": example.get("question", ""),
-            "image": example.get("image"),
-            "response": "",
-        }
-
-        # Handle different answer formats
-        if "choices" in example and "answer" in example:
-            # ScienceQA format - answer is index into choices
-            answer_idx = example.get("answer", 0)
-            choices = example.get("choices", [])
-            if isinstance(answer_idx, int) and answer_idx < len(choices):
-                result["response"] = choices[answer_idx]
-
-                # Add solution if available
-                solution = example.get("solution", "")
-                if solution:
-                    result["response"] = f"{result['response']}. {solution}"
-
-        elif "answers" in example:
-            # Generic VQA format - answers is a list
-            answers = example.get("answers", [])
-            if isinstance(answers, list) and answers:
-                # Get first answer
-                if isinstance(answers[0], str):
-                    result["response"] = answers[0]
-                elif isinstance(answers[0], dict):
-                    result["response"] = answers[0].get("answer", "")
-            elif isinstance(answers, str):
-                result["response"] = answers
-
-        elif "answer" in example:
-            # Simple answer field
-            answer = example.get("answer")
-            if isinstance(answer, str):
-                result["response"] = answer
-            elif isinstance(answer, int) and "choices" in example:
-                # Answer is index
-                choices = example.get("choices", [])
-                if answer < len(choices):
-                    result["response"] = choices[answer]
-
-        return result
+        return DatasetFormatConverter.convert_vqa_to_simple(example)
 
     def format_dataset(
         self,

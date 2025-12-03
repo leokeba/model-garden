@@ -14,7 +14,7 @@ This modular approach allows reusing individual configs and makes the
 API cleaner with related settings grouped together.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from model_garden.training.constants import (

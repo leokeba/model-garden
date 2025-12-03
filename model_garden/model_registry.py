@@ -5,10 +5,10 @@ their configurations, requirements, and capabilities.
 """
 
 import json
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 # Path to the registry file
 REGISTRY_PATH = Path(__file__).parent.parent / "storage" / "models_registry.json"
@@ -44,7 +44,7 @@ class ModelRequirements:
     min_vram_gb: float
     recommended_vram_gb: float
     min_ram_gb: float
-    cuda_compute_capability: Optional[str] = None
+    cuda_compute_capability: str | None = None
     min_gpus: int = 1
 
 
@@ -67,7 +67,7 @@ class LoRADefaults:
     r: int
     lora_alpha: int
     lora_dropout: float
-    target_modules: List[str]
+    target_modules: list[str]
     use_rslora: bool = False
 
 
@@ -77,11 +77,11 @@ class InferenceDefaults:
     max_model_len: int
     dtype: str
     gpu_memory_utilization: float
-    quantization: Optional[str] = None
+    quantization: str | None = None
     tensor_parallel_size: int = 1
     max_num_seqs: int = 16  # Max concurrent sequences (reduce for memory-constrained GPUs)
     enforce_eager: bool = False  # Disable CUDA graphs (True saves ~2GB memory)
-    limit_mm_per_prompt: Optional[Dict[str, int]] = None  # Limit multimodal inputs e.g. {"image": 2, "video": 0}
+    limit_mm_per_prompt: dict[str, int] | None = None  # Limit multimodal inputs e.g. {"image": 2, "video": 0}
 
 
 @dataclass
@@ -94,14 +94,14 @@ class ModelInfo:
     base_architecture: str
     parameters: str
     description: str
-    tags: List[str]
+    tags: list[str]
     status: str
-    quantization: Dict[str, Optional[str]]
+    quantization: dict[str, str | None]
     requirements: ModelRequirements
     capabilities: ModelCapabilities
-    training_defaults: Dict[str, Any]
+    training_defaults: dict[str, Any]
     inference_defaults: InferenceDefaults
-    urls: Dict[str, Optional[str]]
+    urls: dict[str, str | None]
 
     @property
     def is_vision_model(self) -> bool:
@@ -119,15 +119,15 @@ class ModelInfo:
         selective_loss = self.training_defaults.get("selective_loss", {})
         return selective_loss.get("supported", False)
 
-    def get_training_hyperparameters(self) -> Dict[str, Any]:
+    def get_training_hyperparameters(self) -> dict[str, Any]:
         """Get default training hyperparameters."""
         return self.training_defaults["hyperparameters"]
 
-    def get_lora_config(self) -> Dict[str, Any]:
+    def get_lora_config(self) -> dict[str, Any]:
         """Get default LoRA configuration."""
         return self.training_defaults["lora_config"]
 
-    def get_inference_config(self) -> Dict[str, Any]:
+    def get_inference_config(self) -> dict[str, Any]:
         """Get default inference configuration."""
         config = {
             "max_model_len": self.inference_defaults.max_model_len,
@@ -147,29 +147,29 @@ class ModelInfo:
 class ModelRegistry:
     """Central registry for supported models."""
 
-    def __init__(self, registry_path: Optional[Path] = None):
+    def __init__(self, registry_path: Path | None = None):
         """Initialize the registry.
 
         Args:
             registry_path: Path to the registry JSON file (default: storage/models_registry.json)
         """
         self.registry_path = registry_path or REGISTRY_PATH
-        self._registry_data: Optional[Dict] = None
-        self._models_cache: Optional[Dict[str, ModelInfo]] = None
+        self._registry_data: dict | None = None
+        self._models_cache: dict[str, ModelInfo] | None = None
 
-    def _load_registry(self) -> Dict:
+    def _load_registry(self) -> dict:
         """Load the registry from disk."""
         if self._registry_data is None:
             if not self.registry_path.exists():
                 raise FileNotFoundError(f"Registry not found: {self.registry_path}")
 
-            with open(self.registry_path, "r") as f:
+            with open(self.registry_path) as f:
                 self._registry_data = json.load(f)
 
         assert self._registry_data is not None
         return self._registry_data
 
-    def _parse_model(self, model_id: str, data: Dict) -> ModelInfo:
+    def _parse_model(self, model_id: str, data: dict) -> ModelInfo:
         """Parse model data into ModelInfo object."""
         return ModelInfo(
             id=data["id"],
@@ -189,7 +189,7 @@ class ModelRegistry:
             urls=data["urls"],
         )
 
-    def get_all_models(self) -> Dict[str, ModelInfo]:
+    def get_all_models(self) -> dict[str, ModelInfo]:
         """Get all models from the registry.
 
         Returns:
@@ -204,7 +204,7 @@ class ModelRegistry:
 
         return self._models_cache
 
-    def get_model(self, model_id: str) -> Optional[ModelInfo]:
+    def get_model(self, model_id: str) -> ModelInfo | None:
         """Get a specific model by ID.
 
         Args:
@@ -216,7 +216,7 @@ class ModelRegistry:
         models = self.get_all_models()
         return models.get(model_id)
 
-    def get_models_by_category(self, category: str) -> List[ModelInfo]:
+    def get_models_by_category(self, category: str) -> list[ModelInfo]:
         """Get all models in a specific category.
 
         Args:
@@ -228,7 +228,7 @@ class ModelRegistry:
         models = self.get_all_models()
         return [model for model in models.values() if model.category == category]
 
-    def get_text_models(self) -> List[ModelInfo]:
+    def get_text_models(self) -> list[ModelInfo]:
         """Get all text-only models.
 
         Returns:
@@ -236,7 +236,7 @@ class ModelRegistry:
         """
         return self.get_models_by_category(ModelCategory.TEXT_LLM.value)
 
-    def get_vision_models(self) -> List[ModelInfo]:
+    def get_vision_models(self) -> list[ModelInfo]:
         """Get all vision-language models.
 
         Returns:
@@ -244,7 +244,7 @@ class ModelRegistry:
         """
         return self.get_models_by_category(ModelCategory.VISION_VLM.value)
 
-    def get_models_by_tag(self, tag: str) -> List[ModelInfo]:
+    def get_models_by_tag(self, tag: str) -> list[ModelInfo]:
         """Get all models with a specific tag.
 
         Args:
@@ -256,7 +256,7 @@ class ModelRegistry:
         models = self.get_all_models()
         return [model for model in models.values() if tag in model.tags]
 
-    def get_stable_models(self) -> List[ModelInfo]:
+    def get_stable_models(self) -> list[ModelInfo]:
         """Get all stable (production-ready) models.
 
         Returns:
@@ -265,7 +265,7 @@ class ModelRegistry:
         models = self.get_all_models()
         return [model for model in models.values() if model.status == ModelStatus.STABLE.value]
 
-    def get_recommended_models(self, category: Optional[str] = None) -> List[ModelInfo]:
+    def get_recommended_models(self, category: str | None = None) -> list[ModelInfo]:
         """Get recommended models, optionally filtered by category.
 
         Args:
@@ -290,7 +290,7 @@ class ModelRegistry:
         """
         return model_id in self.get_all_models()
 
-    def get_categories(self) -> Dict[str, Dict[str, str]]:
+    def get_categories(self) -> dict[str, dict[str, str]]:
         """Get all available categories.
 
         Returns:
@@ -299,7 +299,7 @@ class ModelRegistry:
         registry = self._load_registry()
         return registry["categories"]
 
-    def validate_model_for_training(self, model_id: str) -> tuple[bool, Optional[str]]:
+    def validate_model_for_training(self, model_id: str) -> tuple[bool, str | None]:
         """Validate if a model can be used for training.
 
         Args:
@@ -321,7 +321,7 @@ class ModelRegistry:
 
         return True, None
 
-    def validate_model_for_inference(self, model_id: str) -> tuple[bool, Optional[str]]:
+    def validate_model_for_inference(self, model_id: str) -> tuple[bool, str | None]:
         """Validate if a model can be used for inference.
 
         Args:
@@ -343,7 +343,7 @@ class ModelRegistry:
 
         return True, None
 
-    def get_model_list_for_ui(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_model_list_for_ui(self, category: str | None = None) -> list[dict[str, Any]]:
         """Get simplified model list for UI consumption.
 
         Args:
@@ -376,7 +376,7 @@ class ModelRegistry:
 
 
 # Global registry instance
-_registry: Optional[ModelRegistry] = None
+_registry: ModelRegistry | None = None
 
 
 def get_registry() -> ModelRegistry:
@@ -392,26 +392,26 @@ def get_registry() -> ModelRegistry:
 
 
 # Convenience functions
-def get_model(model_id: str) -> Optional[ModelInfo]:
+def get_model(model_id: str) -> ModelInfo | None:
     """Get model info by ID."""
     return get_registry().get_model(model_id)
 
 
-def get_text_models() -> List[ModelInfo]:
+def get_text_models() -> list[ModelInfo]:
     """Get all text-only models."""
     return get_registry().get_text_models()
 
 
-def get_vision_models() -> List[ModelInfo]:
+def get_vision_models() -> list[ModelInfo]:
     """Get all vision-language models."""
     return get_registry().get_vision_models()
 
 
-def validate_model_for_training(model_id: str) -> tuple[bool, Optional[str]]:
+def validate_model_for_training(model_id: str) -> tuple[bool, str | None]:
     """Validate model for training."""
     return get_registry().validate_model_for_training(model_id)
 
 
-def validate_model_for_inference(model_id: str) -> tuple[bool, Optional[str]]:
+def validate_model_for_inference(model_id: str) -> tuple[bool, str | None]:
     """Validate model for inference."""
     return get_registry().validate_model_for_inference(model_id)

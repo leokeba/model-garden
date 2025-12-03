@@ -7,7 +7,6 @@ This script demonstrates how to use selective loss for a structured output task
 """
 
 import json
-from pathlib import Path
 
 # Example dataset entry for form extraction
 example_data = {
@@ -51,7 +50,7 @@ total_chars = len(assistant_content)
 structural_chars = sum(1 for c in assistant_content if c in '{},[]:" \n\t')
 semantic_chars = total_chars - structural_chars
 
-print(f"Token Distribution in Response:")
+print("Token Distribution in Response:")
 print(f"  Total characters: {total_chars}")
 print(f"  Structural (will be masked): {structural_chars} ({100*structural_chars/total_chars:.1f}%)")
 print(f"  Semantic (will be trained): {semantic_chars} ({100*semantic_chars/total_chars:.1f}%)")

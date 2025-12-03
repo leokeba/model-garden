@@ -17,6 +17,8 @@ Example:
     )
 """
 
+from model_garden.training.callbacks.early_stopping import EarlyStoppingCallback
+from model_garden.training.callbacks.memory import MemoryMonitorCallback
 from model_garden.training.callbacks.metrics import (
     TrainingMetrics,
     TrainingMetricsCallback,
@@ -25,8 +27,6 @@ from model_garden.training.callbacks.progress import (
     ProgressEstimate,
     ProgressEstimationCallback,
 )
-from model_garden.training.callbacks.early_stopping import EarlyStoppingCallback
-from model_garden.training.callbacks.memory import MemoryMonitorCallback
 
 __all__ = [
     # Callback classes

@@ -4,7 +4,6 @@ This backend provides standard HuggingFace Transformers + PEFT training without 
 Use this for maximum compatibility or when Unsloth doesn't support your model.
 """
 
-import time
 from typing import Any
 
 # Configure HuggingFace cache BEFORE importing HF libraries
@@ -37,18 +36,7 @@ class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
     """
 
     def load_model(self) -> None:
-        """Load the vision-language model using Transformers.
-
-        Includes retry logic with exponential backoff for handling network
-        failures during model download from HuggingFace Hub.
-        """
-        from model_garden.training.constants import (
-            DEFAULT_RETRY_ATTEMPTS,
-            RETRY_BASE_DELAY_SECONDS,
-            RETRY_EXPONENTIAL_BACKOFF,
-            RETRY_MAX_DELAY_SECONDS,
-        )
-
+        """Load the vision-language model using Transformers."""
         hf_token = self._get_hf_token()
 
         console.print(f"[cyan]Loading vision model: {self.base_model}[/cyan]")
@@ -73,62 +61,38 @@ class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
         elif self.load_in_8bit:
             model_kwargs["load_in_8bit"] = True
 
-        last_error: Exception | None = None
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            progress.add_task(description="Loading model...", total=None)
 
-        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
+            # Load model - use AutoModelForVision2Seq for vision-language models
+            from transformers import AutoModelForVision2Seq
+
             try:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    console=console,
-                ) as progress:
-                    progress.add_task(description="Loading model...", total=None)
+                self.model = AutoModelForVision2Seq.from_pretrained(**model_kwargs)
+            except Exception:
+                # Fallback to generic AutoModel if specific class not available
+                console.print(
+                    "[yellow]⚠️  AutoModelForVision2Seq not available, trying AutoModel[/yellow]"
+                )
+                from transformers import AutoModel
 
-                    # Load model - use AutoModelForVision2Seq for vision-language models
-                    from transformers import AutoModelForVision2Seq
+                self.model = AutoModel.from_pretrained(**model_kwargs)
 
-                    try:
-                        self.model = AutoModelForVision2Seq.from_pretrained(**model_kwargs)
-                    except Exception:
-                        # Fallback to generic AutoModel if specific class not available
-                        console.print(
-                            "[yellow]⚠️  AutoModelForVision2Seq not available, trying AutoModel[/yellow]"
-                        )
-                        from transformers import AutoModel
+            # Load processor (handles both text and image processing)
+            from transformers import AutoProcessor
 
-                        self.model = AutoModel.from_pretrained(**model_kwargs)
+            self.processor = AutoProcessor.from_pretrained(
+                self.base_model,
+                token=hf_token,
+                trust_remote_code=True,
+            )
+            self.tokenizer = self.processor.tokenizer
 
-                    # Load processor (handles both text and image processing)
-                    from transformers import AutoProcessor
-
-                    self.processor = AutoProcessor.from_pretrained(
-                        self.base_model,
-                        token=hf_token,
-                        trust_remote_code=True,
-                    )
-                    self.tokenizer = self.processor.tokenizer
-
-                console.print("[green]✓[/green] Model loaded successfully")
-                return
-
-            except Exception as e:
-                last_error = e
-                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
-                    delay = min(
-                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
-                        RETRY_MAX_DELAY_SECONDS,
-                    )
-                    console.print(
-                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
-                        f"failed: {e}[/yellow]"
-                    )
-                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
-                    time.sleep(delay)
-
-        # All retries failed
-        raise RuntimeError(
-            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
-        )
+        console.print("[green]✓[/green] Model loaded successfully")
 
     def prepare_for_training(
         self,
@@ -414,18 +378,7 @@ class TransformersTextTrainer(TrainerMixin, TextTrainer):
     """Text trainer using standard HuggingFace Transformers + PEFT."""
 
     def load_model(self) -> None:
-        """Load the base model using Transformers.
-
-        Includes retry logic with exponential backoff for handling network
-        failures during model download from HuggingFace Hub.
-        """
-        from model_garden.training.constants import (
-            DEFAULT_RETRY_ATTEMPTS,
-            RETRY_BASE_DELAY_SECONDS,
-            RETRY_EXPONENTIAL_BACKOFF,
-            RETRY_MAX_DELAY_SECONDS,
-        )
-
+        """Load the base model using Transformers."""
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
         console.print("[cyan]Using HuggingFace Transformers (no Unsloth optimizations)[/cyan]")
         console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
@@ -454,52 +407,28 @@ class TransformersTextTrainer(TrainerMixin, TextTrainer):
         elif self.load_in_8bit:
             model_kwargs["load_in_8bit"] = True
 
-        last_error: Exception | None = None
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            progress.add_task(description="Loading model...", total=None)
 
-        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
-            try:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    console=console,
-                ) as progress:
-                    progress.add_task(description="Loading model...", total=None)
+            # Load model
+            self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
 
-                    # Load model
-                    self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
+            # Load tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.base_model,
+                token=hf_token,
+                trust_remote_code=True,
+            )
 
-                    # Load tokenizer
-                    self.tokenizer = AutoTokenizer.from_pretrained(
-                        self.base_model,
-                        token=hf_token,
-                        trust_remote_code=True,
-                    )
+            # Set pad token if not set
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
 
-                    # Set pad token if not set
-                    if self.tokenizer.pad_token is None:
-                        self.tokenizer.pad_token = self.tokenizer.eos_token
-
-                console.print("[green]✓[/green] Model loaded successfully")
-                return
-
-            except Exception as e:
-                last_error = e
-                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
-                    delay = min(
-                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
-                        RETRY_MAX_DELAY_SECONDS,
-                    )
-                    console.print(
-                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
-                        f"failed: {e}[/yellow]"
-                    )
-                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
-                    time.sleep(delay)
-
-        # All retries failed
-        raise RuntimeError(
-            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
-        )
+        console.print("[green]✓[/green] Model loaded successfully")
 
     def prepare_for_training(
         self,

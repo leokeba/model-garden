@@ -4,9 +4,8 @@
 Usage:
   python scripts/run_load_with_util.py <model_path> <gpu_memory_utilization> [max_model_len]
 """
-import sys
 import asyncio
-from pathlib import Path
+import sys
 
 if len(sys.argv) < 3:
     print("Usage: python scripts/run_load_with_util.py <model_path> <gpu_memory_utilization> [max_model_len]")
@@ -19,6 +18,7 @@ MAX_MODEL_LEN = int(sys.argv[3]) if len(sys.argv) > 3 else None
 print(f"Loading model: {MODEL_PATH} with gpu_memory_utilization={GPU_UTIL} max_model_len={MAX_MODEL_LEN}")
 
 from model_garden.inference import InferenceService
+
 
 async def main():
     svc = InferenceService(model_path=MODEL_PATH, gpu_memory_utilization=GPU_UTIL, max_model_len=MAX_MODEL_LEN)

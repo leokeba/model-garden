@@ -11,12 +11,12 @@ Prerequisites:
 2. Have a test image available
 """
 
-import requests
-import json
 import base64
+import json
 from pathlib import Path
+
+import requests
 from pydantic import BaseModel
-from typing import List, Optional
 
 API_BASE = "http://localhost:8000"
 
@@ -30,19 +30,19 @@ def encode_image_to_base64(image_path: str) -> str:
 class ImageAnalysis(BaseModel):
     """Structured analysis of an image."""
     description: str
-    main_objects: List[str]
-    colors: List[str]
+    main_objects: list[str]
+    colors: list[str]
     scene_type: str
-    estimated_time_of_day: Optional[str] = None
+    estimated_time_of_day: str | None = None
 
 
 class ProductInfo(BaseModel):
     """Product information extracted from an image."""
     product_name: str
     category: str
-    visible_features: List[str]
+    visible_features: list[str]
     condition: str
-    estimated_value_range: Optional[str] = None
+    estimated_value_range: str | None = None
 
 
 def test_image_with_generic_json():
@@ -50,10 +50,10 @@ def test_image_with_generic_json():
     print("\n" + "="*60)
     print("Test 1: Generic JSON Object with Image")
     print("="*60)
-    
+
     # Use a placeholder image URL for testing
     image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/320px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -72,17 +72,17 @@ def test_image_with_generic_json():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
+        print("\n✅ Success!")
         print(f"Response: {content}")
-        
+
         # Validate it's valid JSON
         try:
             parsed = json.loads(content)
-            print(f"\n✅ Valid JSON structure:")
+            print("\n✅ Valid JSON structure:")
             print(json.dumps(parsed, indent=2))
         except json.JSONDecodeError as e:
             print(f"\n❌ Invalid JSON: {e}")
@@ -96,12 +96,12 @@ def test_image_with_specific_schema():
     print("\n" + "="*60)
     print("Test 2: Specific Schema with Image")
     print("="*60)
-    
+
     schema = ImageAnalysis.model_json_schema()
     print(f"\nUsing schema: {json.dumps(schema, indent=2)}")
-    
+
     image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/320px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -124,15 +124,15 @@ def test_image_with_specific_schema():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
-        
+        print("\n✅ Success!")
+
         try:
             analysis = ImageAnalysis.model_validate_json(content)
-            print(f"\n✅ Valid and matches schema:")
+            print("\n✅ Valid and matches schema:")
             print(f"  Description: {analysis.description}")
             print(f"  Main Objects: {', '.join(analysis.main_objects)}")
             print(f"  Colors: {', '.join(analysis.colors)}")
@@ -152,12 +152,12 @@ def test_product_extraction_from_image():
     print("\n" + "="*60)
     print("Test 3: Product Extraction from Image")
     print("="*60)
-    
+
     schema = ProductInfo.model_json_schema()
-    
+
     # Example product image URL
     image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/200px-Apple_logo_black.svg.png"
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -180,15 +180,15 @@ def test_product_extraction_from_image():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
-        
+        print("\n✅ Success!")
+
         try:
             product = ProductInfo.model_validate_json(content)
-            print(f"\n✅ Valid product information:")
+            print("\n✅ Valid product information:")
             print(f"  📦 Product: {product.product_name}")
             print(f"  📁 Category: {product.category}")
             print(f"  ✨ Features: {', '.join(product.visible_features)}")
@@ -208,30 +208,30 @@ def test_local_image_file():
     print("\n" + "="*60)
     print("Test 4: Local Image File with Structured Output")
     print("="*60)
-    
+
     # Check if test images directory exists
     test_images_dir = Path("data/test_images")
     if not test_images_dir.exists():
         print(f"\n⚠️  Test images directory not found: {test_images_dir}")
         print("Skipping this test.")
         return
-    
+
     # Find first image in test_images directory
     image_files = list(test_images_dir.glob("*.jpg")) + list(test_images_dir.glob("*.png"))
     if not image_files:
         print(f"\n⚠️  No image files found in {test_images_dir}")
         print("Skipping this test.")
         return
-    
+
     image_path = image_files[0]
     print(f"\nUsing image: {image_path}")
-    
+
     # Encode image to base64
     image_base64 = encode_image_to_base64(str(image_path))
     image_data_url = f"data:image/jpeg;base64,{image_base64}"
-    
+
     schema = ImageAnalysis.model_json_schema()
-    
+
     response = requests.post(
         f"{API_BASE}/v1/chat/completions",
         json={
@@ -254,15 +254,15 @@ def test_local_image_file():
             }
         }
     )
-    
+
     if response.status_code == 200:
         result = response.json()
         content = result["choices"][0]["message"]["content"]
-        print(f"\n✅ Success!")
-        
+        print("\n✅ Success!")
+
         try:
             analysis = ImageAnalysis.model_validate_json(content)
-            print(f"\n✅ Analysis of local image:")
+            print("\n✅ Analysis of local image:")
             print(f"  {analysis.description}")
             print(f"  Objects: {', '.join(analysis.main_objects)}")
             print(f"  Colors: {', '.join(analysis.colors)}")
@@ -280,7 +280,7 @@ def main():
     print("Make sure Model Garden API is running with a vision model!")
     print("Example: model-garden serve --model Qwen/Qwen2.5-VL-7B-Instruct")
     print()
-    
+
     # Check if API is available
     try:
         response = requests.get(f"{API_BASE}/api/v1/system/status", timeout=5)
@@ -293,18 +293,18 @@ def main():
         print(f"❌ Cannot connect to API: {e}")
         print(f"\nMake sure the API is running on {API_BASE}")
         return
-    
+
     try:
         # Run all tests
         test_image_with_generic_json()
         test_image_with_specific_schema()
         test_product_extraction_from_image()
         test_local_image_file()
-        
+
         print("\n" + "="*60)
         print("✅ All vision + structured output tests completed!")
         print("="*60)
-        
+
     except Exception as e:
         print(f"\n❌ Test failed with error: {e}")
         import traceback

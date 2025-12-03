@@ -12,7 +12,6 @@ from typing import Any
 
 from model_garden.utils.console import console
 
-
 # Common chat template patterns for known model families
 FALLBACK_MARKERS: dict[str, tuple[str, str]] = {
     "qwen": ("<|im_start|>user", "<|im_start|>assistant"),
@@ -147,7 +146,7 @@ class ChatTemplateDetector:
 
         markers = ("User:", "Assistant:")
         if self.verbose:
-            console.print(f"[cyan]Using generic markers:[/cyan]")
+            console.print("[cyan]Using generic markers:[/cyan]")
             console.print(f"  instruction_part: {repr(markers[0])}")
             console.print(f"  response_part: {repr(markers[1])}")
 

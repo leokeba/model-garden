@@ -11,15 +11,16 @@ Usage:
   PYTHONUNBUFFERED=1 python3 scripts/clean_merged.py /path/to/merged /path/to/out_clean
 
 Note: run where you have enough disk space (we'll write new shards)."""
-import sys
-import os
 import json
-import tempfile
+import os
 import shutil
+import sys
+import tempfile
 from pathlib import Path
-from safetensors.torch import save_file
+
 import torch
 from safetensors import safe_open
+from safetensors.torch import save_file
 
 
 def is_aux_key(key: str) -> bool:
@@ -68,7 +69,7 @@ def main():
         print("model.safetensors.index.json not found in merged dir; aborting")
         sys.exit(1)
 
-    with open(index_path, 'r') as f:
+    with open(index_path) as f:
         index = json.load(f)
 
     weight_map = index.get('weight_map', {})

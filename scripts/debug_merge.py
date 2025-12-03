@@ -6,9 +6,9 @@ so the merge runs in the main process and prints full tracebacks/logs.
 
 Usage: PYTHONUNBUFFERED=1 python3 scripts/debug_merge.py
 """
+import asyncio
 import os
 import sys
-import asyncio
 import traceback
 
 # Run in debug in-process merge mode
