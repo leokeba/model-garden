@@ -7,6 +7,42 @@ sprawl in train() methods and providing a single source of truth for defaults.
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from model_garden.training.constants import (
+    DEFAULT_ADAM_BETA1,
+    DEFAULT_ADAM_BETA2,
+    DEFAULT_ADAM_EPSILON,
+    DEFAULT_DATALOADER_NUM_WORKERS,
+    DEFAULT_EVAL_STRATEGY,
+    DEFAULT_LOGGING_STEPS,
+    DEFAULT_LORA_ALPHA,
+    DEFAULT_LORA_BIAS,
+    DEFAULT_LORA_DROPOUT,
+    DEFAULT_LORA_R,
+    DEFAULT_MASK_EVERY_N_STEPS,
+    DEFAULT_MASK_FOR_N_STEPS,
+    DEFAULT_MAX_GRAD_NORM,
+    DEFAULT_NUM_EPOCHS,
+    DEFAULT_OPTIMIZER,
+    DEFAULT_RANDOM_SEED,
+    DEFAULT_SAVE_STEPS,
+    DEFAULT_SAVE_TOTAL_LIMIT,
+    DEFAULT_SELECTIVE_LOSS_LEVEL,
+    DEFAULT_SELECTIVE_LOSS_STRATEGY,
+    DEFAULT_STRUCTURAL_WEIGHT,
+    DEFAULT_WARMUP_STEPS,
+    DEFAULT_WEIGHT_DECAY,
+    TEXT_DEFAULT_BATCH_SIZE,
+    TEXT_DEFAULT_GRADIENT_ACCUMULATION,
+    TEXT_DEFAULT_LEARNING_RATE,
+    TEXT_DEFAULT_LR_SCHEDULER,
+    TEXT_DEFAULT_MAX_SEQ_LENGTH,
+    VISION_DEFAULT_BATCH_SIZE,
+    VISION_DEFAULT_GRADIENT_ACCUMULATION,
+    VISION_DEFAULT_LEARNING_RATE,
+    VISION_DEFAULT_LR_SCHEDULER,
+    VISION_DEFAULT_MAX_SEQ_LENGTH,
+)
+
 
 @dataclass
 class LoRAConfig:
@@ -40,15 +76,15 @@ class LoRAConfig:
         >>> trainer.prepare_for_training(**config.to_dict())
     """
 
-    r: int = 16
-    lora_alpha: int = 16
-    lora_dropout: float = 0.0
+    r: int = DEFAULT_LORA_R
+    lora_alpha: int = DEFAULT_LORA_ALPHA
+    lora_dropout: float = DEFAULT_LORA_DROPOUT
     target_modules: list[str] | None = None
     use_rslora: bool = False
-    bias: Literal["none", "all", "lora_only"] = "none"
+    bias: Literal["none", "all", "lora_only"] = DEFAULT_LORA_BIAS  # type: ignore[assignment]
     task_type: str = "CAUSAL_LM"
     use_gradient_checkpointing: str | bool = "unsloth"
-    random_state: int = 42
+    random_state: int = DEFAULT_RANDOM_SEED
     loftq_config: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -150,28 +186,28 @@ class TrainingConfig:
     """
 
     output_dir: str = "./output"
-    num_epochs: int = 3
-    batch_size: int = 2
-    gradient_accumulation_steps: int = 4
-    learning_rate: float = 2e-4
-    warmup_steps: int = 10
+    num_epochs: int = DEFAULT_NUM_EPOCHS
+    batch_size: int = TEXT_DEFAULT_BATCH_SIZE
+    gradient_accumulation_steps: int = TEXT_DEFAULT_GRADIENT_ACCUMULATION
+    learning_rate: float = TEXT_DEFAULT_LEARNING_RATE
+    warmup_steps: int = DEFAULT_WARMUP_STEPS
     max_steps: int = -1
-    logging_steps: int = 10
-    save_steps: int = 100
-    optim: str = "adamw_8bit"
-    weight_decay: float = 0.01
-    lr_scheduler_type: str = "linear"
-    max_grad_norm: float = 1.0
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    dataloader_num_workers: int = 0
+    logging_steps: int = DEFAULT_LOGGING_STEPS
+    save_steps: int = DEFAULT_SAVE_STEPS
+    optim: str = DEFAULT_OPTIMIZER
+    weight_decay: float = DEFAULT_WEIGHT_DECAY
+    lr_scheduler_type: str = TEXT_DEFAULT_LR_SCHEDULER
+    max_grad_norm: float = DEFAULT_MAX_GRAD_NORM
+    adam_beta1: float = DEFAULT_ADAM_BETA1
+    adam_beta2: float = DEFAULT_ADAM_BETA2
+    adam_epsilon: float = DEFAULT_ADAM_EPSILON
+    dataloader_num_workers: int = DEFAULT_DATALOADER_NUM_WORKERS
     dataloader_pin_memory: bool = True
-    eval_strategy: str = "steps"
+    eval_strategy: str = DEFAULT_EVAL_STRATEGY
     eval_steps: int | None = None
     load_best_model_at_end: bool = True
     metric_for_best_model: str = "eval_loss"
-    save_total_limit: int = 3
+    save_total_limit: int = DEFAULT_SAVE_TOTAL_LIMIT
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for passing to trainer methods."""
@@ -252,21 +288,21 @@ class VisionTrainingConfig(TrainingConfig):
     """
 
     # Override defaults for vision models
-    batch_size: int = 1
-    gradient_accumulation_steps: int = 8
-    learning_rate: float = 2e-5
-    lr_scheduler_type: str = "cosine"
+    batch_size: int = VISION_DEFAULT_BATCH_SIZE
+    gradient_accumulation_steps: int = VISION_DEFAULT_GRADIENT_ACCUMULATION
+    learning_rate: float = VISION_DEFAULT_LEARNING_RATE
+    lr_scheduler_type: str = VISION_DEFAULT_LR_SCHEDULER
     dataloader_pin_memory: bool = False
 
     # Selective loss options
     selective_loss: bool = False
-    selective_loss_level: str = "conservative"
+    selective_loss_level: str = DEFAULT_SELECTIVE_LOSS_LEVEL
     selective_loss_schema_keys: list[str] | None = None
-    selective_loss_masking_strategy: str = "epoch_based"
+    selective_loss_masking_strategy: str = DEFAULT_SELECTIVE_LOSS_STRATEGY
     selective_loss_masking_start_epoch: float = 0.0
-    selective_loss_mask_every_n_steps: int = 100
-    selective_loss_mask_for_n_steps: int = 50
-    selective_loss_structural_weight: float = 0.1
+    selective_loss_mask_every_n_steps: int = DEFAULT_MASK_EVERY_N_STEPS
+    selective_loss_mask_for_n_steps: int = DEFAULT_MASK_FOR_N_STEPS
+    selective_loss_structural_weight: float = DEFAULT_STRUCTURAL_WEIGHT
     selective_loss_verbose: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -312,7 +348,7 @@ class ModelConfig:
     """
 
     base_model: str = ""
-    max_seq_length: int = 2048
+    max_seq_length: int = TEXT_DEFAULT_MAX_SEQ_LENGTH
     load_in_4bit: bool = True
     load_in_8bit: bool = False
     dtype: str | None = None
@@ -351,4 +387,4 @@ class VisionModelConfig(ModelConfig):
         ... )
     """
 
-    max_seq_length: int = 16384
+    max_seq_length: int = VISION_DEFAULT_MAX_SEQ_LENGTH

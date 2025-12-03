@@ -6,6 +6,7 @@ Note: You may see non-critical warnings:
 """
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -88,32 +89,67 @@ class ModelTrainer(TrainerMixin, TextTrainer):
 
         Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
         Uses Unsloth's FastLanguageModel for optimized inference and training.
+
+        Includes retry logic with exponential backoff for handling network
+        failures during model download from HuggingFace Hub.
         """
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
         console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            progress.add_task(description="Loading model...", total=None)
+        # Get HuggingFace token from environment for private models
+        hf_token = self._get_hf_token()
 
-            # Get HuggingFace token from environment for private models
-            hf_token = self._get_hf_token()
+        # Import retry constants
+        from model_garden.training.constants import (
+            DEFAULT_RETRY_ATTEMPTS,
+            RETRY_BASE_DELAY_SECONDS,
+            RETRY_EXPONENTIAL_BACKOFF,
+            RETRY_MAX_DELAY_SECONDS,
+        )
 
-            # Unsloth supports both 4-bit and 8-bit quantization
-            # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
-            self.model, self.tokenizer = FastLanguageModel.from_pretrained(
-                model_name=self.base_model,
-                max_seq_length=self.max_seq_length,
-                dtype=self.dtype,
-                load_in_4bit=self.load_in_4bit,
-                load_in_8bit=self.load_in_8bit,
-                token=hf_token,
-            )
+        last_error: Exception | None = None
 
-        console.print("[green]✓[/green] Model loaded successfully")
+        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                ) as progress:
+                    progress.add_task(description="Loading model...", total=None)
+
+                    # Unsloth supports both 4-bit and 8-bit quantization
+                    # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
+                    self.model, self.tokenizer = FastLanguageModel.from_pretrained(
+                        model_name=self.base_model,
+                        max_seq_length=self.max_seq_length,
+                        dtype=self.dtype,
+                        load_in_4bit=self.load_in_4bit,
+                        load_in_8bit=self.load_in_8bit,
+                        token=hf_token,
+                    )
+
+                console.print("[green]✓[/green] Model loaded successfully")
+                return
+
+            except Exception as e:
+                last_error = e
+                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
+                    delay = min(
+                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
+                        RETRY_MAX_DELAY_SECONDS,
+                    )
+                    console.print(
+                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
+                        f"failed: {e}[/yellow]"
+                    )
+                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
+
+        # All retries failed
+        raise RuntimeError(
+            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
+        )
 
     def prepare_for_training(
         self,

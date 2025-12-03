@@ -4,6 +4,7 @@ This backend provides standard HuggingFace Transformers + PEFT training without 
 Use this for maximum compatibility or when Unsloth doesn't support your model.
 """
 
+import time
 from typing import Any
 
 # Configure HuggingFace cache BEFORE importing HF libraries
@@ -35,63 +36,98 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
     """
 
     def load_model(self) -> None:
-        """Load the vision-language model using Transformers."""
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            progress.add_task(description="Loading model...", total=None)
+        """Load the vision-language model using Transformers.
 
-            hf_token = self._get_hf_token()
+        Includes retry logic with exponential backoff for handling network
+        failures during model download from HuggingFace Hub.
+        """
+        from model_garden.training.constants import (
+            DEFAULT_RETRY_ATTEMPTS,
+            RETRY_BASE_DELAY_SECONDS,
+            RETRY_EXPONENTIAL_BACKOFF,
+            RETRY_MAX_DELAY_SECONDS,
+        )
 
-            console.print(f"[cyan]Loading vision model: {self.base_model}[/cyan]")
-            console.print("[yellow]Using HuggingFace Transformers (basic vision support)[/yellow]")
-            console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
+        hf_token = self._get_hf_token()
 
-            # Prepare model kwargs
-            torch_dtype = self._get_torch_dtype()
+        console.print(f"[cyan]Loading vision model: {self.base_model}[/cyan]")
+        console.print("[yellow]Using HuggingFace Transformers (basic vision support)[/yellow]")
+        console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
 
-            model_kwargs: dict[str, Any] = {
-                "pretrained_model_name_or_path": self.base_model,
-                "torch_dtype": torch_dtype,
-                "device_map": "auto",
-                "token": hf_token,
-                "trust_remote_code": True,
-            }
+        # Prepare model kwargs
+        torch_dtype = self._get_torch_dtype()
 
-            # Add quantization if requested
-            quant_config = self._get_quantization_config()
-            if quant_config:
-                model_kwargs["quantization_config"] = quant_config
-            elif self.load_in_8bit:
-                model_kwargs["load_in_8bit"] = True
+        model_kwargs: dict[str, Any] = {
+            "pretrained_model_name_or_path": self.base_model,
+            "torch_dtype": torch_dtype,
+            "device_map": "auto",
+            "token": hf_token,
+            "trust_remote_code": True,
+        }
 
-            # Load model - use AutoModelForVision2Seq for vision-language models
-            from transformers import AutoModelForVision2Seq
+        # Add quantization if requested
+        quant_config = self._get_quantization_config()
+        if quant_config:
+            model_kwargs["quantization_config"] = quant_config
+        elif self.load_in_8bit:
+            model_kwargs["load_in_8bit"] = True
 
+        last_error: Exception | None = None
+
+        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
             try:
-                self.model = AutoModelForVision2Seq.from_pretrained(**model_kwargs)
-            except Exception:
-                # Fallback to generic AutoModel if specific class not available
-                console.print(
-                    "[yellow]⚠️  AutoModelForVision2Seq not available, trying AutoModel[/yellow]"
-                )
-                from transformers import AutoModel
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                ) as progress:
+                    progress.add_task(description="Loading model...", total=None)
 
-                self.model = AutoModel.from_pretrained(**model_kwargs)
+                    # Load model - use AutoModelForVision2Seq for vision-language models
+                    from transformers import AutoModelForVision2Seq
 
-            # Load processor (handles both text and image processing)
-            from transformers import AutoProcessor
+                    try:
+                        self.model = AutoModelForVision2Seq.from_pretrained(**model_kwargs)
+                    except Exception:
+                        # Fallback to generic AutoModel if specific class not available
+                        console.print(
+                            "[yellow]⚠️  AutoModelForVision2Seq not available, trying AutoModel[/yellow]"
+                        )
+                        from transformers import AutoModel
 
-            self.processor = AutoProcessor.from_pretrained(
-                self.base_model,
-                token=hf_token,
-                trust_remote_code=True,
-            )
-            self.tokenizer = self.processor.tokenizer
+                        self.model = AutoModel.from_pretrained(**model_kwargs)
 
-        console.print("[green]✓[/green] Model loaded successfully")
+                    # Load processor (handles both text and image processing)
+                    from transformers import AutoProcessor
+
+                    self.processor = AutoProcessor.from_pretrained(
+                        self.base_model,
+                        token=hf_token,
+                        trust_remote_code=True,
+                    )
+                    self.tokenizer = self.processor.tokenizer
+
+                console.print("[green]✓[/green] Model loaded successfully")
+                return
+
+            except Exception as e:
+                last_error = e
+                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
+                    delay = min(
+                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
+                        RETRY_MAX_DELAY_SECONDS,
+                    )
+                    console.print(
+                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
+                        f"failed: {e}[/yellow]"
+                    )
+                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
+
+        # All retries failed
+        raise RuntimeError(
+            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
+        )
 
     def prepare_for_training(
         self,
@@ -409,57 +445,92 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
     """Text trainer using standard HuggingFace Transformers + PEFT."""
 
     def load_model(self) -> None:
-        """Load the base model using Transformers."""
+        """Load the base model using Transformers.
+
+        Includes retry logic with exponential backoff for handling network
+        failures during model download from HuggingFace Hub.
+        """
+        from model_garden.training.constants import (
+            DEFAULT_RETRY_ATTEMPTS,
+            RETRY_BASE_DELAY_SECONDS,
+            RETRY_EXPONENTIAL_BACKOFF,
+            RETRY_MAX_DELAY_SECONDS,
+        )
+
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
         console.print("[cyan]Using HuggingFace Transformers (no Unsloth optimizations)[/cyan]")
         console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            progress.add_task(description="Loading model...", total=None)
+        hf_token = self._get_hf_token()
 
-            hf_token = self._get_hf_token()
+        # Determine torch dtype
+        if not self.load_in_4bit and not self.load_in_8bit:
+            torch_dtype = self._get_torch_dtype()
+        else:
+            torch_dtype = None  # Let BitsAndBytes handle dtype
 
-            # Determine torch dtype
-            if not self.load_in_4bit and not self.load_in_8bit:
-                torch_dtype = self._get_torch_dtype()
-            else:
-                torch_dtype = None  # Let BitsAndBytes handle dtype
+        # Build model loading kwargs
+        model_kwargs: dict[str, Any] = {
+            "pretrained_model_name_or_path": self.base_model,
+            "torch_dtype": torch_dtype,
+            "device_map": "auto",
+            "token": hf_token,
+            "trust_remote_code": True,
+        }
 
-            # Build model loading kwargs
-            model_kwargs: dict[str, Any] = {
-                "pretrained_model_name_or_path": self.base_model,
-                "torch_dtype": torch_dtype,
-                "device_map": "auto",
-                "token": hf_token,
-                "trust_remote_code": True,
-            }
+        # Add quantization if requested
+        quant_config = self._get_quantization_config()
+        if quant_config:
+            model_kwargs["quantization_config"] = quant_config
+        elif self.load_in_8bit:
+            model_kwargs["load_in_8bit"] = True
 
-            # Add quantization if requested
-            quant_config = self._get_quantization_config()
-            if quant_config:
-                model_kwargs["quantization_config"] = quant_config
-            elif self.load_in_8bit:
-                model_kwargs["load_in_8bit"] = True
+        last_error: Exception | None = None
 
-            # Load model
-            self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
+        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                ) as progress:
+                    progress.add_task(description="Loading model...", total=None)
 
-            # Load tokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.base_model,
-                token=hf_token,
-                trust_remote_code=True,
-            )
+                    # Load model
+                    self.model = AutoModelForCausalLM.from_pretrained(**model_kwargs)
 
-            # Set pad token if not set
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
+                    # Load tokenizer
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        self.base_model,
+                        token=hf_token,
+                        trust_remote_code=True,
+                    )
 
-        console.print("[green]✓[/green] Model loaded successfully")
+                    # Set pad token if not set
+                    if self.tokenizer.pad_token is None:
+                        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+                console.print("[green]✓[/green] Model loaded successfully")
+                return
+
+            except Exception as e:
+                last_error = e
+                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
+                    delay = min(
+                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
+                        RETRY_MAX_DELAY_SECONDS,
+                    )
+                    console.print(
+                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
+                        f"failed: {e}[/yellow]"
+                    )
+                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
+
+        # All retries failed
+        raise RuntimeError(
+            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
+        )
 
     def prepare_for_training(
         self,

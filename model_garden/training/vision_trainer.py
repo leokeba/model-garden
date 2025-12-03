@@ -6,6 +6,7 @@ Supports multimodal models like Qwen2.5-VL for fine-tuning on vision-language ta
 import gc
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -147,7 +148,18 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         Note: Qwen2.5-VL requires special handling as it's a multimodal model.
         Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
+
+        Includes retry logic with exponential backoff for handling network
+        failures during model download from HuggingFace Hub.
         """
+        # Import retry constants
+        from model_garden.training.constants import (
+            DEFAULT_RETRY_ATTEMPTS,
+            RETRY_BASE_DELAY_SECONDS,
+            RETRY_EXPONENTIAL_BACKOFF,
+            RETRY_MAX_DELAY_SECONDS,
+        )
+
         # Determine precision for logging
         if self.load_in_8bit:
             precision = "8-bit (balanced quality/memory)"
@@ -162,77 +174,106 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         # Get HuggingFace token from environment for private models
         hf_token = get_hf_token()
 
-        try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                progress.add_task(description="Loading model...", total=None)
+        last_error: Exception | None = None
 
-                try:
-                    # Use FastVisionModel for vision-language models (optimized for VLMs)
-                    # Supports both 4-bit and 8-bit quantization
-                    # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
-                    # IMPORTANT: FastVisionModel returns (model, tokenizer) tuple, NOT (model, processor)
-                    # We need to load the processor separately from transformers
-                    from transformers import AutoProcessor
+        for attempt in range(DEFAULT_RETRY_ATTEMPTS):
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                ) as progress:
+                    progress.add_task(description="Loading model...", total=None)
 
-                    self.model, self.tokenizer = FastVisionModel.from_pretrained(
-                        model_name=self.base_model,
-                        max_seq_length=self.max_seq_length,
-                        dtype=self.dtype,
-                        load_in_4bit=self.load_in_4bit,
-                        load_in_8bit=self.load_in_8bit,
-                        token=hf_token,
+                    try:
+                        # Use FastVisionModel for vision-language models (optimized for VLMs)
+                        # Supports both 4-bit and 8-bit quantization
+                        # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
+                        # IMPORTANT: FastVisionModel returns (model, tokenizer) tuple, NOT (model, processor)
+                        # We need to load the processor separately from transformers
+                        from transformers import AutoProcessor
+
+                        self.model, self.tokenizer = FastVisionModel.from_pretrained(
+                            model_name=self.base_model,
+                            max_seq_length=self.max_seq_length,
+                            dtype=self.dtype,
+                            load_in_4bit=self.load_in_4bit,
+                            load_in_8bit=self.load_in_8bit,
+                            token=hf_token,
+                        )
+                        # Load processor separately (vision models need both tokenizer and processor)
+                        self.processor = AutoProcessor.from_pretrained(
+                            self.base_model, token=hf_token
+                        )
+                        console.print(
+                            "[green]✓[/green] Model loaded with Unsloth FastVisionModel optimizations"
+                        )
+                    except Exception as unsloth_error:
+                        # Print the actual error for debugging
+                        console.print(
+                            f"[yellow]⚠️  FastVisionModel failed: {unsloth_error}[/yellow]"
+                        )
+                        # Fall back to transformers for vision models
+                        console.print(
+                            "[yellow]⚠️  Unsloth not supported, using transformers[/yellow]"
+                        )
+                        import torch
+                        from transformers import AutoModelForVision2Seq, AutoProcessor
+
+                        self.processor = AutoProcessor.from_pretrained(
+                            self.base_model, token=hf_token
+                        )
+                        self.tokenizer = self.processor.tokenizer
+
+                        # Determine torch_dtype based on quantization settings
+                        # For 16-bit (no quantization), explicitly use bfloat16
+                        if not self.load_in_4bit and not self.load_in_8bit:
+                            # For 16-bit precision, explicitly use bfloat16 (Qwen2.5-VL's native precision)
+                            # Using None doesn't always work - model can load as float32 then convert
+                            torch_dtype = torch.bfloat16 if self.dtype is None else self.dtype
+                        else:
+                            # For quantized models, let BitsAndBytes handle dtype
+                            torch_dtype = None
+
+                        # Transformers supports 4-bit and 8-bit via BitsAndBytes
+                        # Build kwargs conditionally - only pass load_in_Xbit if True (not False or None)
+                        model_kwargs = {
+                            "device_map": "auto",
+                            "torch_dtype": torch_dtype,
+                            "token": hf_token,
+                        }
+                        if self.load_in_4bit:
+                            model_kwargs["load_in_4bit"] = True
+                        if self.load_in_8bit:
+                            model_kwargs["load_in_8bit"] = True
+
+                        self.model = AutoModelForVision2Seq.from_pretrained(
+                            self.base_model,
+                            **model_kwargs,
+                        )
+                        console.print("[green]✓[/green] Model loaded with transformers")
+
+                # If we get here, loading succeeded
+                return
+
+            except Exception as e:
+                last_error = e
+                if attempt < DEFAULT_RETRY_ATTEMPTS - 1:
+                    delay = min(
+                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
+                        RETRY_MAX_DELAY_SECONDS,
                     )
-                    # Load processor separately (vision models need both tokenizer and processor)
-                    self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
                     console.print(
-                        "[green]✓[/green] Model loaded with Unsloth FastVisionModel optimizations"
+                        f"[yellow]⚠️  Model loading attempt {attempt + 1}/{DEFAULT_RETRY_ATTEMPTS} "
+                        f"failed: {e}[/yellow]"
                     )
-                except Exception as unsloth_error:
-                    # Print the actual error for debugging
-                    console.print(f"[yellow]⚠️  FastVisionModel failed: {unsloth_error}[/yellow]")
-                    # Fall back to transformers for vision models
-                    console.print("[yellow]⚠️  Unsloth not supported, using transformers[/yellow]")
-                    import torch
-                    from transformers import AutoModelForVision2Seq, AutoProcessor
+                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
 
-                    self.processor = AutoProcessor.from_pretrained(self.base_model, token=hf_token)
-                    self.tokenizer = self.processor.tokenizer
-
-                    # Determine torch_dtype based on quantization settings
-                    # For 16-bit (no quantization), explicitly use bfloat16
-                    if not self.load_in_4bit and not self.load_in_8bit:
-                        # For 16-bit precision, explicitly use bfloat16 (Qwen2.5-VL's native precision)
-                        # Using None doesn't always work - model can load as float32 then convert
-                        torch_dtype = torch.bfloat16 if self.dtype is None else self.dtype
-                    else:
-                        # For quantized models, let BitsAndBytes handle dtype
-                        torch_dtype = None
-
-                    # Transformers supports 4-bit and 8-bit via BitsAndBytes
-                    # Build kwargs conditionally - only pass load_in_Xbit if True (not False or None)
-                    model_kwargs = {
-                        "device_map": "auto",
-                        "torch_dtype": torch_dtype,
-                        "token": hf_token,
-                    }
-                    if self.load_in_4bit:
-                        model_kwargs["load_in_4bit"] = True
-                    if self.load_in_8bit:
-                        model_kwargs["load_in_8bit"] = True
-
-                    self.model = AutoModelForVision2Seq.from_pretrained(
-                        self.base_model,
-                        **model_kwargs,
-                    )
-                    console.print("[green]✓[/green] Model loaded with transformers")
-
-        except Exception as e:
-            console.print(f"[red]❌ Failed to load model: {e}[/red]")
-            raise
+        # All retries failed
+        raise RuntimeError(
+            f"Failed to load model '{self.base_model}' after {DEFAULT_RETRY_ATTEMPTS} attempts: {last_error}"
+        )
 
     def prepare_for_training(
         self,

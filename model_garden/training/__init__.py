@@ -32,6 +32,7 @@ from .mixins import (
     cleanup_memory,
     detect_model_dtype,
     get_training_precision_config,
+    retry_with_backoff,
 )
 
 # Selective loss
@@ -90,6 +91,7 @@ __all__ = [
     "get_training_precision_config",
     "MemoryMonitorCallback",
     "cleanup_memory",
+    "retry_with_backoff",
     # Subprocess
     "run_training_in_subprocess",
     "execute_training_job_in_subprocess",

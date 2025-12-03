@@ -54,8 +54,9 @@ class TestLoadImage:
     def test_load_pil_image(self):
         """Test loading a PIL Image directly."""
         img = Image.new("RGBA", (20, 20), color="green")
-        result = load_image(img)
+        result, success = load_image(img)
 
+        assert success is True
         assert isinstance(result, Image.Image)
         assert result.mode == "RGB"  # Should be converted to RGB
         assert result.size == (20, 20)
@@ -63,24 +64,26 @@ class TestLoadImage:
     def test_load_rgb_pil_image(self):
         """Test loading an RGB PIL Image (no conversion needed)."""
         img = Image.new("RGB", (20, 20), color="yellow")
-        result = load_image(img)
+        result, success = load_image(img)
 
+        assert success is True
         assert result is img  # Should return same image
         assert result.mode == "RGB"
 
     def test_load_base64_string(self):
         """Test loading from base64 string."""
-        # Create a small test image
-        img = Image.new("RGB", (15, 15), color="purple")
+        # Create a larger test image (load_image only tries base64 for strings > 200 chars)
+        img = Image.new("RGB", (100, 100), color="purple")
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
         base64_str = base64.b64encode(buffer.getvalue()).decode()
 
-        result = load_image(base64_str)
+        result, success = load_image(base64_str)
 
+        assert success is True
         assert isinstance(result, Image.Image)
         assert result.mode == "RGB"
-        assert result.size == (15, 15)
+        assert result.size == (100, 100)
 
     def test_load_data_uri_string(self):
         """Test loading from data URI string."""
@@ -90,8 +93,9 @@ class TestLoadImage:
         base64_str = base64.b64encode(buffer.getvalue()).decode()
         data_uri = f"data:image/jpeg;base64,{base64_str}"
 
-        result = load_image(data_uri)
+        result, success = load_image(data_uri)
 
+        assert success is True
         assert isinstance(result, Image.Image)
         assert result.mode == "RGB"
         assert result.size == (12, 12)
@@ -103,8 +107,9 @@ class TestLoadImage:
         img_path = tmp_path / "test_image.png"
         img.save(img_path)
 
-        result = load_image(str(img_path))
+        result, success = load_image(str(img_path))
 
+        assert success is True
         assert isinstance(result, Image.Image)
         assert result.mode == "RGB"
         assert result.size == (25, 25)
@@ -116,33 +121,38 @@ class TestLoadImage:
         img_path = tmp_path / "test_rgba.png"
         img.save(img_path)
 
-        result = load_image(str(img_path))
+        result, success = load_image(str(img_path))
 
+        assert success is True
         assert result.mode == "RGB"
 
     def test_fallback_for_unknown_type(self):
         """Test that unknown types get a fallback blank image."""
-        result = load_image(12345)  # Invalid type
+        result, success = load_image(12345)  # Invalid type
 
+        assert success is False
         assert isinstance(result, Image.Image)
         assert result.size == (224, 224)  # Default fallback size
 
     def test_custom_fallback_size(self):
         """Test custom fallback size."""
-        result = load_image(None, fallback_size=(100, 100))
+        result, success = load_image(None, fallback_size=(100, 100))
 
+        assert success is False
         assert result.size == (100, 100)
 
     def test_skip_rgb_conversion(self):
         """Test skipping RGB conversion."""
         img = Image.new("L", (20, 20), color=128)  # Grayscale
-        result = load_image(img, convert_to_rgb=False)
+        result, success = load_image(img, convert_to_rgb=False)
 
+        assert success is True
         assert result.mode == "L"  # Should stay grayscale
 
     def test_nonexistent_file_returns_fallback(self):
         """Test that a nonexistent file path returns fallback."""
-        result = load_image("/nonexistent/path/to/image.jpg")
+        result, success = load_image("/nonexistent/path/to/image.jpg")
 
+        assert success is False
         assert isinstance(result, Image.Image)
         assert result.size == (224, 224)

@@ -178,25 +178,65 @@ class TransformersTrainerMixin:
         return cast(Dataset, dataset)
 
     def _setup_carbon_tracking(
-        self, output_dir: str, job_id: str | None, job_type: str = "training"
+        self, output_dir: str, job_id: str | None, job_type: str = "training", max_retries: int = 3
     ) -> CarbonTracker | None:
-        """Set up carbon tracking for training."""
+        """Set up carbon tracking for training with retry logic.
+
+        Carbon tracking may fail due to network issues (fetching carbon intensity
+        data) or hardware detection problems. This method retries with exponential
+        backoff to handle transient failures gracefully.
+
+        Args:
+            output_dir: Directory for saving logs
+            job_id: Optional job identifier (auto-generated if None)
+            job_type: Type of job ("training", "vision-training", etc.)
+            max_retries: Maximum number of retry attempts (default: 3)
+
+        Returns:
+            CarbonTracker instance or None if tracking failed to start
+        """
+        from model_garden.training.constants import (
+            RETRY_BASE_DELAY_SECONDS,
+            RETRY_EXPONENTIAL_BACKOFF,
+            RETRY_MAX_DELAY_SECONDS,
+        )
+
         if job_id is None:
             job_id = f"{job_type}-{int(time.time())}"
 
-        try:
-            carbon_tracker = CarbonTracker(
-                job_id=job_id,
-                job_type=job_type,
-                output_dir=Path(output_dir) / ".." / "logs" / job_id,
-                model_name=Path(output_dir).name,  # Use output dir name as model name
-                base_model=self.base_model,
-            )
-            carbon_tracker.start()
-            return carbon_tracker
-        except Exception as e:
-            console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
-            return None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries):
+            try:
+                carbon_tracker = CarbonTracker(
+                    job_id=job_id,
+                    job_type=job_type,
+                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
+                    model_name=Path(output_dir).name,  # Use output dir name as model name
+                    base_model=self.base_model,
+                )
+                carbon_tracker.start()
+                return carbon_tracker
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    # Calculate delay with exponential backoff
+                    delay = min(
+                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
+                        RETRY_MAX_DELAY_SECONDS,
+                    )
+                    console.print(
+                        f"[yellow]⚠️  Carbon tracking attempt {attempt + 1}/{max_retries} failed: {e}[/yellow]"
+                    )
+                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
+
+        # All retries failed
+        console.print(
+            f"[yellow]⚠️  Failed to start carbon tracking after {max_retries} attempts: {last_error}[/yellow]"
+        )
+        return None
 
     def _stop_carbon_tracking(self, carbon_tracker: CarbonTracker | None) -> None:
         """Stop carbon tracking and report emissions."""

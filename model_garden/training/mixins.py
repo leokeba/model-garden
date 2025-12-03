@@ -10,12 +10,15 @@ The mixin provides:
 - LoRA configuration
 - Memory cleanup utilities
 - Precision detection and configuration
+- Retry utilities for network operations
 """
 
 import gc
 import time
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 import psutil
 import torch
@@ -25,6 +28,72 @@ from transformers.trainer_callback import TrainerCallback
 
 from model_garden.utils.console import console
 from model_garden.utils.hf_cache import get_hf_token
+
+# Type variable for generic retry function
+T = TypeVar("T")
+
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 10.0,
+    backoff_multiplier: float = 2.0,
+    exceptions: tuple[type[Exception], ...] = (Exception,),
+    operation_name: str = "operation",
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """Decorator for retrying operations with exponential backoff.
+
+    Useful for network operations that may fail transiently (e.g., model downloads,
+    API calls to HuggingFace Hub).
+
+    Args:
+        max_retries: Maximum number of retry attempts (default: 3)
+        base_delay: Initial delay between retries in seconds (default: 1.0)
+        max_delay: Maximum delay between retries in seconds (default: 10.0)
+        backoff_multiplier: Multiplier for exponential backoff (default: 2.0)
+        exceptions: Tuple of exception types to catch and retry on
+        operation_name: Human-readable name for the operation (for logging)
+
+    Returns:
+        Decorator function that wraps the target function with retry logic
+
+    Example:
+        >>> @retry_with_backoff(max_retries=3, operation_name="model loading")
+        ... def load_model():
+        ...     return download_and_load()
+    """
+
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            last_exception: Exception | None = None
+
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        delay = min(base_delay * (backoff_multiplier**attempt), max_delay)
+                        console.print(
+                            f"[yellow]⚠️  {operation_name} attempt {attempt + 1}/{max_retries} "
+                            f"failed: {e}[/yellow]"
+                        )
+                        console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                        time.sleep(delay)
+                    else:
+                        console.print(
+                            f"[red]❌ {operation_name} failed after {max_retries} attempts: "
+                            f"{last_exception}[/red]"
+                        )
+                        raise
+
+            # This should never be reached, but satisfies type checker
+            raise RuntimeError(f"{operation_name} failed unexpectedly")
+
+        return wrapper
+
+    return decorator
 
 
 class MemoryMonitorCallback(TrainerCallback):
@@ -368,37 +437,68 @@ class TrainerMixin:
         output_dir: str,
         job_id: str | None = None,
         job_type: str = "training",
+        max_retries: int = 3,
     ) -> Any | None:
-        """Start carbon tracking for training.
+        """Start carbon tracking for training with retry logic.
+
+        Carbon tracking may fail due to network issues (fetching carbon intensity
+        data) or hardware detection problems. This method retries with exponential
+        backoff to handle transient failures gracefully.
 
         Args:
             output_dir: Directory for saving logs
             job_id: Optional job identifier (auto-generated if None)
             job_type: Type of job ("training", "vision-training", etc.)
+            max_retries: Maximum number of retry attempts (default: 3)
 
         Returns:
             CarbonTracker instance or None if tracking failed to start
         """
         from model_garden.carbon import CarbonTracker
+        from model_garden.training.constants import (
+            RETRY_BASE_DELAY_SECONDS,
+            RETRY_EXPONENTIAL_BACKOFF,
+            RETRY_MAX_DELAY_SECONDS,
+        )
 
         if job_id is None:
             job_id = f"{job_type}-{int(time.time())}"
 
-        try:
-            carbon_tracker = CarbonTracker(
-                job_id=job_id,
-                job_type=job_type,
-                output_dir=Path(output_dir) / ".." / "logs" / job_id,
-                model_name=Path(output_dir).name,
-                base_model=self.base_model,
-            )
-            carbon_tracker.start()
-            self._carbon_tracker = carbon_tracker
-            return carbon_tracker
-        except Exception as e:
-            console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
-            console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
-            return None
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries):
+            try:
+                carbon_tracker = CarbonTracker(
+                    job_id=job_id,
+                    job_type=job_type,
+                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
+                    model_name=Path(output_dir).name,
+                    base_model=self.base_model,
+                )
+                carbon_tracker.start()
+                self._carbon_tracker = carbon_tracker
+                return carbon_tracker
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    # Calculate delay with exponential backoff
+                    delay = min(
+                        RETRY_BASE_DELAY_SECONDS * (RETRY_EXPONENTIAL_BACKOFF**attempt),
+                        RETRY_MAX_DELAY_SECONDS,
+                    )
+                    console.print(
+                        f"[yellow]⚠️  Carbon tracking attempt {attempt + 1}/{max_retries} failed: {e}[/yellow]"
+                    )
+                    console.print(f"[yellow]   Retrying in {delay:.1f}s...[/yellow]")
+                    time.sleep(delay)
+
+        # All retries failed
+        console.print(
+            f"[yellow]⚠️  Failed to start carbon tracking after {max_retries} attempts: {last_error}[/yellow]"
+        )
+        console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
+        return None
 
     def _stop_carbon_tracking(self) -> dict | None:
         """Stop carbon tracking and return emissions data.

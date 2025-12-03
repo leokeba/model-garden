@@ -4,15 +4,34 @@ This module provides a registry system for dynamically discovering and
 instantiating training backends.
 """
 
-from typing import Dict, List, Optional, Type
+from __future__ import annotations
 
-from model_garden.backends.base import TrainingBackend
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from model_garden.backends.base import TrainingBackend
+
+# Type definitions for better IDE support
+type BackendClass = type["TrainingBackend"]
+
+
+class BackendInfo(TypedDict):
+    """Type definition for backend information returned by list_backends()."""
+
+    name: str
+    description: str
+    supports_text: bool
+    supports_vision: bool
+
 
 # Global registry of available backends
-_BACKENDS: Dict[str, Type[TrainingBackend]] = {}
+_BACKENDS: dict[str, BackendClass] = {}
+
+# Default backend name
+DEFAULT_BACKEND: str = "unsloth"
 
 
-def register_backend(name: str, backend_class: Type[TrainingBackend]) -> None:
+def register_backend(name: str, backend_class: BackendClass) -> None:
     """Register a training backend.
 
     Args:
@@ -21,7 +40,13 @@ def register_backend(name: str, backend_class: Type[TrainingBackend]) -> None:
 
     Raises:
         ValueError: If backend_class doesn't inherit from TrainingBackend
+        TypeError: If backend_class is not a class
     """
+    from model_garden.backends.base import TrainingBackend
+
+    if not isinstance(backend_class, type):
+        raise TypeError(f"Expected a class, got {type(backend_class).__name__}")
+
     if not issubclass(backend_class, TrainingBackend):
         raise ValueError(
             f"Backend class {backend_class.__name__} must inherit from TrainingBackend"
@@ -30,7 +55,7 @@ def register_backend(name: str, backend_class: Type[TrainingBackend]) -> None:
     _BACKENDS[name.lower()] = backend_class
 
 
-def get_backend(name: str = "unsloth") -> TrainingBackend:
+def get_backend(name: str = DEFAULT_BACKEND) -> TrainingBackend:
     """Get a training backend instance by name.
 
     Args:
@@ -45,32 +70,33 @@ def get_backend(name: str = "unsloth") -> TrainingBackend:
     name_lower = name.lower()
 
     if name_lower not in _BACKENDS:
-        available = ", ".join(_BACKENDS.keys())
-        raise ValueError(
-            f"Backend '{name}' not found. Available backends: {available}"
-        )
+        available = ", ".join(sorted(_BACKENDS.keys()))
+        raise ValueError(f"Backend '{name}' not found. Available backends: {available}")
 
     backend_class = _BACKENDS[name_lower]
     return backend_class()
 
 
-def list_backends() -> List[Dict[str, str]]:
+def list_backends() -> list[BackendInfo]:
     """List all registered backends with their information.
 
     Returns:
-        List of dicts containing backend name, description, and capabilities
+        List of BackendInfo dicts containing backend name, description, and capabilities
     """
-    backends = []
+    backends: list[BackendInfo] = []
 
-    for name, backend_class in _BACKENDS.items():
+    for name in sorted(_BACKENDS.keys()):
+        backend_class = _BACKENDS[name]
         # Instantiate to get properties (backends should be lightweight)
         backend = backend_class()
-        backends.append({
-            "name": name,
-            "description": backend.description,
-            "supports_text": backend.supports_text_training(),
-            "supports_vision": backend.supports_vision_training(),
-        })
+        backends.append(
+            BackendInfo(
+                name=name,
+                description=backend.description,
+                supports_text=backend.supports_text_training(),
+                supports_vision=backend.supports_vision_training(),
+            )
+        )
 
     return backends
 
@@ -85,3 +111,12 @@ def is_backend_available(name: str) -> bool:
         True if the backend is registered, False otherwise
     """
     return name.lower() in _BACKENDS
+
+
+def get_registered_backend_names() -> list[str]:
+    """Get list of all registered backend names.
+
+    Returns:
+        Sorted list of backend names
+    """
+    return sorted(_BACKENDS.keys())
