@@ -4,15 +4,20 @@ This module defines the abstract interfaces that all training backends must impl
 """
 
 from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from datasets import Dataset
+
+if TYPE_CHECKING:
+    from model_garden.training.config import (
+        TrainingConfig,
+        VisionTrainingConfig,
+    )
 
 
 class TextTrainer(ABC):
     """Abstract base class for text-only model training.
-    
+
     This class defines the interface that all text training backends must implement.
     It handles model loading, dataset preparation, training, and saving for text-only models.
     """
@@ -23,7 +28,7 @@ class TextTrainer(ABC):
         max_seq_length: int = 2048,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[str] = None,
+        dtype: str | None = None,
     ):
         """Initialize the text trainer.
 
@@ -39,8 +44,8 @@ class TextTrainer(ABC):
         self.load_in_4bit = load_in_4bit
         self.load_in_8bit = load_in_8bit
         self.dtype = dtype
-        self.model = None
-        self.tokenizer = None
+        self.model: Any = None
+        self.tokenizer: Any = None
 
     @abstractmethod
     def load_model(self) -> None:
@@ -53,13 +58,13 @@ class TextTrainer(ABC):
         r: int = 16,
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
-        target_modules: Optional[List[str]] = None,
+        target_modules: list[str] | None = None,
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
-        use_gradient_checkpointing: Union[str, bool] = "unsloth",
+        use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
-        loftq_config: Optional[Dict] = None,
+        loftq_config: dict | None = None,
     ) -> None:
         """Prepare model for LoRA fine-tuning."""
         pass
@@ -70,9 +75,7 @@ class TextTrainer(ABC):
         pass
 
     @abstractmethod
-    def load_dataset_from_hub(
-        self, dataset_name: str, split: str = "train"
-    ) -> Dataset:
+    def load_dataset_from_hub(self, dataset_name: str, split: str = "train") -> Dataset:
         """Load dataset from HuggingFace Hub."""
         pass
 
@@ -83,7 +86,7 @@ class TextTrainer(ABC):
         instruction_field: str = "instruction",
         input_field: str = "input",
         output_field: str = "output",
-        prompt_template: Optional[str] = None,
+        prompt_template: str | None = None,
     ) -> Dataset:
         """Format dataset for instruction fine-tuning."""
         pass
@@ -92,35 +95,22 @@ class TextTrainer(ABC):
     def train(
         self,
         dataset: Dataset,
-        output_dir: str,
-        job_id: Optional[str] = None,
+        config: "TrainingConfig",
+        job_id: str | None = None,
         enable_carbon_tracking: bool = True,
-        num_train_epochs: int = 3,
-        per_device_train_batch_size: int = 2,
-        gradient_accumulation_steps: int = 4,
-        learning_rate: float = 2e-4,
-        warmup_steps: int = 10,
-        max_steps: int = -1,
-        logging_steps: int = 10,
-        save_steps: int = 100,
-        optim: str = "adamw_8bit",
-        weight_decay: float = 0.01,
-        lr_scheduler_type: str = "linear",
-        max_grad_norm: float = 1.0,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.999,
-        adam_epsilon: float = 1e-8,
-        dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = True,
-        eval_strategy: str = "steps",
-        load_best_model_at_end: bool = True,
-        metric_for_best_model: str = "eval_loss",
-        save_total_limit: int = 3,
-        callbacks: Optional[List] = None,
-        eval_dataset: Optional[Dataset] = None,
-        eval_steps: Optional[int] = None,
+        callbacks: list | None = None,
+        eval_dataset: Dataset | None = None,
     ) -> None:
-        """Train the model."""
+        """Train the model.
+
+        Args:
+            dataset: Training dataset (should have 'text' field)
+            config: Training configuration with all hyperparameters
+            job_id: Optional job identifier for carbon tracking
+            enable_carbon_tracking: Whether to track carbon emissions
+            callbacks: Optional list of TrainerCallback instances
+            eval_dataset: Optional validation dataset for evaluation
+        """
         pass
 
     @abstractmethod
@@ -137,7 +127,7 @@ class TextTrainer(ABC):
 
 class VisionTrainer(ABC):
     """Abstract base class for vision-language model training.
-    
+
     This class defines the interface that all vision training backends must implement.
     It handles model loading, dataset preparation, training, and saving for vision-language models.
     """
@@ -148,7 +138,7 @@ class VisionTrainer(ABC):
         max_seq_length: int = 16384,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[Any] = None,
+        dtype: Any | None = None,
     ):
         """Initialize the vision trainer.
 
@@ -164,9 +154,9 @@ class VisionTrainer(ABC):
         self.load_in_4bit = load_in_4bit
         self.load_in_8bit = load_in_8bit
         self.dtype = dtype
-        self.model = None
-        self.tokenizer = None
-        self.processor = None
+        self.model: Any = None
+        self.tokenizer: Any = None
+        self.processor: Any = None
 
     @abstractmethod
     def load_model(self) -> None:
@@ -179,13 +169,13 @@ class VisionTrainer(ABC):
         r: int = 16,
         lora_alpha: int = 16,
         lora_dropout: float = 0.0,
-        target_modules: Optional[List[str]] = None,
+        target_modules: list[str] | None = None,
         use_rslora: bool = False,
         lora_bias: str = "none",
         task_type: str = "CAUSAL_LM",
-        use_gradient_checkpointing: Union[str, bool] = "unsloth",
+        use_gradient_checkpointing: str | bool = "unsloth",
         random_state: int = 42,
-        loftq_config: Optional[Dict] = None,
+        loftq_config: dict | None = None,
         finetune_vision_layers: bool = True,
         finetune_language_layers: bool = True,
         finetune_attention_modules: bool = True,
@@ -200,30 +190,21 @@ class VisionTrainer(ABC):
         pass
 
     @abstractmethod
-    def load_dataset_from_hub(
-        self, dataset_name: str, split: str = "train", **kwargs
-    ) -> Dataset:
+    def load_dataset_from_hub(self, dataset_name: str, split: str = "train", **kwargs) -> Dataset:
         """Load multimodal dataset from HuggingFace Hub."""
         pass
 
     def load_dataset(
-        self,
-        dataset_path: str,
-        from_hub: bool = False,
-        split: str = "train",
-        **kwargs
+        self, dataset_path: str, from_hub: bool = False, split: str = "train", **kwargs
     ) -> Dataset:
         """Load multimodal dataset from file or HuggingFace Hub.
-        
-        This is a convenience method that delegates to either load_dataset_from_file
-        or load_dataset_from_hub based on the from_hub parameter.
-        
+
         Args:
             dataset_path: Path to local file or HuggingFace dataset identifier
             from_hub: If True, load from HuggingFace Hub; if False, load from local file
             split: Dataset split to load (for Hub datasets)
             **kwargs: Additional arguments passed to load_dataset
-        
+
         Returns:
             Loaded dataset
         """
@@ -238,54 +219,32 @@ class VisionTrainer(ABC):
         dataset: Dataset,
         text_field: str = "text",
         image_field: str = "image",
-        system_message: Optional[str] = None,
-        messages_field: Optional[str] = None,
-    ) -> List[Dict]:
+        system_message: str | None = None,
+        messages_field: str | None = None,
+    ) -> list[dict]:
         """Format dataset for vision-language training."""
         pass
 
     @abstractmethod
     def train(
         self,
-        dataset: Union[Dataset, List[Dict]],
-        output_dir: str,
-        job_id: Optional[str] = None,
+        dataset: Dataset | list[dict],
+        config: "VisionTrainingConfig",
+        job_id: str | None = None,
         enable_carbon_tracking: bool = True,
-        num_train_epochs: int = 3,
-        per_device_train_batch_size: int = 1,
-        gradient_accumulation_steps: int = 8,
-        learning_rate: float = 2e-5,
-        warmup_steps: int = 10,
-        max_steps: int = -1,
-        logging_steps: int = 10,
-        save_steps: int = 100,
-        optim: str = "adamw_8bit",
-        weight_decay: float = 0.01,
-        lr_scheduler_type: str = "cosine",
-        max_grad_norm: float = 1.0,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.999,
-        adam_epsilon: float = 1e-8,
-        dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = False,
-        eval_strategy: str = "steps",
-        load_best_model_at_end: bool = True,
-        metric_for_best_model: str = "eval_loss",
-        save_total_limit: int = 3,
-        callbacks: Optional[List] = None,
-        eval_dataset: Optional[Union[Dataset, List[Dict]]] = None,
-        eval_steps: Optional[int] = None,
-        selective_loss: bool = False,
-        selective_loss_level: str = "conservative",
-        selective_loss_schema_keys: Optional[List[str]] = None,
-        selective_loss_masking_strategy: str = "epoch_based",
-        selective_loss_masking_start_epoch: float = 0.0,
-        selective_loss_mask_every_n_steps: int = 100,
-        selective_loss_mask_for_n_steps: int = 50,
-        selective_loss_structural_weight: float = 0.1,
-        selective_loss_verbose: bool = False,
+        callbacks: list | None = None,
+        eval_dataset: Dataset | list[dict] | None = None,
     ) -> None:
-        """Train the vision-language model."""
+        """Train the vision-language model.
+
+        Args:
+            dataset: Training dataset (Dataset object or list of formatted messages)
+            config: Vision training configuration with all hyperparameters
+            job_id: Optional job identifier for carbon tracking
+            enable_carbon_tracking: Whether to track carbon emissions
+            callbacks: Optional list of TrainerCallback instances
+            eval_dataset: Optional validation dataset for evaluation
+        """
         pass
 
     @abstractmethod
@@ -302,7 +261,7 @@ class VisionTrainer(ABC):
 
 class TrainingBackend(ABC):
     """Abstract base class for training backends.
-    
+
     A training backend provides both text and vision training capabilities.
     Backends can be registered and dynamically selected at runtime.
     """
@@ -336,7 +295,7 @@ class TrainingBackend(ABC):
         max_seq_length: int = 2048,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[str] = None,
+        dtype: str | None = None,
     ) -> TextTrainer:
         """Create a text trainer instance for this backend."""
         pass
@@ -348,7 +307,7 @@ class TrainingBackend(ABC):
         max_seq_length: int = 16384,
         load_in_4bit: bool = True,
         load_in_8bit: bool = False,
-        dtype: Optional[Any] = None,
+        dtype: Any | None = None,
     ) -> VisionTrainer:
         """Create a vision trainer instance for this backend."""
         pass

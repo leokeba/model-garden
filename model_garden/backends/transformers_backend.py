@@ -25,6 +25,7 @@ from transformers import (
 
 from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
 from model_garden.backends.transformers_base import TransformersTrainerMixin
+from model_garden.training.config import TrainingConfig, VisionTrainingConfig
 from model_garden.utils.console import console
 
 
@@ -241,42 +242,11 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
     def train(
         self,
         dataset: Dataset | list[dict],
-        output_dir: str,
+        config: VisionTrainingConfig,
         job_id: str | None = None,
         enable_carbon_tracking: bool = True,
-        num_train_epochs: int = 3,
-        per_device_train_batch_size: int = 1,
-        gradient_accumulation_steps: int = 8,
-        learning_rate: float = 2e-5,
-        warmup_steps: int = 10,
-        max_steps: int = -1,
-        logging_steps: int = 10,
-        save_steps: int = 100,
-        optim: str = "adamw_8bit",
-        weight_decay: float = 0.01,
-        lr_scheduler_type: str = "cosine",
-        max_grad_norm: float = 1.0,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.999,
-        adam_epsilon: float = 1e-8,
-        dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = False,
-        eval_strategy: str = "steps",
-        load_best_model_at_end: bool = True,
-        metric_for_best_model: str = "eval_loss",
-        save_total_limit: int = 3,
         callbacks: list | None = None,
         eval_dataset: Dataset | list[dict] | None = None,
-        eval_steps: int | None = None,
-        selective_loss: bool = False,
-        selective_loss_level: str = "conservative",
-        selective_loss_schema_keys: list[str] | None = None,
-        selective_loss_masking_strategy: str = "epoch_based",
-        selective_loss_masking_start_epoch: float = 0.0,
-        selective_loss_mask_every_n_steps: int = 100,
-        selective_loss_mask_for_n_steps: int = 50,
-        selective_loss_structural_weight: float = 0.1,
-        selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
 
@@ -285,7 +255,7 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         """
         console.print("[cyan]Starting vision training with Transformers backend...[/cyan]")
 
-        if selective_loss:
+        if config.selective_loss:
             console.print(
                 "[yellow]⚠️  Selective loss not supported in Transformers backend[/yellow]"
             )
@@ -293,34 +263,36 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         # Set up carbon tracking
         carbon_tracker = None
         if enable_carbon_tracking:
-            carbon_tracker = self._setup_carbon_tracking(output_dir, job_id, "vision-training")
+            carbon_tracker = self._setup_carbon_tracking(
+                config.output_dir, job_id, "vision-training"
+            )
 
         # Create training arguments
         training_args = self._create_training_args(
-            output_dir=output_dir,
-            num_train_epochs=num_train_epochs,
-            per_device_train_batch_size=per_device_train_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=learning_rate,
-            warmup_steps=warmup_steps,
-            max_steps=max_steps,
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            optim=optim,
-            weight_decay=weight_decay,
-            lr_scheduler_type=lr_scheduler_type,
-            max_grad_norm=max_grad_norm,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            adam_epsilon=adam_epsilon,
-            dataloader_num_workers=dataloader_num_workers,
-            dataloader_pin_memory=dataloader_pin_memory,
-            save_total_limit=save_total_limit,
+            output_dir=config.output_dir,
+            num_train_epochs=config.num_epochs,
+            per_device_train_batch_size=config.batch_size,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            learning_rate=config.learning_rate,
+            warmup_steps=config.warmup_steps,
+            max_steps=config.max_steps,
+            logging_steps=config.logging_steps,
+            save_steps=config.save_steps,
+            optim=config.optim,
+            weight_decay=config.weight_decay,
+            lr_scheduler_type=config.lr_scheduler_type,
+            max_grad_norm=config.max_grad_norm,
+            adam_beta1=config.adam_beta1,
+            adam_beta2=config.adam_beta2,
+            adam_epsilon=config.adam_epsilon,
+            dataloader_num_workers=config.dataloader_num_workers,
+            dataloader_pin_memory=config.dataloader_pin_memory,
+            save_total_limit=config.save_total_limit,
             eval_dataset=eval_dataset,
-            eval_strategy=eval_strategy,
-            eval_steps=eval_steps,
-            load_best_model_at_end=load_best_model_at_end,
-            metric_for_best_model=metric_for_best_model,
+            eval_strategy=config.eval_strategy,
+            eval_steps=config.eval_steps,
+            load_best_model_at_end=config.load_best_model_at_end,
+            metric_for_best_model=config.metric_for_best_model,
             remove_unused_columns=False,  # Important for vision models
         )
 
@@ -422,12 +394,12 @@ class TransformersVisionTrainer(TransformersTrainerMixin, VisionTrainer):
         self._stop_carbon_tracking(carbon_tracker)
 
         # Save the model after training
-        console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
+        console.print(f"[cyan]Saving model to: {config.output_dir}[/cyan]")
         if isinstance(self.model, PeftModel):
-            self.model.save_pretrained(output_dir)
+            self.model.save_pretrained(config.output_dir)
         else:
-            self.model.save_pretrained(output_dir)
-        self.processor.save_pretrained(output_dir)
+            self.model.save_pretrained(config.output_dir)
+        self.processor.save_pretrained(config.output_dir)
         console.print("[green]✓[/green] Model saved successfully")
 
     def save_model(
@@ -608,33 +580,11 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
     def train(
         self,
         dataset: Dataset,
-        output_dir: str,
+        config: TrainingConfig,
         job_id: str | None = None,
         enable_carbon_tracking: bool = True,
-        num_train_epochs: int = 3,
-        per_device_train_batch_size: int = 2,
-        gradient_accumulation_steps: int = 4,
-        learning_rate: float = 2e-4,
-        warmup_steps: int = 10,
-        max_steps: int = -1,
-        logging_steps: int = 10,
-        save_steps: int = 100,
-        optim: str = "adamw_8bit",
-        weight_decay: float = 0.01,
-        lr_scheduler_type: str = "linear",
-        max_grad_norm: float = 1.0,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.999,
-        adam_epsilon: float = 1e-8,
-        dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = True,
-        eval_strategy: str = "steps",
-        load_best_model_at_end: bool = True,
-        metric_for_best_model: str = "eval_loss",
-        save_total_limit: int = 3,
         callbacks: list | None = None,
         eval_dataset: Dataset | None = None,
-        eval_steps: int | None = None,
     ) -> None:
         """Train the model using Transformers Trainer."""
         console.print("[cyan]Starting training with Transformers backend...[/cyan]")
@@ -642,34 +592,34 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
         # Set up carbon tracking
         carbon_tracker = None
         if enable_carbon_tracking:
-            carbon_tracker = self._setup_carbon_tracking(output_dir, job_id, "training")
+            carbon_tracker = self._setup_carbon_tracking(config.output_dir, job_id, "training")
 
         # Create training arguments
         training_args = self._create_training_args(
-            output_dir=output_dir,
-            num_train_epochs=num_train_epochs,
-            per_device_train_batch_size=per_device_train_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=learning_rate,
-            warmup_steps=warmup_steps,
-            max_steps=max_steps,
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            optim=optim,
-            weight_decay=weight_decay,
-            lr_scheduler_type=lr_scheduler_type,
-            max_grad_norm=max_grad_norm,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            adam_epsilon=adam_epsilon,
-            dataloader_num_workers=dataloader_num_workers,
-            dataloader_pin_memory=dataloader_pin_memory,
-            save_total_limit=save_total_limit,
+            output_dir=config.output_dir,
+            num_train_epochs=config.num_epochs,
+            per_device_train_batch_size=config.batch_size,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            learning_rate=config.learning_rate,
+            warmup_steps=config.warmup_steps,
+            max_steps=config.max_steps,
+            logging_steps=config.logging_steps,
+            save_steps=config.save_steps,
+            optim=config.optim,
+            weight_decay=config.weight_decay,
+            lr_scheduler_type=config.lr_scheduler_type,
+            max_grad_norm=config.max_grad_norm,
+            adam_beta1=config.adam_beta1,
+            adam_beta2=config.adam_beta2,
+            adam_epsilon=config.adam_epsilon,
+            dataloader_num_workers=config.dataloader_num_workers,
+            dataloader_pin_memory=config.dataloader_pin_memory,
+            save_total_limit=config.save_total_limit,
             eval_dataset=eval_dataset,
-            eval_strategy=eval_strategy,
-            eval_steps=eval_steps,
-            load_best_model_at_end=load_best_model_at_end,
-            metric_for_best_model=metric_for_best_model,
+            eval_strategy=config.eval_strategy,
+            eval_steps=config.eval_steps,
+            load_best_model_at_end=config.load_best_model_at_end,
+            metric_for_best_model=config.metric_for_best_model,
         )
 
         all_callbacks = self._get_callbacks(callbacks)
@@ -716,10 +666,10 @@ class TransformersTextTrainer(TransformersTrainerMixin, TextTrainer):
         self._stop_carbon_tracking(carbon_tracker)
 
         # Save final model
-        console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
-        trainer.save_model(output_dir)
+        console.print(f"[cyan]Saving model to: {config.output_dir}[/cyan]")
+        trainer.save_model(config.output_dir)
         if self.tokenizer:
-            self.tokenizer.save_pretrained(output_dir)
+            self.tokenizer.save_pretrained(config.output_dir)
         console.print("[green]✓[/green] Model saved successfully")
 
     def save_model(

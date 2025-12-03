@@ -359,7 +359,7 @@ class ModelTrainer(TrainerMixin, TextTrainer):
         # Ensure tokenizer is available
         if self.tokenizer is None:
             raise RuntimeError("Tokenizer not available.")
-        self.tokenizer.save_pretrained(output_dir)
+        self.tokenizer.save_pretrained(config.output_dir)
         console.print("[green]✓[/green] Model saved successfully")
 
     def save_model(

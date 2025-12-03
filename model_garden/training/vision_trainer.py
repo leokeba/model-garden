@@ -7,6 +7,7 @@ import gc
 import json
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -141,7 +142,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         # Warning callback for logging issues (e.g., image loading failures)
         # Set this to send warnings to WebSocket/UI when running via API
-        self.warning_callback: callable | None = None
+        self.warning_callback: Callable[[str], None] | None = None
 
     def load_model(self) -> None:
         """Load the vision-language model.
