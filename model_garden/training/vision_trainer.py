@@ -34,13 +34,11 @@ from unsloth import FastVisionModel  # FastVisionModel for vision-language model
 # Import backend base class
 from model_garden.backends.base import VisionTrainer
 
-# Import carbon tracking
-from model_garden.carbon import CarbonTracker
-
-# Import selective_loss at module level since unsloth is already imported
-# Import shared training utilities
-from model_garden.training.utils import (
+# Import shared training mixin and utilities (consolidated location)
+from model_garden.training.mixins import (
     MemoryMonitorCallback,
+    TrainerMixin,
+    cleanup_memory,
     detect_model_dtype,
     get_training_precision_config,
 )
@@ -85,28 +83,23 @@ class FixedSFTTrainer(SFTTrainer):
 def _cleanup_memory_after_merge():
     """Clean up GPU and system memory after model merge.
 
-    Performs:
-    - Garbage collection (multiple passes)
-    - GPU cache clearing
-    - Memory synchronization
+    This is a thin wrapper around cleanup_memory() for backwards compatibility.
+    Consider using cleanup_memory() directly from model_garden.training.mixins.
     """
-    import gc
-
-    import torch
-
-    # Multiple passes of garbage collection to ensure all cycles are broken
-    for _ in range(3):
-        gc.collect()
-
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        # Reset peak memory stats to get accurate readings for next operation
-        torch.cuda.reset_peak_memory_stats()
+    cleanup_memory()
 
 
-class VisionLanguageTrainer(VisionTrainer):
-    """Handles vision-language model fine-tuning."""
+class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
+    """Handles vision-language model fine-tuning.
+
+    This trainer uses Unsloth's FastVisionModel for optimized vision-language
+    model training with selective loss masking support.
+
+    Inherits shared functionality from TrainerMixin:
+    - Carbon tracking (_start_carbon_tracking, _stop_carbon_tracking)
+    - Memory management (cleanup_memory)
+    - Precision detection (detect_model_dtype, get_training_precision_config)
+    """
 
     def __init__(
         self,
@@ -978,29 +971,9 @@ class VisionLanguageTrainer(VisionTrainer):
                 "[yellow]   If you experience issues, try setting dataloader_num_workers=0[/yellow]"
             )
 
-        # Initialize carbon tracker
-        carbon_tracker = None
-        emissions_data = None
+        # Start carbon tracking (uses mixin helper)
         if enable_carbon_tracking:
-            # Generate job_id if not provided
-            if job_id is None:
-                import time
-
-                job_id = f"vision-training-{int(time.time())}"
-
-            try:
-                carbon_tracker = CarbonTracker(
-                    job_id=job_id,
-                    job_type="training",
-                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
-                    model_name=Path(output_dir).name,  # Use output dir name as model name
-                    base_model=self.base_model,
-                )
-                carbon_tracker.start()
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
-                console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
-                carbon_tracker = None
+            self._start_carbon_tracking(output_dir, job_id, "vision-training")
 
         from trl.trainer.sft_config import SFTConfig
         from unsloth.trainer import UnslothVisionDataCollator
@@ -1233,16 +1206,8 @@ class VisionLanguageTrainer(VisionTrainer):
             if isinstance(data_collator, SelectiveLossVisionCollator):
                 data_collator.print_stats()
 
-        # Stop carbon tracking
-        if carbon_tracker is not None:
-            try:
-                emissions_data = carbon_tracker.stop()
-                if emissions_data:
-                    console.print(
-                        f"[green]🌍 Carbon emissions: {emissions_data['emissions_kg_co2']:.6f} kg CO2[/green]"
-                    )
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
+        # Stop carbon tracking (uses mixin helper)
+        self._stop_carbon_tracking()
 
         # CRITICAL: Explicitly clear dataset references from trainer to enable garbage collection
         # Vision models keep PIL images in RAM which can accumulate across multiple training runs

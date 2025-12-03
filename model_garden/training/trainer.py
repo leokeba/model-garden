@@ -7,43 +7,48 @@ Note: You may see non-critical warnings:
 
 import json
 from pathlib import Path
+from typing import Any
 
 # Configure HuggingFace cache BEFORE importing HF libraries
-from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_memory, get_hf_token
+from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_memory
 
 configure_hf_cache()
 configure_pytorch_memory()
 
 # CRITICAL: Import unsloth BEFORE any other ML libraries (datasets, transformers, trl, peft)
 # This ensures Unsloth's PyTorch patches are applied correctly for optimal performance
-from typing import cast
 
 # Then import other ML libraries AFTER unsloth
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from transformers import TrainingArguments
 from trl.trainer.sft_trainer import SFTTrainer
 from unsloth import FastLanguageModel
 
 # Import backend base class
 from model_garden.backends.base import TextTrainer
 
-# Import carbon tracking
-from model_garden.carbon import CarbonTracker
-
-# Import shared training utilities for dtype detection
-from model_garden.training.utils import (
-    MemoryMonitorCallback,
-    detect_model_dtype,
-    get_training_precision_config,
-)
+# Import shared training mixin and utilities
+from model_garden.training.mixins import TrainerMixin
 
 # Import centralized console
 from model_garden.utils.console import console
 
 
-class ModelTrainer(TextTrainer):
-    """Handles model fine-tuning using Unsloth."""
+class ModelTrainer(TrainerMixin, TextTrainer):
+    """Handles model fine-tuning using Unsloth.
+
+    This trainer uses Unsloth's optimized kernels for 2x faster training
+    and 60% less memory usage compared to standard HuggingFace training.
+
+    Inherits shared functionality from TrainerMixin:
+    - Dataset loading (load_dataset_from_file, load_dataset_from_hub)
+    - Carbon tracking (_start_carbon_tracking, _stop_carbon_tracking)
+    - Training arguments creation (_create_training_args)
+    - Memory management (cleanup_memory, _cleanup_after_training)
+    """
+
+    # Processor is not used for text-only models, but defined for mixin compatibility
+    processor: Any | None = None
 
     def __init__(
         self,
@@ -79,17 +84,10 @@ class ModelTrainer(TextTrainer):
         """Load the base model with Unsloth optimizations.
 
         Supports 4-bit, 8-bit, and 16-bit (full precision) loading.
+        Uses Unsloth's FastLanguageModel for optimized inference and training.
         """
-        # Determine precision for logging
-        if self.load_in_8bit:
-            precision = "8-bit (balanced quality/memory)"
-        elif self.load_in_4bit:
-            precision = "4-bit (memory efficient)"
-        else:
-            precision = "16-bit (full quality)"
-
         console.print(f"[cyan]Loading base model: {self.base_model}[/cyan]")
-        console.print(f"[cyan]Precision: {precision}[/cyan]")
+        console.print(f"[cyan]Precision: {self._get_precision_description()}[/cyan]")
 
         with Progress(
             SpinnerColumn(),
@@ -99,7 +97,7 @@ class ModelTrainer(TextTrainer):
             progress.add_task(description="Loading model...", total=None)
 
             # Get HuggingFace token from environment for private models
-            hf_token = get_hf_token()
+            hf_token = self._get_hf_token()
 
             # Unsloth supports both 4-bit and 8-bit quantization
             # Note: For 16-bit, set both load_in_4bit and load_in_8bit to False
@@ -108,7 +106,7 @@ class ModelTrainer(TextTrainer):
                 max_seq_length=self.max_seq_length,
                 dtype=self.dtype,
                 load_in_4bit=self.load_in_4bit,
-                load_in_8bit=self.load_in_8bit,  # Add 8-bit support
+                load_in_8bit=self.load_in_8bit,
                 token=hf_token,
             )
 
@@ -172,76 +170,7 @@ class ModelTrainer(TextTrainer):
 
         console.print("[green]✓[/green] LoRA adapters configured")
 
-    def load_dataset_from_file(self, dataset_path: str) -> Dataset:
-        """Load dataset from a local file.
-
-        Args:
-            dataset_path: Path to dataset file (JSONL, JSON, CSV, etc.)
-
-        Returns:
-            Loaded dataset
-        """
-        console.print(f"[cyan]Loading dataset from: {dataset_path}[/cyan]")
-
-        path = Path(dataset_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
-
-        # Determine file format
-        suffix = path.suffix.lower()
-        if suffix == ".jsonl":
-            dataset = load_dataset("json", data_files=str(path), split="train")
-        elif suffix == ".json":
-            dataset = load_dataset("json", data_files=str(path), split="train")
-        elif suffix == ".csv":
-            dataset = load_dataset("csv", data_files=str(path), split="train")
-        elif suffix == ".parquet":
-            dataset = load_dataset("parquet", data_files=str(path), split="train")
-        else:
-            raise ValueError(f"Unsupported file format: {suffix}")
-
-        # Handle dataset types - cast to Dataset for type safety
-        try:
-            dataset_len = len(dataset)  # type: ignore
-            console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
-        except (TypeError, AttributeError):
-            console.print("[green]✓[/green] Loaded dataset (streaming)")
-        return cast(Dataset, dataset)
-
-    def load_dataset_from_hub(self, dataset_name: str, split: str = "train") -> Dataset:
-        """Load dataset from HuggingFace Hub.
-
-        Args:
-            dataset_name: Dataset identifier on HuggingFace Hub
-                         Can include specific file with '::' separator (e.g., 'user/repo::train.jsonl')
-            split: Dataset split to load (ignored if specific file is provided)
-
-        Returns:
-            Loaded dataset
-        """
-        # Get HuggingFace token from environment for private datasets
-        hf_token = get_hf_token()
-
-        # Check if dataset_name includes a specific file
-        if "::" in dataset_name:
-            repo_name, file_name = dataset_name.split("::", 1)
-            console.print(f"[cyan]Loading dataset from Hub: {repo_name} (file: {file_name})[/cyan]")
-
-            # Load specific file from the repo
-            dataset = load_dataset(repo_name, data_files=file_name, split="train", token=hf_token)
-        else:
-            console.print(f"[cyan]Loading dataset from Hub: {dataset_name} (split: {split})[/cyan]")
-
-            # Load standard split
-            dataset = load_dataset(dataset_name, split=split, token=hf_token)
-
-        # Handle dataset types - cast to Dataset for type safety
-        try:
-            dataset_len = len(dataset)  # type: ignore
-            console.print(f"[green]✓[/green] Loaded {dataset_len} examples")
-        except (TypeError, AttributeError):
-            console.print("[green]✓[/green] Loaded dataset (streaming)")
-        return cast(Dataset, dataset)
+    # NOTE: load_dataset_from_file and load_dataset_from_hub are inherited from TrainerMixin
 
     def format_dataset(
         self,
@@ -330,6 +259,8 @@ class ModelTrainer(TextTrainer):
         Args:
             dataset: Training dataset (should have 'text' field)
             output_dir: Directory to save checkpoints
+            job_id: Optional job identifier for carbon tracking
+            enable_carbon_tracking: Whether to track carbon emissions
             num_train_epochs: Number of training epochs
             per_device_train_batch_size: Batch size per device
             gradient_accumulation_steps: Gradient accumulation steps
@@ -357,63 +288,28 @@ class ModelTrainer(TextTrainer):
         """
         console.print("[cyan]Starting training...[/cyan]")
 
-        # Initialize carbon tracker
-        carbon_tracker = None
-        emissions_data = None
-        if enable_carbon_tracking:
-            # Generate job_id if not provided
-            if job_id is None:
-                import time
-
-                job_id = f"training-{int(time.time())}"
-
-            try:
-                carbon_tracker = CarbonTracker(
-                    job_id=job_id,
-                    job_type="training",
-                    output_dir=Path(output_dir) / ".." / "logs" / job_id,
-                    model_name=Path(output_dir).name,  # Use output dir name as model name
-                    base_model=self.base_model,
-                )
-                carbon_tracker.start()
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to start carbon tracking: {e}[/yellow]")
-                console.print("[yellow]Continuing training without carbon tracking...[/yellow]")
-                carbon_tracker = None
-
-        # Set evaluation strategy if validation dataset provided
-        final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
-        eval_steps_value = eval_steps if eval_steps is not None else save_steps
-
-        # Determine if we should load best model at end
-        final_load_best = load_best_model_at_end and eval_dataset is not None
-        final_metric = metric_for_best_model if eval_dataset is not None else None
-
         # Ensure model is loaded
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        # Detect model dtype and set precision for training
-        model_dtype = detect_model_dtype(self.model, self.load_in_4bit, False)
-        precision_config = get_training_precision_config(self.model, self.load_in_4bit, False)
+        # Start carbon tracking (uses mixin helper)
+        if enable_carbon_tracking:
+            self._start_carbon_tracking(output_dir, job_id, "training")
 
-        console.print(f"[cyan]🔍 Detected model dtype: {model_dtype}[/cyan]")
-        console.print(
-            f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
-        )
-
-        training_args = TrainingArguments(
+        # Create training arguments using mixin helper
+        # NOTE: Text-only training uses 'text' field format (not messages)
+        # For instruction fine-tuning, the format_dataset() method creates a single
+        # 'text' field with instruction/input/output sections.
+        training_args = self._create_training_args(
             output_dir=output_dir,
+            num_train_epochs=num_train_epochs,
             per_device_train_batch_size=per_device_train_batch_size,
-            per_device_eval_batch_size=per_device_train_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
+            learning_rate=learning_rate,
             warmup_steps=warmup_steps,
             max_steps=max_steps,
-            num_train_epochs=num_train_epochs,
-            learning_rate=learning_rate,
-            fp16=precision_config["fp16"],
-            bf16=precision_config["bf16"],
             logging_steps=logging_steps,
+            save_steps=save_steps,
             optim=optim,
             weight_decay=weight_decay,
             lr_scheduler_type=lr_scheduler_type,
@@ -423,36 +319,18 @@ class ModelTrainer(TextTrainer):
             adam_epsilon=adam_epsilon,
             dataloader_num_workers=dataloader_num_workers,
             dataloader_pin_memory=dataloader_pin_memory,
-            seed=42,
-            save_steps=save_steps,
             save_total_limit=save_total_limit,
-            report_to="none",  # Disable wandb/tensorboard for now
-            do_eval=eval_dataset is not None,
-            eval_strategy=final_eval_strategy,
-            eval_steps=eval_steps_value if eval_dataset else None,
-            load_best_model_at_end=final_load_best,
-            metric_for_best_model=final_metric,
-            # NOTE: Text-only training uses 'text' field format (not messages)
-            # For instruction fine-tuning, the format_dataset() method creates a single
-            # 'text' field with instruction/input/output sections.
-            # Prompt masking would require using train_on_responses_only with a data_collator,
-            # but for now we train on the full text (including instructions).
+            eval_dataset=eval_dataset,
+            eval_strategy=eval_strategy,
+            eval_steps=eval_steps,
+            load_best_model_at_end=load_best_model_at_end,
+            metric_for_best_model=metric_for_best_model,
         )
 
-        # Ensure model is loaded
-        if self.model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-
-        # Add memory monitoring callback (optional but useful for debugging)
-        # Use shared implementation from training.utils to avoid duplication
-        memory_monitor = MemoryMonitorCallback()
-        all_callbacks = [memory_monitor]
+        # Get callbacks (uses mixin helper)
+        all_callbacks = self._get_default_callbacks()
         if callbacks:
             all_callbacks.extend(callbacks)
-
-        console.print(
-            "[cyan]💡 Memory monitoring enabled: Tracking RAM usage every 10 steps[/cyan]"
-        )
 
         trainer = SFTTrainer(
             model=self.model,
@@ -467,16 +345,8 @@ class ModelTrainer(TextTrainer):
         trainer.train()
         console.print("[green]✓[/green] Training completed")
 
-        # Stop carbon tracking
-        if carbon_tracker is not None:
-            try:
-                emissions_data = carbon_tracker.stop()
-                if emissions_data:
-                    console.print(
-                        f"[green]🌍 Carbon emissions: {emissions_data['emissions_kg_co2']:.6f} kg CO2[/green]"
-                    )
-            except Exception as e:
-                console.print(f"[yellow]⚠️  Failed to stop carbon tracking: {e}[/yellow]")
+        # Stop carbon tracking (uses mixin helper)
+        self._stop_carbon_tracking()
 
         # Save final model
         console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")

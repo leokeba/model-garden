@@ -14,7 +14,9 @@ from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from transformers import TrainingArguments
 
 from model_garden.carbon import CarbonTracker
-from model_garden.training.utils import (
+
+# Import from mixins.py (the consolidated location)
+from model_garden.training.mixins import (
     MemoryMonitorCallback,
     detect_model_dtype,
     get_training_precision_config,
