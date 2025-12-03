@@ -39,10 +39,18 @@ async def list_emissions(job_type: str | None = None, limit: int | None = None):
             if record["job_id"] in training_jobs:
                 job_name = training_jobs[record["job_id"]].get("name", job_name)
 
-            model_name = record.get("model_name", "Unknown")
-            if not model_name or model_name == "Unknown":
+            model_name = record.get("model_name") or "Unknown"
+            base_model = record.get("base_model")
+
+            # Fallback: if model_name is Unknown, try to get from training jobs
+            if model_name == "Unknown" and record["job_id"] in training_jobs:
+                job = training_jobs[record["job_id"]]
+                model_name = job.get("name") or job.get("base_model") or model_name
+
+            # Use base_model from record, or fallback to training job
+            if not base_model:
                 if record["job_id"] in training_jobs:
-                    model_name = training_jobs[record["job_id"]].get("base_model", "Unknown")
+                    base_model = training_jobs[record["job_id"]].get("base_model")
 
             # Calculate carbon intensity if it's 0 (for historical data)
             carbon_intensity = record.get("carbon_intensity_g_per_kwh", 0.0)
@@ -60,6 +68,7 @@ async def list_emissions(job_type: str | None = None, limit: int | None = None):
                     "job_name": job_name,
                     "stage": record.get("job_type", "training"),
                     "model_name": model_name,
+                    "base_model": base_model,
                     "timestamp": record.get("timestamp", ""),
                     "duration": record.get("duration_seconds", 0.0),
                     "energy_consumed": record.get("energy_consumed_kwh", 0.0),

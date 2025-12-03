@@ -8,6 +8,7 @@ Routes for model management:
 - POST /api/v1/models/{model_id}/upload-to-hub - Upload to HuggingFace Hub
 """
 
+import json
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,162 @@ from ..models import APIResponse, ModelRenameRequest, PaginatedResponse
 from ..storage import get_storage_manager
 
 router = APIRouter(prefix="/api/v1/models", tags=["models"])
+
+
+def extract_model_metadata(model_path: Path) -> dict:
+    """Extract metadata from a model directory.
+
+    Reads config.json, adapter_config.json, or README.md to extract:
+    - base_model: The base model used for fine-tuning
+    - model_type: Whether it's a vision or text model
+    - is_adapter: Whether this is a LoRA adapter
+
+    Args:
+        model_path: Path to the model directory
+
+    Returns:
+        Dictionary with extracted metadata
+    """
+    metadata = {
+        "base_model": None,
+        "model_type": None,
+        "is_adapter": False,
+    }
+
+    if not model_path.exists():
+        return metadata
+
+    # Try adapter_config.json first (for LoRA models)
+    adapter_config_path = model_path / "adapter_config.json"
+    if adapter_config_path.exists():
+        try:
+            with open(adapter_config_path) as f:
+                adapter_config = json.load(f)
+
+            metadata["is_adapter"] = True
+
+            # Get base model from adapter config
+            base_model = adapter_config.get("base_model_name_or_path", "")
+            if base_model:
+                # Clean up unsloth model names to show the original model
+                if "unsloth/" in base_model:
+                    # e.g., "unsloth/qwen2.5-vl-7b-instruct-unsloth-bnb-4bit" -> "Qwen/Qwen2.5-VL-7B-Instruct"
+                    clean_name = base_model.replace("unsloth/", "")
+                    # Try to infer original model name
+                    if "qwen2.5-vl-7b" in clean_name.lower():
+                        metadata["base_model"] = "Qwen/Qwen2.5-VL-7B-Instruct"
+                    elif "qwen2.5-vl-3b" in clean_name.lower():
+                        metadata["base_model"] = "Qwen/Qwen2.5-VL-3B-Instruct"
+                    elif "qwen2.5-vl-72b" in clean_name.lower():
+                        metadata["base_model"] = "Qwen/Qwen2.5-VL-72B-Instruct"
+                    elif "qwen3-vl-8b" in clean_name.lower():
+                        metadata["base_model"] = "Qwen/Qwen3-VL-8B-Instruct"
+                    else:
+                        metadata["base_model"] = base_model
+                else:
+                    metadata["base_model"] = base_model
+
+            # Detect model type from auto_mapping or target modules
+            auto_mapping = adapter_config.get("auto_mapping", {})
+            base_class = auto_mapping.get("base_model_class", "")
+            if "VL" in base_class or "vision" in base_class.lower():
+                metadata["model_type"] = "vision"
+            else:
+                metadata["model_type"] = "text"
+
+        except Exception as e:
+            print(f"Warning: Could not parse adapter_config.json: {e}")
+
+    # Try config.json for merged models
+    config_path = model_path / "config.json"
+    if config_path.exists() and not metadata["base_model"]:
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+
+            # Check for _name_or_path which sometimes contains the base model
+            name_or_path = config.get("_name_or_path", "")
+            if name_or_path and "/" in name_or_path:
+                metadata["base_model"] = name_or_path
+
+            # Detect model type from architectures
+            architectures = config.get("architectures", [])
+            if architectures:
+                arch = architectures[0].lower()
+                if "vl" in arch or "vision" in arch or "image" in arch:
+                    metadata["model_type"] = "vision"
+                else:
+                    metadata["model_type"] = "text"
+
+        except Exception as e:
+            print(f"Warning: Could not parse config.json: {e}")
+
+    return metadata
+
+
+def enrich_model_from_training_jobs(model_data: dict, training_jobs: dict) -> dict:
+    """Enrich model data by linking to its training job.
+
+    Tries to find the training job that produced this model by matching:
+    1. training_job_id field
+    2. output_dir matching the model path
+    3. model name matching job name
+
+    Args:
+        model_data: The model data dict to enrich
+        training_jobs: Dict of all training jobs
+
+    Returns:
+        Enriched model data dict
+    """
+    # Already has a training job link
+    if model_data.get("training_job_id") and model_data["training_job_id"] in training_jobs:
+        job = training_jobs[model_data["training_job_id"]]
+        if model_data.get("base_model") in (None, "unknown", ""):
+            model_data["base_model"] = job.get("base_model", "unknown")
+        if model_data.get("model_type") in (None, "unknown", ""):
+            model_data["model_type"] = "vision" if job.get("is_vision") else "text"
+        return model_data
+
+    model_path = model_data.get("path", "")
+    model_name = model_data.get("name", model_data.get("id", ""))
+
+    # Try to find matching training job
+    for job_id, job in training_jobs.items():
+        job_output = job.get("output_dir", "")
+        job_name = job.get("name", "")
+
+        # Match by output directory
+        if (
+            job_output
+            and model_path
+            and (
+                model_path == job_output
+                or model_path.rstrip("/") == job_output.rstrip("/")
+                or Path(model_path).resolve() == Path(job_output).resolve()
+            )
+        ):
+            model_data["training_job_id"] = job_id
+            if model_data.get("base_model") in (None, "unknown", ""):
+                model_data["base_model"] = job.get("base_model", "unknown")
+            if model_data.get("model_type") in (None, "unknown", ""):
+                model_data["model_type"] = "vision" if job.get("is_vision") else "text"
+            if model_data.get("created_at") in (None, "unknown", ""):
+                model_data["created_at"] = job.get("created_at")
+            return model_data
+
+        # Match by name (less reliable, only if names match exactly)
+        if model_name and job_name and model_name == job_name:
+            # Additional check: job should be completed
+            if job.get("status") == "completed":
+                model_data["training_job_id"] = job_id
+                if model_data.get("base_model") in (None, "unknown", ""):
+                    model_data["base_model"] = job.get("base_model", "unknown")
+                if model_data.get("model_type") in (None, "unknown", ""):
+                    model_data["model_type"] = "vision" if job.get("is_vision") else "text"
+                return model_data
+
+    return model_data
 
 
 def get_model_files_info(model_path: Path) -> dict:
@@ -58,6 +215,9 @@ async def list_models(
     storage = get_storage_manager()
     models_storage = storage.load_models()
 
+    # Load training jobs for enrichment
+    training_jobs = storage.load_training_jobs()
+
     # Include models saved to default models directory
     models_dir = Path("./models")
     if models_dir.exists():
@@ -70,8 +230,11 @@ async def list_models(
                     adapter_config = model_folder / "adapter_config.json"
 
                     if config_file.exists() or adapter_config.exists():
-                        # Auto-register discovered model
-                        models_storage[model_id] = {
+                        # Extract metadata from model files
+                        metadata = extract_model_metadata(model_folder)
+
+                        # Auto-register discovered model with extracted metadata
+                        model_data = {
                             "id": model_id,
                             "name": model_id,
                             "path": str(model_folder.resolve()),
@@ -79,9 +242,37 @@ async def list_models(
                                 model_folder.stat().st_ctime
                             ).isoformat()
                             + "Z",
-                            "model_type": "unknown",
-                            "base_model": "unknown",
+                            "model_type": metadata.get("model_type", "unknown"),
+                            "base_model": metadata.get("base_model", "unknown"),
                         }
+
+                        # Try to enrich from training jobs
+                        model_data = enrich_model_from_training_jobs(model_data, training_jobs)
+                        models_storage[model_id] = model_data
+
+    # Enrich existing models that have "unknown" values
+    updated = False
+    for model_id, model_data in models_storage.items():
+        if model_data.get("base_model") == "unknown" or model_data.get("model_type") == "unknown":
+            model_path = Path(model_data.get("path", ""))
+            if model_path.exists():
+                metadata = extract_model_metadata(model_path)
+                if metadata.get("base_model") and model_data.get("base_model") == "unknown":
+                    model_data["base_model"] = metadata["base_model"]
+                    updated = True
+                if metadata.get("model_type") and model_data.get("model_type") == "unknown":
+                    model_data["model_type"] = metadata["model_type"]
+                    updated = True
+
+            # Try training jobs enrichment
+            enriched = enrich_model_from_training_jobs(model_data, training_jobs)
+            if enriched.get("base_model") != model_data.get("base_model"):
+                model_data.update(enriched)
+                updated = True
+
+    # Save enriched data back to storage
+    if updated:
+        storage.save_models(models_storage)
 
     # Filter models
     filtered_models = list(models_storage.values())

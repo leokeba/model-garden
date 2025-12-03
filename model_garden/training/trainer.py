@@ -380,6 +380,8 @@ class ModelTrainer(TextTrainer):
                     job_id=job_id,
                     job_type="training",
                     output_dir=Path(output_dir) / ".." / "logs" / job_id,
+                    model_name=Path(output_dir).name,  # Use output dir name as model name
+                    base_model=self.base_model,
                 )
                 carbon_tracker.start()
             except Exception as e:

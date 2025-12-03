@@ -28,6 +28,8 @@ class CarbonTracker:
         output_dir: Path | None = None,
         project_name: str | None = None,
         country_iso_code: str = "USA",
+        model_name: str | None = None,
+        base_model: str | None = None,
     ):
         """
         Initialize carbon tracker.
@@ -38,9 +40,13 @@ class CarbonTracker:
             output_dir: Directory to save emissions data (default: storage/logs/{job_id})
             project_name: Name for the CodeCarbon project
             country_iso_code: ISO code for carbon intensity (default: USA)
+            model_name: Name of the model being trained/used
+            base_model: Base model being fine-tuned (for training jobs)
         """
         self.job_id = job_id
         self.job_type = job_type
+        self.model_name = model_name
+        self.base_model = base_model
 
         # Set output directory
         if output_dir is None:
@@ -233,6 +239,8 @@ class CarbonTracker:
         summary = {
             "job_id": self.job_id,
             "job_type": self.job_type,
+            "model_name": self.model_name,
+            "base_model": self.base_model,
             "timestamp": datetime.now(UTC).isoformat(),
             "emissions_kg_co2": emissions_kg,
             "tracking_mode": "process",
