@@ -93,7 +93,7 @@ def generate(model_path: str, prompt: str, max_tokens: int, temperature: float) 
 
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None
 
 
 @click.command()
@@ -140,4 +140,4 @@ def list_backends_cmd() -> None:
 
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None

@@ -91,8 +91,14 @@ select = [
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
+    "E402", # module level import not at top (intentional for HF cache configuration)
     "B008", # do not perform function calls in argument defaults
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# These files intentionally configure HF cache before importing HF libraries
+"model_garden/training/trainer.py" = ["E402"]
+"model_garden/training/vision_trainer.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["model_garden"]

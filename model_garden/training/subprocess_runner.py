@@ -323,7 +323,7 @@ def execute_training_job_in_subprocess(job_config: dict, timeout: int | None = N
                 result = result_queue.get(timeout=1)
                 if not result["success"]:
                     return result
-            except:
+            except Exception:
                 pass
 
             raise RuntimeError(f"Training subprocess failed with exit code {process.exitcode}")
@@ -332,8 +332,8 @@ def execute_training_job_in_subprocess(job_config: dict, timeout: int | None = N
         try:
             result = result_queue.get(timeout=5)
             return result
-        except:
-            raise RuntimeError("Failed to get result from training subprocess")
+        except Exception:
+            raise RuntimeError("Failed to get result from training subprocess") from None
 
     finally:
         # Ensure process is terminated

@@ -67,9 +67,8 @@ async def lifespan(app: FastAPI):
 
         emissions_data = stop_inference_tracker()
         if emissions_data:
-            print(
-                f"✓ Final inference emissions saved: {emissions_data['emissions_kg_co2']:.6f} kg CO2"
-            )
+            kg_co2 = emissions_data["emissions_kg_co2"]
+            print(f"✓ Final inference emissions saved: {kg_co2:.6f} kg CO2")
     except Exception as e:
         print(f"⚠️  Failed to stop inference tracker: {e}")
 

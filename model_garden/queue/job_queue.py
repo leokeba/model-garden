@@ -50,7 +50,7 @@ class JobQueue:
                     self._queue = data.get("queue", {})
 
                     # Reset any running jobs to queued (in case of crash)
-                    for job_id, job_data in self._queue.items():
+                    for _job_id, job_data in self._queue.items():
                         if job_data.get("status") == JobStatus.RUNNING:
                             job_data["status"] = JobStatus.QUEUED
                             job_data["status_message"] = "Reset after restart"

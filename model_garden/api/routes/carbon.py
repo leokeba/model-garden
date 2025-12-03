@@ -537,7 +537,9 @@ async def get_carbon_recommendations():
                         "id": "start-tracking",
                         "priority": "info",
                         "title": "Start Tracking Your Carbon Footprint",
-                        "description": "Run training jobs or inference to begin tracking emissions.",
+                        "description": (
+                            "Run training jobs or inference to begin tracking emissions."
+                        ),
                         "potential_savings": None,
                         "action": "Start a training job to see emissions data",
                     }
@@ -599,7 +601,11 @@ async def get_carbon_recommendations():
                         "id": "use-smaller-models",
                         "priority": "high",
                         "title": "Consider Smaller Models for Development",
-                        "description": f"Your large model jobs average {avg_large:.4f} kg CO₂. Using smaller models for experimentation could reduce emissions significantly.",
+                        "description": (
+                            f"Your large model jobs average {avg_large:.4f} kg CO\u2082. "
+                            "Using smaller models for experimentation could reduce "
+                            "emissions significantly."
+                        ),
                         "potential_savings_kg": round(potential_savings, 4),
                         "action": "Try 3B-7B parameter models for prototyping before scaling up",
                     }
@@ -613,7 +619,11 @@ async def get_carbon_recommendations():
                     "id": "consolidate-short-jobs",
                     "priority": "medium",
                     "title": "Consolidate Short Training Jobs",
-                    "description": f"You have {len(short_jobs)} jobs under 5 minutes. Consider batching experiments or using larger datasets to reduce startup overhead.",
+                    "description": (
+                        f"You have {len(short_jobs)} jobs under 5 minutes. "
+                        "Consider batching experiments or using larger datasets "
+                        "to reduce startup overhead."
+                    ),
                     "potential_savings_kg": round(len(short_jobs) * 0.001, 4),  # Rough estimate
                     "action": "Group similar experiments into single longer runs",
                 }
@@ -638,7 +648,11 @@ async def get_carbon_recommendations():
                         "id": "optimize-inference",
                         "priority": "medium",
                         "title": "Optimize Inference Efficiency",
-                        "description": "Inference accounts for a significant portion of your emissions. Consider using quantization (AWQ, GPTQ) or smaller models for production.",
+                        "description": (
+                            "Inference accounts for a significant portion of your "
+                            "emissions. Consider using quantization (AWQ, GPTQ) or "
+                            "smaller models for production."
+                        ),
                         "potential_savings_kg": round(total_inference_emissions * 0.3, 4),
                         "action": "Enable 4-bit or 8-bit quantization for inference",
                     }
@@ -651,7 +665,10 @@ async def get_carbon_recommendations():
                 "id": "green-energy-timing",
                 "priority": "low",
                 "title": "Schedule Jobs During Low-Carbon Hours",
-                "description": "Running compute-intensive jobs during off-peak hours when renewable energy is more available can reduce carbon intensity.",
+                "description": (
+                    "Running compute-intensive jobs during off-peak hours when "
+                    "renewable energy is more available can reduce carbon intensity."
+                ),
                 "potential_savings_kg": round(total_emissions * 0.1, 4),
                 "action": "Schedule large training jobs for early morning or late evening",
             }
@@ -676,7 +693,11 @@ async def get_carbon_recommendations():
                     "id": "use-lora",
                     "priority": "high",
                     "title": "Use LoRA for Efficient Fine-tuning",
-                    "description": "LoRA (Low-Rank Adaptation) can reduce training time and memory by 60-80% while maintaining quality. You haven't used LoRA yet.",
+                    "description": (
+                        "LoRA (Low-Rank Adaptation) can reduce training time and "
+                        "memory by 60-80% while maintaining quality. You haven't "
+                        "used LoRA yet."
+                    ),
                     "potential_savings_kg": round(sum(full_finetune_jobs) * 0.6, 4),
                     "action": "Enable LoRA in your next training job",
                 }

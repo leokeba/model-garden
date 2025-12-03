@@ -67,8 +67,12 @@ async def list_datasets():
     return {"datasets": datasets}
 
 
+# Module-level default for File upload parameter to avoid B008 error
+_file_upload_default = File(...)
+
+
 @router.post("/upload")
-async def upload_dataset(file: UploadFile = File(...)):
+async def upload_dataset(file: UploadFile = _file_upload_default):
     """Upload a dataset file."""
     from model_garden.utils import DatasetValidator
 

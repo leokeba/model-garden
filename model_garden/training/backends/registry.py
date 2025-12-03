@@ -12,7 +12,10 @@ if TYPE_CHECKING:
     from model_garden.training.backends.base import TrainingBackend
 
 # Type definitions for better IDE support
-type BackendClass = type["TrainingBackend"]
+# Using TypeAlias for Python 3.11 compatibility (type syntax requires Python 3.12)
+from typing import TypeAlias
+
+BackendClass: TypeAlias = type["TrainingBackend"]
 
 
 class BackendInfo(TypedDict):

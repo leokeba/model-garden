@@ -304,7 +304,6 @@ def train(
                 "[yellow]🎯 Quality mode enabled - using higher precision settings[/yellow]"
             )
             load_in_16bit = True
-            load_in_4bit = False
             use_gradient_checkpointing = "true"
             optim = "adamw_torch"
             if lora_r >= 32:
@@ -396,7 +395,7 @@ def train(
 
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None
 
 
 @click.command()
@@ -750,10 +749,10 @@ def train_vision(
             --max-steps 100
 
     Dataset formats:
-        
+
         Local JSONL:
             {"text": "What is in this image?", "image": "/path/to/img.jpg", "response": "A cat"}
-        
+
         HuggingFace Hub (OpenAI messages format):
             {"messages": [{"role": "user", "content": [{"type": "image", "image": "data:image/jpeg;base64,..."}]}]}
     """
@@ -775,9 +774,8 @@ def train_vision(
             console.print("[yellow]🎯 Quality mode enabled - applying optimizations:[/yellow]")
             console.print("[yellow]  • 16-bit precision (full quality)[/yellow]")
             console.print("[yellow]  • Standard gradient checkpointing[/yellow]")
-            console.print("[yellow]  • Better optimizer (adamw_torch)[/yellow]")
+            console.print("[yellow]  \u2022 Better optimizer (adamw_torch)[/yellow]")
             load_in_16bit = True
-            load_in_4bit = False
             use_gradient_checkpointing = "true"
             optim = "adamw_torch"
             if lora_r >= 32:
@@ -892,4 +890,4 @@ def train_vision(
         import traceback
 
         traceback.print_exc()
-        raise click.Abort()
+        raise click.Abort() from None

@@ -10,6 +10,7 @@ from typing import Any
 @dataclass
 class DatasetStats:
     """Dataset statistics."""
+
     total_rows: int
     format: str
     fields: list[str]
@@ -39,33 +40,19 @@ class DatasetValidator:
     TEXT_SCHEMA = {
         "required_fields": ["instruction", "output"],
         "optional_fields": ["input", "context"],
-        "field_types": {
-            "instruction": str,
-            "input": str,
-            "output": str,
-            "context": str
-        }
+        "field_types": {"instruction": str, "input": str, "output": str, "context": str},
     }
 
     VISION_SCHEMA = {
         "required_fields": ["text", "image", "response"],
         "optional_fields": ["metadata"],
-        "field_types": {
-            "text": str,
-            "image": str,
-            "response": str,
-            "metadata": dict
-        }
+        "field_types": {"text": str, "image": str, "response": str, "metadata": dict},
     }
 
     ALPACA_SCHEMA = {
         "required_fields": ["instruction", "output"],
         "optional_fields": ["input"],
-        "field_types": {
-            "instruction": str,
-            "input": str,
-            "output": str
-        }
+        "field_types": {"instruction": str, "input": str, "output": str},
     }
 
     @staticmethod
@@ -108,11 +95,11 @@ class DatasetValidator:
     def load_dataset(file_path: Path, max_rows: int = 1000) -> tuple[list[dict[str, Any]], str]:
         """
         Load dataset from file.
-        
+
         Args:
             file_path: Path to dataset file
             max_rows: Maximum rows to load (for preview/validation)
-            
+
         Returns:
             Tuple of (data rows, format)
         """
@@ -121,7 +108,7 @@ class DatasetValidator:
 
         try:
             if format_type == "jsonl":
-                with open(file_path, encoding='utf-8') as f:
+                with open(file_path, encoding="utf-8") as f:
                     for i, line in enumerate(f):
                         if i >= max_rows:
                             break
@@ -129,7 +116,7 @@ class DatasetValidator:
                             data.append(json.loads(line))
 
             elif format_type == "json":
-                with open(file_path, encoding='utf-8') as f:
+                with open(file_path, encoding="utf-8") as f:
                     json_data = json.load(f)
                     if isinstance(json_data, list):
                         data = json_data[:max_rows]
@@ -137,7 +124,7 @@ class DatasetValidator:
                         raise ValueError("JSON file must contain an array of objects")
 
             elif format_type == "csv":
-                with open(file_path, encoding='utf-8') as f:
+                with open(file_path, encoding="utf-8") as f:
                     reader = csv.DictReader(f)
                     for i, row in enumerate(reader):
                         if i >= max_rows:
@@ -148,7 +135,7 @@ class DatasetValidator:
                 raise ValueError(f"Unsupported format: {format_type}")
 
         except Exception as e:
-            raise ValueError(f"Failed to load dataset: {str(e)}")
+            raise ValueError(f"Failed to load dataset: {str(e)}") from e
 
         return data, format_type
 
@@ -161,18 +148,16 @@ class DatasetValidator:
 
     @staticmethod
     def validate_dataset(
-        file_path: Path,
-        schema_type: str | None = None,
-        max_sample: int = 100
+        file_path: Path, schema_type: str | None = None, max_sample: int = 100
     ) -> DatasetStats:
         """
         Validate and analyze a dataset.
-        
+
         Args:
             file_path: Path to dataset file
             schema_type: Expected schema type (auto-detect if None)
             max_sample: Number of rows to sample for analysis
-            
+
         Returns:
             DatasetStats with validation results
         """
@@ -191,7 +176,7 @@ class DatasetValidator:
                 sample_rows=[],
                 file_size_bytes=0,
                 validation_errors=errors,
-                warnings=warnings
+                warnings=warnings,
             )
 
         # Get file size
@@ -211,7 +196,7 @@ class DatasetValidator:
                 sample_rows=[],
                 file_size_bytes=file_size,
                 validation_errors=errors,
-                warnings=warnings
+                warnings=warnings,
             )
 
         if not data:
@@ -225,7 +210,7 @@ class DatasetValidator:
                 sample_rows=[],
                 file_size_bytes=file_size,
                 validation_errors=errors,
-                warnings=warnings
+                warnings=warnings,
             )
 
         # Detect schema if not provided
@@ -264,7 +249,9 @@ class DatasetValidator:
                 if count == len(data):
                     errors.append(f"Required field '{field}' is missing in all rows")
                 elif percent > 10:
-                    warnings.append(f"Required field '{field}' is missing in {count}/{len(data)} rows ({percent:.1f}%)")
+                    warnings.append(
+                        f"Required field '{field}' is missing in {count}/{len(data)} rows ({percent:.1f}%)"
+                    )
 
         # Calculate text statistics
         avg_input_len = None
@@ -325,12 +312,14 @@ class DatasetValidator:
             warnings.append("Average output length is very short (< 10 characters)")
 
         if file_size > 100 * 1024 * 1024:  # 100MB
-            warnings.append("Large dataset file (>100MB) - consider splitting for faster processing")
+            warnings.append(
+                "Large dataset file (>100MB) - consider splitting for faster processing"
+            )
 
         return DatasetStats(
             total_rows=total_rows,
             format=format_type,
-            fields=sorted(list(all_fields)),
+            fields=sorted(all_fields),
             field_types=field_type_samples,
             missing_fields={k: v for k, v in missing_field_counts.items() if v > 0},
             sample_rows=data[:5],  # First 5 rows
@@ -342,27 +331,29 @@ class DatasetValidator:
             total_tokens_estimate=total_tokens,
             has_images=has_images,
             image_count=image_count,
-            image_paths=image_paths_sample
+            image_paths=image_paths_sample,
         )
 
     @staticmethod
     def convert_csv_to_jsonl(csv_path: Path, jsonl_path: Path) -> int:
         """
         Convert CSV to JSONL format.
-        
+
         Args:
             csv_path: Source CSV file
             jsonl_path: Destination JSONL file
-            
+
         Returns:
             Number of rows converted
         """
         count = 0
-        with open(csv_path, encoding='utf-8') as csv_file, \
-             open(jsonl_path, 'w', encoding='utf-8') as jsonl_file:
+        with (
+            open(csv_path, encoding="utf-8") as csv_file,
+            open(jsonl_path, "w", encoding="utf-8") as jsonl_file,
+        ):
             reader = csv.DictReader(csv_file)
             for row in reader:
-                jsonl_file.write(json.dumps(row) + '\n')
+                jsonl_file.write(json.dumps(row) + "\n")
                 count += 1
         return count
 
@@ -370,11 +361,11 @@ class DatasetValidator:
     def convert_jsonl_to_csv(jsonl_path: Path, csv_path: Path) -> int:
         """
         Convert JSONL to CSV format.
-        
+
         Args:
             jsonl_path: Source JSONL file
             csv_path: Destination CSV file
-            
+
         Returns:
             Number of rows converted
         """
@@ -382,7 +373,7 @@ class DatasetValidator:
         data = []
         all_fields = set()
 
-        with open(jsonl_path, encoding='utf-8') as f:
+        with open(jsonl_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     row = json.loads(line)
@@ -390,8 +381,8 @@ class DatasetValidator:
                     all_fields.update(row.keys())
 
         # Write CSV
-        fields = sorted(list(all_fields))
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        fields = sorted(all_fields)
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fields)
             writer.writeheader()
             for row in data:

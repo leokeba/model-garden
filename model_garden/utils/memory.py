@@ -6,10 +6,10 @@ from typing import Any
 
 def clear_trainer_internals(trainer: Any) -> None:
     """Clear internal references in a Trainer object to enable garbage collection.
-    
+
     The Trainer holds references to many large objects. Clearing these
     explicitly helps Python's garbage collector free memory faster.
-    
+
     Args:
         trainer: A Trainer or SFTTrainer instance
     """
@@ -18,45 +18,45 @@ def clear_trainer_internals(trainer: Any) -> None:
 
     try:
         # Clear model references
-        if hasattr(trainer, 'model'):
+        if hasattr(trainer, "model"):
             trainer.model = None
-        if hasattr(trainer, 'model_wrapped'):
+        if hasattr(trainer, "model_wrapped"):
             trainer.model_wrapped = None
 
         # Clear optimizer and scheduler
-        if hasattr(trainer, 'optimizer'):
+        if hasattr(trainer, "optimizer"):
             trainer.optimizer = None
-        if hasattr(trainer, 'lr_scheduler'):
+        if hasattr(trainer, "lr_scheduler"):
             trainer.lr_scheduler = None
 
         # Clear dataloaders
-        if hasattr(trainer, 'train_dataloader'):
+        if hasattr(trainer, "train_dataloader"):
             trainer.train_dataloader = None
-        if hasattr(trainer, 'eval_dataloader'):
+        if hasattr(trainer, "eval_dataloader"):
             trainer.eval_dataloader = None
 
         # Clear tokenizer and processor
-        if hasattr(trainer, 'tokenizer'):
+        if hasattr(trainer, "tokenizer"):
             trainer.tokenizer = None
-        if hasattr(trainer, 'processor'):
+        if hasattr(trainer, "processor"):
             trainer.processor = None
 
         # Clear dataset references
-        if hasattr(trainer, 'train_dataset'):
+        if hasattr(trainer, "train_dataset"):
             trainer.train_dataset = None
-        if hasattr(trainer, 'eval_dataset'):
+        if hasattr(trainer, "eval_dataset"):
             trainer.eval_dataset = None
 
         # Clear callbacks
-        if hasattr(trainer, 'callback_handler'):
+        if hasattr(trainer, "callback_handler"):
             trainer.callback_handler = None
-        if hasattr(trainer, 'callbacks'):
+        if hasattr(trainer, "callbacks"):
             trainer.callbacks = []
 
         # Clear state and control
-        if hasattr(trainer, 'state'):
+        if hasattr(trainer, "state"):
             trainer.state = None
-        if hasattr(trainer, 'control'):
+        if hasattr(trainer, "control"):
             trainer.control = None
 
     except Exception as e:
@@ -65,7 +65,7 @@ def clear_trainer_internals(trainer: Any) -> None:
 
 def cleanup_training_resources(*objects_to_delete: Any) -> None:
     """Clean up training resources and free memory.
-    
+
     Performs essential cleanup steps:
     1. Clear trainer internal references
     2. Clear dataset image caches
@@ -75,10 +75,10 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     6. Clear GPU cache
     7. Clear HuggingFace caches
     8. Return memory to OS
-    
+
     Args:
         *objects_to_delete: Variable number of objects to delete
-        
+
     Example:
         cleanup_training_resources(
             trainer.model, trainer.tokenizer, trainer,
@@ -91,9 +91,9 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
 
     # Step 1: Clear trainer internals first
     for obj in objects_to_delete:
-        if obj is not None and hasattr(obj, '__class__'):
+        if obj is not None and hasattr(obj, "__class__"):
             class_name = obj.__class__.__name__
-            if 'Trainer' in class_name:
+            if "Trainer" in class_name:
                 clear_trainer_internals(obj)
 
     # Step 2: Clear dataset image caches for vision models
@@ -105,18 +105,18 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
                     for item in obj:
                         if isinstance(item, dict):
                             # Clear PIL images
-                            if 'image' in item:
+                            if "image" in item:
                                 try:
-                                    if hasattr(item['image'], 'close'):
-                                        item['image'].close()
-                                    del item['image']
+                                    if hasattr(item["image"], "close"):
+                                        item["image"].close()
+                                    del item["image"]
                                 except Exception:
                                     pass
                             # Clear any other large objects
                             item.clear()
                     obj.clear()
                 # Clear HuggingFace Dataset objects
-                elif hasattr(obj, 'cleanup_cache_files'):
+                elif hasattr(obj, "cleanup_cache_files"):
                     try:
                         obj.cleanup_cache_files()
                     except Exception:
@@ -128,9 +128,9 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     for obj in objects_to_delete:
         if obj is not None:
             try:
-                if hasattr(obj, 'cpu') and callable(obj.cpu):
+                if hasattr(obj, "cpu") and callable(obj.cpu):
                     obj.cpu()
-                elif hasattr(obj, 'model') and hasattr(obj.model, 'cpu'):
+                elif hasattr(obj, "model") and hasattr(obj.model, "cpu"):
                     obj.model.cpu()
             except Exception:
                 pass
@@ -145,7 +145,7 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
 
     # Step 5: Aggressive garbage collection (multiple passes)
     total_collected = 0
-    for i in range(3):  # 3 passes to catch circular references
+    for _i in range(3):  # 3 passes to catch circular references
         collected = gc.collect()
         total_collected += collected
     if total_collected > 0:
@@ -154,7 +154,6 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     # Step 6: Clear GPU cache
     if torch.cuda.is_available():
         try:
-            allocated_before = torch.cuda.memory_allocated() / 1024**3
             reserved_before = torch.cuda.memory_reserved() / 1024**3
 
             torch.cuda.empty_cache()
@@ -168,7 +167,6 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
 
             torch.cuda.empty_cache()
 
-            allocated_after = torch.cuda.memory_allocated() / 1024**3
             reserved_after = torch.cuda.memory_reserved() / 1024**3
             freed_gb = reserved_before - reserved_after
 
@@ -182,10 +180,12 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     try:
         # Clear transformers cache
         from transformers.utils.import_utils import is_torch_available
+
         if is_torch_available():
             import torch
+
             # Clear torch hub cache
-            if hasattr(torch.hub, '_get_torch_home'):
+            if hasattr(torch.hub, "_get_torch_home"):
                 pass  # No specific clear method available
     except Exception:
         pass
@@ -193,6 +193,7 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
     # Step 8: Return memory to OS (Linux only)
     try:
         import ctypes
+
         libc = ctypes.CDLL("libc.so.6")
         result = libc.malloc_trim(0)
         if result:
@@ -213,14 +214,14 @@ def cleanup_training_resources(*objects_to_delete: Any) -> None:
 
 def get_process_memory_mb() -> float | None:
     """Get current process RSS memory in MB.
-    
+
     Returns:
         Memory in MB, or None if unable to read
     """
     try:
-        with open('/proc/self/status') as f:
+        with open("/proc/self/status") as f:
             for line in f:
-                if line.startswith('VmRSS:'):
+                if line.startswith("VmRSS:"):
                     return int(line.split()[1]) / 1024  # Convert KB to MB
     except Exception:
         return None
@@ -230,7 +231,7 @@ def get_process_memory_mb() -> float | None:
 
 def report_memory_usage(label: str = "") -> None:
     """Print current memory usage for debugging.
-    
+
     Args:
         label: Optional label to identify the measurement point
     """

@@ -221,8 +221,21 @@ class VisionTrainer(ABC):
         image_field: str = "image",
         system_message: str | None = None,
         messages_field: str | None = None,
-    ) -> list[dict]:
-        """Format dataset for vision-language training."""
+        lazy_loading: bool = False,
+    ) -> list[dict] | Any:
+        """Format dataset for vision-language training.
+
+        Args:
+            dataset: Input dataset
+            text_field: Field name for text/questions
+            image_field: Field name for images
+            system_message: Optional system message
+            messages_field: Field name for messages (for OpenAI format)
+            lazy_loading: If True, return a lazy dataset that loads images on-demand
+
+        Returns:
+            List of formatted message dictionaries or a LazyVisionDataset
+        """
         pass
 
     @abstractmethod

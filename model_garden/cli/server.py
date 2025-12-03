@@ -63,4 +63,4 @@ def serve(host: str, port: int, reload: bool) -> None:
 
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None

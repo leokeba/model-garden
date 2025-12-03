@@ -252,12 +252,11 @@ class WeightedLossTrainerWithMetrics(WeightedLossTrainer):
         # Call parent compute_loss
         result = super().compute_loss(model, inputs, return_outputs, num_items_in_batch)
 
-        # Extract loss and outputs
+        # Extract loss (outputs are not used, but we need to unpack for return_outputs case)
         if return_outputs:
-            loss, outputs = result
+            loss, _ = result
         else:
             loss = result
-            outputs = None
 
         # Track statistics (only during training, not eval)
         model_training = getattr(self.model, "training", False) if self.model is not None else False
@@ -271,7 +270,8 @@ class WeightedLossTrainerWithMetrics(WeightedLossTrainer):
                         # Track weight distribution
                         unique_weights, counts = torch.unique(valid_weights, return_counts=True)
                         distribution = {
-                            f"{w.item():.2f}": c.item() for w, c in zip(unique_weights, counts)
+                            f"{w.item():.2f}": c.item()
+                            for w, c in zip(unique_weights, counts, strict=True)
                         }
                         self.weight_distributions.append(distribution)
 

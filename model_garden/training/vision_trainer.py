@@ -273,7 +273,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             )
 
             if self.model is None:
-                raise RuntimeError("Model not loaded. Call load_model() first.")
+                raise RuntimeError("Model not loaded. Call load_model() first.") from None
             self.model = get_peft_model(self.model, peft_config)  # type: ignore
             console.print("[green]✓[/green] LoRA adapters configured (PEFT fallback)")
 
@@ -793,8 +793,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         if isinstance(eval_dataset, list):
             console.print(f"[cyan]Using validation dataset ({len(eval_dataset)} examples)[/cyan]")
 
-        # Set evaluation strategy if validation dataset provided
-        do_eval = eval_dataset is not None
+        # Set evaluation steps
         eval_steps_value = config.eval_steps if config.eval_steps is not None else config.save_steps
 
         # When using max_steps, still need to provide num_train_epochs
@@ -1195,7 +1194,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
                     console.print(f"[red]❌ Merge failed: {merge_error}[/red]")
                     console.print("[yellow]Falling back to saving LoRA adapters only[/yellow]")
                     if self.model is None:
-                        raise RuntimeError("Model not loaded.")
+                        raise RuntimeError("Model not loaded.") from None
                     self.model.save_pretrained(output_dir)
                     if self.tokenizer:
                         self.tokenizer.save_pretrained(output_dir)

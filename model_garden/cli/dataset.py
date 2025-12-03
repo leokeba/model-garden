@@ -40,10 +40,10 @@ def create_dataset(output: str, num_examples: int) -> None:
 
         console.print("\n[bold cyan]🌱 Model Garden - Dataset Creation[/bold cyan]\n")
         create_sample_dataset(output, num_examples)
-        console.print("\n[bold green]✨ Dataset created successfully![/bold green]\n")
+        console.print("\n[bold green]\u2728 Dataset created successfully![/bold green]\n")
     except Exception as e:
-        console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        console.print(f"\n[bold red]\u274c Error: {e}[/bold red]\n")
+        raise click.Abort() from None
 
 
 @click.command()
@@ -81,4 +81,4 @@ def create_vision_dataset(output: str, num_examples: int) -> None:
         )
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None

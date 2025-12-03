@@ -77,7 +77,7 @@ async def list_registry_models(category: str | None = None):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load registry: {str(e)}",
-        )
+        ) from e
 
 
 @router.get("/models/{model_id:path}")
@@ -136,7 +136,7 @@ async def get_registry_model(model_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get model: {str(e)}",
-        )
+        ) from e
 
 
 @router.get("/categories")
@@ -160,7 +160,7 @@ async def list_categories():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load categories: {str(e)}",
-        )
+        ) from e
 
 
 @router.post("/validate/training")
@@ -192,7 +192,7 @@ async def validate_for_training(request: ValidateRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Validation failed: {str(e)}",
-        )
+        ) from e
 
 
 @router.post("/validate/inference")
@@ -214,4 +214,4 @@ async def validate_for_inference(request: ValidateRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Validation failed: {str(e)}",
-        )
+        ) from e

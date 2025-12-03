@@ -17,7 +17,7 @@ class HardwareDetector:
     def get_gpu_info(self) -> dict | None:
         """
         Detect GPU information using nvidia-smi.
-        
+
         Returns:
             Dictionary with GPU details or None if no GPU detected
         """
@@ -89,7 +89,7 @@ class HardwareDetector:
     def get_cpu_info(self) -> dict:
         """
         Detect CPU information.
-        
+
         Returns:
             Dictionary with CPU details
         """
@@ -194,7 +194,7 @@ class HardwareDetector:
     def get_system_info(self) -> dict:
         """
         Detect system information.
-        
+
         Returns:
             Dictionary with OS and system details
         """
@@ -235,7 +235,7 @@ class HardwareDetector:
     def get_ram_info(self) -> dict:
         """
         Detect RAM information.
-        
+
         Returns:
             Dictionary with RAM details
         """
@@ -289,7 +289,7 @@ class HardwareDetector:
     def get_full_hardware_report(self) -> dict:
         """
         Get complete hardware report.
-        
+
         Returns:
             Dictionary with all hardware information
         """

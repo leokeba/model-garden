@@ -73,32 +73,32 @@ def serve_model(
 ):
     """
     Start an inference server with vLLM for high-throughput model serving.
-    
+
     This command loads a model using vLLM and starts a FastAPI server
     with OpenAI-compatible endpoints for text generation and chat completions.
-    
+
     Supports loading LoRA adapters directly from local paths or HuggingFace Hub.
     The adapter's base model is automatically detected from adapter_config.json.
-    
+
     Parameters not specified will use defaults from the model registry if available.
-    
+
     Examples:
-    
+
         \b
         # Serve a merged model on default port 8000
         uv run model-garden serve-model --model-path ./models/my-model
-        
+
         \b
         # Serve a LoRA adapter from HuggingFace Hub
         uv run model-garden serve-model \\
             --model-path Barth371/Qwen2.5-VL-72B-Instruct-bnb-4bit-2025-10-21_16-26_batch_size_4_cmr-block-2_adapters_4bit
-        
+
         \b
         # Serve a local LoRA adapter with explicit base model
         uv run model-garden serve-model \\
             --model-path ./models/my-adapter \\
             --base-model Qwen/Qwen2.5-VL-72B-Instruct-bnb-4bit
-        
+
         \b
         # Serve with custom GPU settings
         uv run model-garden serve-model \\
@@ -209,7 +209,7 @@ def serve_model(
         import traceback
 
         traceback.print_exc()
-        raise click.Abort()
+        raise click.Abort() from None
 
 
 @click.command()
@@ -278,28 +278,28 @@ def inference_generate(
 ):
     """
     Generate text using vLLM inference engine (one-off generation).
-    
+
     This command loads a model, generates a response, and exits.
     For persistent serving, use the 'serve-model' command instead.
-    
+
     Supports loading LoRA adapters directly from local paths or HuggingFace Hub.
-    
+
     Parameters not specified will use defaults from the model registry if available.
-    
+
     Examples:
-    
+
         \b
         # Generate with a merged model
         uv run model-garden inference-generate \\
             --model-path ./models/my-model \\
             --prompt "Once upon a time"
-        
+
         \b
         # Generate with a LoRA adapter from HuggingFace Hub
         uv run model-garden inference-generate \\
             --model-path Barth371/Qwen2.5-VL-72B-Instruct-bnb-4bit-2025-10-21_16-26_batch_size_4_cmr-block-2_adapters_4bit \\
             --prompt "Extract information from this document"
-        
+
         \b
         # Generate with streaming output
         uv run model-garden inference-generate \\
@@ -416,7 +416,7 @@ def inference_generate(
 
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None
 
 
 @click.command()
@@ -438,22 +438,22 @@ def inference_chat(
 ):
     """
     Interactive chat interface using vLLM inference engine.
-    
+
     This command starts an interactive chat session with the model.
     Type your messages and press Enter. Type 'exit', 'quit', or press Ctrl+D to end.
-    
+
     Examples:
-    
+
         \b
         # Start a chat session
         uv run model-garden inference-chat --model-path ./models/my-model
-        
+
         \b
         # Chat with system prompt
         uv run model-garden inference-chat \\
             --model-path ./models/my-model \\
             --system-prompt "You are a helpful AI assistant"
-        
+
         \b
         # Chat with custom parameters
         uv run model-garden inference-chat \\
@@ -541,4 +541,4 @@ def inference_chat(
 
     except Exception as e:
         console.print(f"\n[bold red]❌ Error: {e}[/bold red]\n")
-        raise click.Abort()
+        raise click.Abort() from None

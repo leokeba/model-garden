@@ -254,7 +254,7 @@ async def list_models(
 
     # Enrich existing models that have "unknown" values
     updated = False
-    for model_id, model_data in models_storage.items():
+    for _model_id, model_data in models_storage.items():
         if model_data.get("base_model") == "unknown" or model_data.get("model_type") == "unknown":
             model_path = Path(model_data.get("path", ""))
             if model_path.exists():
