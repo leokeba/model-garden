@@ -30,14 +30,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_gpu, pytest.mark.slo
 
 
 @pytest.fixture(scope="module")
-def event_loop():
-    """Create an event loop for the module scope."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="module")
 def text_model_path() -> str:
     """Return a small text model for testing."""
     return "unsloth/tinyllama-bnb-4bit"
@@ -72,26 +64,8 @@ def sample_image_base64(test_images_dir: Path) -> str:
 # ============================================================================
 
 
-class TestTextInferenceService:
-    """End-to-end tests for text model inference using InferenceService directly."""
-
-    @pytest_asyncio.fixture
-    async def text_inference_service(self, text_model_path: str):
-        """Create and load a text inference service."""
-        from model_garden.inference import InferenceService
-
-        service = InferenceService(
-            model_path=text_model_path,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.5,  # Use less memory for testing
-            max_model_len=512,
-            max_num_seqs=4,
-            enforce_eager=True,  # Save memory
-        )
-
-        await service.load_model()
-        yield service
-        await service.unload_model()
+class TestModelLoadUnload:
+    """Tests for model loading and unloading lifecycle."""
 
     @pytest.mark.asyncio
     async def test_load_and_unload_model(self, text_model_path: str):
@@ -121,6 +95,28 @@ class TestTextInferenceService:
         # Unload the model
         await service.unload_model()
         assert not service.is_loaded
+
+
+class TestTextInferenceService:
+    """End-to-end tests for text model inference using InferenceService directly."""
+
+    @pytest_asyncio.fixture
+    async def text_inference_service(self, text_model_path: str):
+        """Create and load a text inference service."""
+        from model_garden.inference import InferenceService
+
+        service = InferenceService(
+            model_path=text_model_path,
+            tensor_parallel_size=1,
+            gpu_memory_utilization=0.5,  # Use less memory for testing
+            max_model_len=512,
+            max_num_seqs=4,
+            enforce_eager=True,  # Save memory
+        )
+
+        await service.load_model()
+        yield service
+        await service.unload_model()
 
     @pytest.mark.asyncio
     async def test_text_generation_basic(self, text_inference_service):
@@ -277,27 +273,8 @@ class TestTextInferenceService:
 # ============================================================================
 
 
-class TestVisionInferenceService:
-    """End-to-end tests for vision model inference."""
-
-    @pytest_asyncio.fixture
-    async def vision_inference_service(self, vision_model_path: str):
-        """Create and load a vision inference service."""
-        from model_garden.inference import InferenceService
-
-        service = InferenceService(
-            model_path=vision_model_path,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.6,
-            max_model_len=2048,
-            max_num_seqs=4,
-            enforce_eager=True,
-            limit_mm_per_prompt={"image": 1, "video": 0},
-        )
-
-        await service.load_model()
-        yield service
-        await service.unload_model()
+class TestVisionModelLoadUnload:
+    """Tests for vision model loading lifecycle."""
 
     @pytest.mark.asyncio
     async def test_vision_model_loads(self, vision_model_path: str):
@@ -322,6 +299,29 @@ class TestVisionInferenceService:
 
         await service.unload_model()
 
+
+class TestVisionInferenceService:
+    """End-to-end tests for vision model inference."""
+
+    @pytest_asyncio.fixture
+    async def vision_inference_service(self, vision_model_path: str):
+        """Create and load a vision inference service."""
+        from model_garden.inference import InferenceService
+
+        service = InferenceService(
+            model_path=vision_model_path,
+            tensor_parallel_size=1,
+            gpu_memory_utilization=0.6,
+            max_model_len=2048,
+            max_num_seqs=4,
+            enforce_eager=True,
+            limit_mm_per_prompt={"image": 1, "video": 0},
+        )
+
+        await service.load_model()
+        yield service
+        await service.unload_model()
+
     @pytest.mark.asyncio
     async def test_vision_generation_with_image_file(
         self, vision_inference_service, test_images_dir: Path
@@ -331,36 +331,51 @@ class TestVisionInferenceService:
         if not image_path.exists():
             pytest.skip(f"Test image not found: {image_path}")
 
-        result = await vision_inference_service.generate(
-            prompt="<|im_start|>user\n<image>\nWhat shape and color is shown in this image?<|im_end|>\n<|im_start|>assistant\n",
+        # Read image and convert to base64 for chat_completion
+        with open(image_path, "rb") as f:
+            image_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+        messages = [
+            {"role": "user", "content": "What shape and color is shown in this image?"},
+        ]
+
+        # Use chat_completion which properly handles multimodal format
+        result = await vision_inference_service.chat_completion(
+            messages=messages,
             max_tokens=100,
             temperature=0.3,
-            images=[str(image_path)],
+            image=image_base64,
             stream=False,
         )
 
         assert isinstance(result, dict)
-        assert "text" in result
-        text_lower = result["text"].lower()
+        assert "choices" in result
+        content = result["choices"][0]["message"]["content"].lower()
         # Should identify the shape or color
-        assert any(word in text_lower for word in ["red", "square", "shape", "color"])
+        assert any(word in content for word in ["red", "square", "shape", "color"])
 
     @pytest.mark.asyncio
     async def test_vision_generation_with_base64_image(
         self, vision_inference_service, sample_image_base64: str
     ):
         """Test vision generation with base64 encoded image."""
-        result = await vision_inference_service.generate(
-            prompt="<|im_start|>user\n<image>\nDescribe what you see.<|im_end|>\n<|im_start|>assistant\n",
+        messages = [
+            {"role": "user", "content": "Describe what you see."},
+        ]
+
+        # Use chat_completion which properly handles multimodal format
+        result = await vision_inference_service.chat_completion(
+            messages=messages,
             max_tokens=100,
             temperature=0.3,
-            images=[sample_image_base64],
+            image=sample_image_base64,
             stream=False,
         )
 
         assert isinstance(result, dict)
-        assert "text" in result
-        assert len(result["text"]) > 0
+        assert "choices" in result
+        content = result["choices"][0]["message"]["content"]
+        assert len(content) > 0
 
     @pytest.mark.asyncio
     async def test_vision_chat_completion(self, vision_inference_service, test_images_dir: Path):
@@ -501,9 +516,13 @@ class TestInferenceAPIRoutes:
         return TestClient(app)
 
     @pytest_asyncio.fixture
-    async def loaded_model_app(self, text_model_path: str):
-        """Create an app with a model already loaded."""
-        from fastapi.testclient import TestClient
+    async def loaded_model_client(self, text_model_path: str):
+        """Create an async HTTP client with a model already loaded.
+        
+        Uses httpx.AsyncClient with ASGITransport for proper async support
+        with vLLM's async engine.
+        """
+        import httpx
 
         from model_garden.api.app import create_app
         from model_garden.inference import InferenceService, set_inference_service
@@ -520,9 +539,11 @@ class TestInferenceAPIRoutes:
         set_inference_service(service)
 
         app = create_app()
-        client = TestClient(app)
-
-        yield client
+        
+        # Use httpx.AsyncClient with ASGITransport for truly async requests
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
 
         # Cleanup
         await service.unload_model()
@@ -536,18 +557,18 @@ class TestInferenceAPIRoutes:
         assert data["loaded"] is False
 
     @pytest.mark.asyncio
-    async def test_inference_status_with_model(self, loaded_model_app):
+    async def test_inference_status_with_model(self, loaded_model_client):
         """Test inference status when a model is loaded."""
-        response = loaded_model_app.get("/api/v1/inference/status")
+        response = await loaded_model_client.get("/api/v1/inference/status")
         assert response.status_code == 200
         data = response.json()
         assert data["loaded"] is True
         assert data["model_info"] is not None
 
     @pytest.mark.asyncio
-    async def test_generate_endpoint(self, loaded_model_app):
+    async def test_generate_endpoint(self, loaded_model_client):
         """Test the generate endpoint."""
-        response = loaded_model_app.post(
+        response = await loaded_model_client.post(
             "/api/v1/inference/generate",
             json={
                 "prompt": "Hello, world!",
@@ -560,9 +581,9 @@ class TestInferenceAPIRoutes:
         assert "text" in data
 
     @pytest.mark.asyncio
-    async def test_chat_completions_endpoint(self, loaded_model_app):
+    async def test_chat_completions_endpoint(self, loaded_model_client):
         """Test the chat completions endpoint."""
-        response = loaded_model_app.post(
+        response = await loaded_model_client.post(
             "/api/v1/chat/completions",
             json={
                 "model": "test",
@@ -576,9 +597,9 @@ class TestInferenceAPIRoutes:
         assert len(data["choices"]) > 0
 
     @pytest.mark.asyncio
-    async def test_openai_compatible_endpoint(self, loaded_model_app):
+    async def test_openai_compatible_endpoint(self, loaded_model_client):
         """Test the OpenAI-compatible endpoint path."""
-        response = loaded_model_app.post(
+        response = await loaded_model_client.post(
             "/v1/chat/completions",
             json={
                 "model": "test",
