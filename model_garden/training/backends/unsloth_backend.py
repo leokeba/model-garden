@@ -12,7 +12,7 @@ from model_garden.utils.hf_cache import configure_hf_cache, configure_pytorch_me
 configure_hf_cache()
 configure_pytorch_memory()
 
-from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
+from model_garden.training.backends.base import TextTrainer, TrainingBackend, VisionTrainer
 
 # DON'T import the trainer classes at module level - causes circular imports!
 # They will be imported lazily when create_*_trainer() is called

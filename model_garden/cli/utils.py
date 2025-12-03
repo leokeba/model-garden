@@ -106,7 +106,7 @@ def list_backends_cmd() -> None:
         uv run model-garden list-backends
     """
     try:
-        from model_garden.backends import list_backends
+        from model_garden.training.backends import list_backends
 
         console.print("\n[bold cyan]Available Training Backends[/bold cyan]\n")
 

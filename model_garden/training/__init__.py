@@ -5,6 +5,11 @@ Training components for Model Garden:
 - vision_trainer.py: Vision-language model training (VisionLanguageTrainer)
 - config.py: Training configuration dataclasses
 - mixins.py: Shared trainer mixin with common functionality
+- backends/: Training backends (Unsloth, Transformers)
+  - base.py: Abstract base classes (TextTrainer, VisionTrainer, TrainingBackend)
+  - registry.py: Backend registration system
+  - unsloth_backend.py: Unsloth-optimized backend
+  - transformers_backend.py: Standard HuggingFace + PEFT backend
 - callbacks/: Training callbacks package (consolidated)
   - metrics.py: TrainingMetricsCallback
   - progress.py: ProgressEstimationCallback
@@ -18,6 +23,16 @@ Training components for Model Garden:
 - dataset_formats.py: Dataset format detection and conversion
 - chat_template.py: Chat template detection utilities
 """
+
+# Training backends
+from .backends import (
+    TextTrainer,
+    TrainingBackend,
+    VisionTrainer,
+    get_backend,
+    list_backends,
+    register_backend,
+)
 
 # Configuration dataclasses
 # Callbacks (consolidated in callbacks package)
@@ -172,4 +187,11 @@ __all__ = [
     # Chat template utilities
     "ChatTemplateDetector",
     "FALLBACK_MARKERS",
+    # Training backends
+    "TextTrainer",
+    "VisionTrainer",
+    "TrainingBackend",
+    "get_backend",
+    "list_backends",
+    "register_backend",
 ]

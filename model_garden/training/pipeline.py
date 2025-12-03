@@ -241,7 +241,7 @@ def train(
         Path(config.output_dir).mkdir(parents=True, exist_ok=True)
 
         # Get the appropriate backend
-        from model_garden.backends.registry import get_backend
+        from model_garden.training.backends.registry import get_backend
 
         training_backend = get_backend(backend)
 
@@ -251,8 +251,12 @@ def train(
                 base_model=base_model,
                 dataset_path=dataset_path,
                 dataset=dataset,
-                config=config if isinstance(config, VisionTrainingConfig) else VisionTrainingConfig(**config.to_dict()),
-                lora_config=lora_config if isinstance(lora_config, VisionLoRAConfig) else VisionLoRAConfig(**(lora_config.to_dict() if lora_config else {})),
+                config=config
+                if isinstance(config, VisionTrainingConfig)
+                else VisionTrainingConfig(**config.to_dict()),
+                lora_config=lora_config
+                if isinstance(lora_config, VisionLoRAConfig)
+                else VisionLoRAConfig(**(lora_config.to_dict() if lora_config else {})),
                 max_seq_length=max_seq_length or 16384,
                 load_in_4bit=load_in_4bit,
                 load_in_8bit=load_in_8bit,

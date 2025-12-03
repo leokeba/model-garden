@@ -22,7 +22,7 @@ from transformers import (
     Trainer,
 )
 
-from model_garden.backends.base import TextTrainer, TrainingBackend, VisionTrainer
+from model_garden.training.backends.base import TextTrainer, TrainingBackend, VisionTrainer
 from model_garden.training.config import TrainingConfig, VisionTrainingConfig
 from model_garden.training.mixins import TrainerMixin
 from model_garden.utils.console import console
@@ -223,32 +223,10 @@ class TransformersVisionTrainer(TrainerMixin, VisionTrainer):
         if enable_carbon_tracking:
             self._start_carbon_tracking(config.output_dir, job_id, "vision-training")
 
-        # Create training arguments
-        training_args = self._create_training_args(
-            output_dir=config.output_dir,
-            num_train_epochs=config.num_epochs,
-            per_device_train_batch_size=config.batch_size,
-            gradient_accumulation_steps=config.gradient_accumulation_steps,
-            learning_rate=config.learning_rate,
-            warmup_steps=config.warmup_steps,
-            max_steps=config.max_steps,
-            logging_steps=config.logging_steps,
-            save_steps=config.save_steps,
-            optim=config.optim,
-            weight_decay=config.weight_decay,
-            lr_scheduler_type=config.lr_scheduler_type,
-            max_grad_norm=config.max_grad_norm,
-            adam_beta1=config.adam_beta1,
-            adam_beta2=config.adam_beta2,
-            adam_epsilon=config.adam_epsilon,
-            dataloader_num_workers=config.dataloader_num_workers,
-            dataloader_pin_memory=config.dataloader_pin_memory,
-            save_total_limit=config.save_total_limit,
+        # Create training arguments using mixin helper
+        training_args = self._create_training_args_from_config(
+            config,
             eval_dataset=eval_dataset,
-            eval_strategy=config.eval_strategy,
-            eval_steps=config.eval_steps,
-            load_best_model_at_end=config.load_best_model_at_end,
-            metric_for_best_model=config.metric_for_best_model,
             remove_unused_columns=False,  # Important for vision models
         )
 
@@ -523,37 +501,17 @@ class TransformersTextTrainer(TrainerMixin, TextTrainer):
         output_field: str = "output",
         prompt_template: str | None = None,
     ) -> Dataset:
-        """Format dataset for instruction fine-tuning."""
-        console.print("[cyan]Formatting dataset...[/cyan]")
+        """Format dataset for instruction fine-tuning.
 
-        if prompt_template is None:
-            # Default Alpaca-style prompt
-            prompt_template = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
-
-### Instruction:
-{instruction}
-
-### Input:
-{input}
-
-### Response:
-{output}"""
-
-        def format_example(example):
-            instruction = example.get(instruction_field, "")
-            input_text = example.get(input_field, "")
-            output = example.get(output_field, "")
-
-            text = prompt_template.format(
-                instruction=instruction,
-                input=input_text,
-                output=output,
-            )
-            return {"text": text}
-
-        formatted_dataset = dataset.map(format_example)
-        console.print("[green]✓[/green] Dataset formatted")
-        return formatted_dataset
+        Delegates to TrainerMixin.format_text_dataset() for the actual formatting.
+        """
+        return self.format_text_dataset(
+            dataset=dataset,
+            instruction_field=instruction_field,
+            input_field=input_field,
+            output_field=output_field,
+            prompt_template=prompt_template,
+        )
 
     def train(
         self,
@@ -571,33 +529,8 @@ class TransformersTextTrainer(TrainerMixin, TextTrainer):
         if enable_carbon_tracking:
             self._start_carbon_tracking(config.output_dir, job_id, "training")
 
-        # Create training arguments
-        training_args = self._create_training_args(
-            output_dir=config.output_dir,
-            num_train_epochs=config.num_epochs,
-            per_device_train_batch_size=config.batch_size,
-            gradient_accumulation_steps=config.gradient_accumulation_steps,
-            learning_rate=config.learning_rate,
-            warmup_steps=config.warmup_steps,
-            max_steps=config.max_steps,
-            logging_steps=config.logging_steps,
-            save_steps=config.save_steps,
-            optim=config.optim,
-            weight_decay=config.weight_decay,
-            lr_scheduler_type=config.lr_scheduler_type,
-            max_grad_norm=config.max_grad_norm,
-            adam_beta1=config.adam_beta1,
-            adam_beta2=config.adam_beta2,
-            adam_epsilon=config.adam_epsilon,
-            dataloader_num_workers=config.dataloader_num_workers,
-            dataloader_pin_memory=config.dataloader_pin_memory,
-            save_total_limit=config.save_total_limit,
-            eval_dataset=eval_dataset,
-            eval_strategy=config.eval_strategy,
-            eval_steps=config.eval_steps,
-            load_best_model_at_end=config.load_best_model_at_end,
-            metric_for_best_model=config.metric_for_best_model,
-        )
+        # Create training arguments using mixin helper
+        training_args = self._create_training_args_from_config(config, eval_dataset=eval_dataset)
 
         all_callbacks = self._get_default_callbacks(callbacks)
 

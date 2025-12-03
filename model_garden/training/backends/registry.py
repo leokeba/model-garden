@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
-    from model_garden.backends.base import TrainingBackend
+    from model_garden.training.backends.base import TrainingBackend
 
 # Type definitions for better IDE support
 type BackendClass = type["TrainingBackend"]
@@ -42,7 +42,7 @@ def register_backend(name: str, backend_class: BackendClass) -> None:
         ValueError: If backend_class doesn't inherit from TrainingBackend
         TypeError: If backend_class is not a class
     """
-    from model_garden.backends.base import TrainingBackend
+    from model_garden.training.backends.base import TrainingBackend
 
     if not isinstance(backend_class, type):
         raise TypeError(f"Expected a class, got {type(backend_class).__name__}")

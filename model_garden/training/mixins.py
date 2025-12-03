@@ -295,6 +295,67 @@ class TrainerMixin:
         return cast(Dataset, dataset)
 
     # =========================================================================
+    # Dataset Formatting
+    # =========================================================================
+
+    # Default Alpaca-style prompt template for instruction fine-tuning
+    DEFAULT_PROMPT_TEMPLATE = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+{instruction}
+
+### Input:
+{input}
+
+### Response:
+{output}"""
+
+    def format_text_dataset(
+        self,
+        dataset: Dataset,
+        instruction_field: str = "instruction",
+        input_field: str = "input",
+        output_field: str = "output",
+        prompt_template: str | None = None,
+    ) -> Dataset:
+        """Format dataset for instruction fine-tuning (text models).
+
+        Applies a prompt template to each example in the dataset, creating a
+        'text' field that can be used for training.
+
+        Args:
+            dataset: Input dataset with instruction/input/output fields
+            instruction_field: Field name for instructions
+            input_field: Field name for inputs (optional context)
+            output_field: Field name for outputs/responses
+            prompt_template: Custom prompt template with {instruction}, {input},
+                           {output} placeholders. If None, uses Alpaca-style default.
+
+        Returns:
+            Formatted dataset with 'text' field suitable for training
+        """
+        console.print("[cyan]Formatting dataset...[/cyan]")
+
+        if prompt_template is None:
+            prompt_template = self.DEFAULT_PROMPT_TEMPLATE
+
+        def format_example(example):
+            instruction = example.get(instruction_field, "")
+            input_text = example.get(input_field, "")
+            output = example.get(output_field, "")
+
+            text = prompt_template.format(
+                instruction=instruction,
+                input=input_text,
+                output=output,
+            )
+            return {"text": text}
+
+        formatted_dataset = dataset.map(format_example)
+        console.print("[green]✓[/green] Dataset formatted")
+        return formatted_dataset
+
+    # =========================================================================
     # Carbon Tracking
     # =========================================================================
 
@@ -392,6 +453,53 @@ class TrainerMixin:
     # =========================================================================
     # Training Arguments
     # =========================================================================
+
+    def _create_training_args_from_config(
+        self,
+        config: Any,
+        eval_dataset: Any = None,
+        **kwargs,
+    ) -> TrainingArguments:
+        """Create training arguments from a TrainingConfig object.
+
+        This is a convenience wrapper around _create_training_args that extracts
+        values from a TrainingConfig dataclass, reducing boilerplate in train() methods.
+
+        Args:
+            config: TrainingConfig or VisionTrainingConfig instance
+            eval_dataset: Optional evaluation dataset (for setting eval strategy)
+            **kwargs: Additional arguments to override config values
+
+        Returns:
+            Configured TrainingArguments instance
+        """
+        return self._create_training_args(
+            output_dir=config.output_dir,
+            num_train_epochs=config.num_epochs,
+            per_device_train_batch_size=config.batch_size,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            learning_rate=config.learning_rate,
+            warmup_steps=config.warmup_steps,
+            max_steps=config.max_steps,
+            logging_steps=config.logging_steps,
+            save_steps=config.save_steps,
+            optim=config.optim,
+            weight_decay=config.weight_decay,
+            lr_scheduler_type=config.lr_scheduler_type,
+            max_grad_norm=config.max_grad_norm,
+            adam_beta1=config.adam_beta1,
+            adam_beta2=config.adam_beta2,
+            adam_epsilon=config.adam_epsilon,
+            dataloader_num_workers=config.dataloader_num_workers,
+            dataloader_pin_memory=config.dataloader_pin_memory,
+            save_total_limit=config.save_total_limit,
+            eval_dataset=eval_dataset,
+            eval_strategy=config.eval_strategy,
+            eval_steps=config.eval_steps,
+            load_best_model_at_end=config.load_best_model_at_end,
+            metric_for_best_model=config.metric_for_best_model,
+            **kwargs,
+        )
 
     def _create_training_args(
         self,

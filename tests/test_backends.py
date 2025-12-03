@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 import pytest
 from datasets import Dataset
 
-from model_garden.backends.base import (
+from model_garden.training.backends.base import (
     TextTrainer,
     TrainingBackend,
     VisionTrainer,
 )
-from model_garden.backends.registry import (
+from model_garden.training.backends.registry import (
     _BACKENDS,
     get_backend,
     is_backend_available,

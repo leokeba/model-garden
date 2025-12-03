@@ -32,7 +32,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from unsloth import FastVisionModel  # FastVisionModel for vision-language models
 
 # Import backend base class
-from model_garden.backends.base import VisionTrainer
+from model_garden.training.backends.base import VisionTrainer
 from model_garden.training.callbacks import MemoryMonitorCallback
 from model_garden.training.chat_template import ChatTemplateDetector
 
@@ -1636,7 +1636,7 @@ def create_vision_trainer(
         >>> trainer = create_vision_trainer("Qwen/Qwen2.5-VL-3B-Instruct", backend="unsloth")
         >>> trainer.load_model()
     """
-    from model_garden.backends import get_backend
+    from model_garden.training.backends import get_backend
 
     backend_instance = get_backend(backend)
     return backend_instance.create_vision_trainer(
