@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from model_garden.training.config import TrainingConfig, VisionTrainingConfig
+
 # Mark all tests in this module as integration tests requiring GPU
 pytestmark = [pytest.mark.integration, pytest.mark.requires_gpu, pytest.mark.slow]
 
@@ -203,16 +205,19 @@ class TestTextTrainingE2E:
         formatted_dataset = trainer.format_dataset(dataset)
         assert len(formatted_dataset) > 0, "Formatted dataset is empty"
 
-        # Train with minimal steps
-        trainer.train(
-            dataset=formatted_dataset,
+        # Train with minimal steps using TrainingConfig
+        config = TrainingConfig(
             output_dir=str(output_dir),
-            num_train_epochs=1,
-            per_device_train_batch_size=2,
+            num_epochs=1,
+            batch_size=2,
             gradient_accumulation_steps=1,
             max_steps=3,
             logging_steps=1,
             save_steps=3,
+        )
+        trainer.train(
+            dataset=formatted_dataset,
+            config=config,
             enable_carbon_tracking=False,  # Disable for faster tests
         )
 
@@ -345,16 +350,19 @@ class TestVisionTrainingE2E:
         formatted_dataset = trainer.format_dataset(dataset)
         assert len(formatted_dataset) > 0, "Formatted dataset is empty"
 
-        # Train with minimal steps
-        trainer.train(
-            dataset=formatted_dataset,
+        # Train with minimal steps using VisionTrainingConfig
+        config = VisionTrainingConfig(
             output_dir=str(output_dir),
-            num_train_epochs=1,
-            per_device_train_batch_size=1,
+            num_epochs=1,
+            batch_size=1,
             gradient_accumulation_steps=1,
             max_steps=2,
             logging_steps=1,
             save_steps=2,
+        )
+        trainer.train(
+            dataset=formatted_dataset,
+            config=config,
             enable_carbon_tracking=False,  # Disable for faster tests
         )
 
@@ -628,14 +636,17 @@ class TestModelOutputValidation:
         dataset = trainer.load_dataset_from_file(str(text_dataset))
         formatted_dataset = trainer.format_dataset(dataset)
 
-        trainer.train(
-            dataset=formatted_dataset,
+        config = TrainingConfig(
             output_dir=str(output_dir),
-            num_train_epochs=1,
-            per_device_train_batch_size=2,
+            num_epochs=1,
+            batch_size=2,
             max_steps=3,
             logging_steps=1,
             save_steps=3,
+        )
+        trainer.train(
+            dataset=formatted_dataset,
+            config=config,
             enable_carbon_tracking=False,
         )
 

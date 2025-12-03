@@ -34,6 +34,9 @@ from unsloth import FastVisionModel  # FastVisionModel for vision-language model
 # Import backend base class
 from model_garden.backends.base import VisionTrainer
 
+# Import configuration dataclasses
+from model_garden.training.config import VisionTrainingConfig
+
 # Import shared training mixin and utilities (consolidated location)
 from model_garden.training.mixins import (
     MemoryMonitorCallback,
@@ -503,22 +506,65 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         Returns:
             Dict with 'text', 'image', 'response', and 'system' keys
+
+        Raises:
+            ValueError: If messages is not a list or contains invalid entries
         """
+        # Validate input
+        if not isinstance(messages, list):
+            raise ValueError(
+                f"Expected 'messages' to be a list, got {type(messages).__name__}. "
+                f"Check your dataset format - it should have a 'messages' field containing a list."
+            )
+
+        if len(messages) == 0:
+            console.print("[yellow]⚠️  Empty messages list in dataset example[/yellow]")
+            return {"text": "", "image": None, "response": "", "system": ""}
+
         result: dict[str, str | None] = {"text": "", "image": None, "response": "", "system": ""}
 
-        for msg in messages:
+        for idx, msg in enumerate(messages):
+            # Validate each message is a dict
+            if not isinstance(msg, dict):
+                console.print(
+                    f"[yellow]⚠️  Message at index {idx} is not a dict (got {type(msg).__name__}), skipping[/yellow]"
+                )
+                continue
+
             role = msg.get("role", "")
             content = msg.get("content", [])
+
+            # Validate content is iterable (list or similar)
+            if not isinstance(content, (list, tuple)):
+                # Content might be a plain string (simplified format)
+                if isinstance(content, str):
+                    if role == "system" and not result["system"]:
+                        result["system"] = content
+                    elif role == "user" and not result["text"]:
+                        result["text"] = content
+                    elif role == "assistant" and not result["response"]:
+                        result["response"] = content
+                    continue
+                else:
+                    console.print(
+                        f"[yellow]⚠️  Message content at index {idx} is not a list or string "
+                        f"(got {type(content).__name__}), skipping[/yellow]"
+                    )
+                    continue
 
             if role == "system":
                 # Extract system message
                 for item in content:
+                    if not isinstance(item, dict):
+                        continue
                     if item.get("type") == "text" and not result["system"]:
                         result["system"] = item.get("text", "")
 
             elif role == "user":
                 # Extract text and image from user message
                 for item in content:
+                    if not isinstance(item, dict):
+                        continue
                     item_type = item.get("type", "")
                     if item_type == "text" and not result["text"]:
                         result["text"] = item.get("text", "")
@@ -533,8 +579,20 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             elif role == "assistant":
                 # Extract response from assistant message
                 for item in content:
+                    if not isinstance(item, dict):
+                        continue
                     if item.get("type") == "text" and not result["response"]:
                         result["response"] = item.get("text", "")
+
+        # Warn if essential fields are missing
+        if not result["text"] and not result["image"]:
+            console.print(
+                "[yellow]⚠️  No text or image found in user message - check dataset format[/yellow]"
+            )
+        if not result["response"]:
+            console.print(
+                "[yellow]⚠️  No response found in assistant message - check dataset format[/yellow]"
+            )
 
         return result
 
@@ -645,7 +703,16 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         return markers
 
     def _detect_vqa_format(self, example: dict) -> bool:
-        """Detect if example uses VQA format (question + answer/answers)."""
+        """Detect if example uses VQA format (question + answer/answers).
+
+        Args:
+            example: A single dataset example to check
+
+        Returns:
+            True if the example appears to be in VQA format
+        """
+        if not isinstance(example, dict):
+            return False
         has_question = "question" in example
         has_answer = "answer" in example or "answers" in example
         has_image = "image" in example
@@ -658,7 +725,19 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         - ScienceQA: {question, choices, answer (index), solution, image}
         - VQA: {question, answers (list), image}
         - DocVQA: {question, answers (list), image}
+
+        Args:
+            example: A VQA-style dataset example
+
+        Returns:
+            Dict with 'text', 'image', and 'response' keys
+
+        Raises:
+            ValueError: If example is not a dict
         """
+        if not isinstance(example, dict):
+            raise ValueError(f"Expected VQA example to be a dict, got {type(example).__name__}")
+
         result = {
             "text": example.get("question", ""),
             "image": example.get("image"),
@@ -891,88 +970,38 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
     def train(
         self,
         dataset: Dataset | list[dict],
-        output_dir: str,
+        config: VisionTrainingConfig,
         job_id: str | None = None,
         enable_carbon_tracking: bool = True,
-        num_train_epochs: int = 3,
-        per_device_train_batch_size: int = 1,  # Smaller for vision models
-        gradient_accumulation_steps: int = 8,  # Larger for vision models
-        learning_rate: float = 2e-5,  # Lower for vision models
-        warmup_steps: int = 10,
-        max_steps: int = -1,
-        logging_steps: int = 10,
-        save_steps: int = 100,
-        optim: str = "adamw_8bit",
-        weight_decay: float = 0.01,
-        lr_scheduler_type: str = "cosine",  # Cosine better for vision models
-        max_grad_norm: float = 1.0,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.999,
-        adam_epsilon: float = 1e-8,
-        dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = False,  # CRITICAL: Disable to prevent RAM accumulation
-        eval_strategy: str = "steps",
-        load_best_model_at_end: bool = True,
-        metric_for_best_model: str = "eval_loss",
-        save_total_limit: int = 3,
         callbacks: list | None = None,
         eval_dataset: Dataset | list[dict] | None = None,
-        eval_steps: int | None = None,
-        selective_loss: bool = False,
-        selective_loss_level: str = "conservative",
-        selective_loss_schema_keys: list[str] | None = None,
-        selective_loss_masking_strategy: str = "epoch_based",
-        selective_loss_masking_start_epoch: float = 0.0,
-        selective_loss_mask_every_n_steps: int = 100,
-        selective_loss_mask_for_n_steps: int = 50,
-        selective_loss_structural_weight: float = 0.1,
-        selective_loss_verbose: bool = False,
     ) -> None:
         """Train the vision-language model.
 
         Args:
             dataset: Training dataset (Dataset object or list of formatted messages)
-            output_dir: Directory to save checkpoints
-            num_train_epochs: Number of training epochs
-            per_device_train_batch_size: Batch size per device (use 1 for vision models)
-            gradient_accumulation_steps: Gradient accumulation steps (higher for vision models)
-            learning_rate: Learning rate (lower for vision models, typically 2e-5)
-            warmup_steps: Number of warmup steps
-            max_steps: Maximum training steps (-1 for full epochs)
-            logging_steps: Log every N steps
-            save_steps: Save checkpoint every N steps
-            optim: Optimizer to use (adamw_8bit, adamw_torch, adafactor, etc.)
-            weight_decay: Weight decay for regularization
-            lr_scheduler_type: Learning rate scheduler (cosine recommended for vision models)
-            max_grad_norm: Maximum gradient norm for clipping
-            adam_beta1: Beta1 parameter for Adam optimizer
-            adam_beta2: Beta2 parameter for Adam optimizer
-            adam_epsilon: Epsilon parameter for Adam optimizer
-            dataloader_num_workers: Number of dataloader workers
-            dataloader_pin_memory: Whether to pin memory in dataloader
-            eval_strategy: Evaluation strategy ('no', 'steps', 'epoch')
-            load_best_model_at_end: Load best model at end of training
-            metric_for_best_model: Metric to use for best model selection
-            save_total_limit: Maximum number of checkpoints to keep
+            config: Vision training configuration (hyperparameters, output directory,
+                    selective loss settings, etc.)
+            job_id: Optional job identifier for carbon tracking
+            enable_carbon_tracking: Whether to track carbon emissions
             callbacks: Optional list of TrainerCallback instances
             eval_dataset: Optional validation dataset for evaluation
-            eval_steps: Optional number of steps between evaluations (defaults to save_steps)
-            selective_loss: Enable selective loss masking for structured outputs
-            selective_loss_level: Masking level ('conservative', 'moderate', 'aggressive')
-            selective_loss_schema_keys: Schema keys to mask in aggressive mode
-            selective_loss_masking_strategy: Masking strategy ('epoch_based', 'alternating', or 'weighted')
-            selective_loss_masking_start_epoch: [epoch_based] Delay masking until this epoch
-            selective_loss_mask_every_n_steps: [alternating] Cycle length in steps
-            selective_loss_mask_for_n_steps: [alternating] Steps with masking ON per cycle
-            selective_loss_structural_weight: [weighted] Weight for structural tokens (0.0-1.0, default 0.1)
-            selective_loss_verbose: Print masking statistics during training
+
+        Example:
+            >>> config = VisionTrainingConfig(
+            ...     output_dir="./models/vision-model",
+            ...     num_epochs=3,
+            ...     selective_loss=True,
+            ...     selective_loss_level="aggressive"
+            ... )
+            >>> trainer.train(dataset, config)
         """
         console.print("[bold cyan]Starting vision-language model training...[/bold cyan]")
 
         # Note: Using DataLoader workers with vision models can be tricky
-        if dataloader_num_workers > 0:
+        if config.dataloader_num_workers > 0:
             console.print(
-                f"[yellow]⚠️  INFO: Using {dataloader_num_workers} DataLoader workers[/yellow]"
+                f"[yellow]⚠️  INFO: Using {config.dataloader_num_workers} DataLoader workers[/yellow]"
             )
             console.print(
                 "[yellow]   Multiple workers can improve throughput but use more memory[/yellow]"
@@ -983,7 +1012,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         # Start carbon tracking (uses mixin helper)
         if enable_carbon_tracking:
-            self._start_carbon_tracking(output_dir, job_id, "vision-training")
+            self._start_carbon_tracking(config.output_dir, job_id, "vision-training")
 
         from trl.trainer.sft_config import SFTConfig
         from unsloth.trainer import UnslothVisionDataCollator
@@ -1002,18 +1031,17 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         # Set evaluation strategy if validation dataset provided
         do_eval = eval_dataset is not None
-        eval_steps_value = eval_steps if eval_steps is not None else save_steps
+        eval_steps_value = config.eval_steps if config.eval_steps is not None else config.save_steps
 
         # When using max_steps, still need to provide num_train_epochs
-        use_max_steps = max_steps > 0
+        use_max_steps = config.max_steps > 0
 
         # Set evaluation strategy if validation dataset provided
-        final_eval_strategy = eval_strategy if eval_dataset is not None else "no"
-        eval_steps_value = eval_steps if eval_steps is not None else save_steps
+        final_eval_strategy = config.eval_strategy if eval_dataset is not None else "no"
 
         # Determine if we should load best model at end
-        final_load_best = load_best_model_at_end and eval_dataset is not None
-        final_metric = metric_for_best_model if eval_dataset is not None else None
+        final_load_best = config.load_best_model_at_end and eval_dataset is not None
+        final_metric = config.metric_for_best_model if eval_dataset is not None else None
 
         # Build training args - SFTConfig has different parameters than TrainingArguments
         # Detect model's actual dtype to set precision correctly
@@ -1029,29 +1057,29 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         )
 
         training_args_dict = {
-            "output_dir": output_dir,
-            "per_device_train_batch_size": per_device_train_batch_size,
-            "gradient_accumulation_steps": gradient_accumulation_steps,
-            "warmup_steps": warmup_steps,
-            "max_steps": max_steps if use_max_steps else -1,
-            "num_train_epochs": 1.0 if use_max_steps else num_train_epochs,
-            "learning_rate": learning_rate,
+            "output_dir": config.output_dir,
+            "per_device_train_batch_size": config.batch_size,
+            "gradient_accumulation_steps": config.gradient_accumulation_steps,
+            "warmup_steps": config.warmup_steps,
+            "max_steps": config.max_steps if use_max_steps else -1,
+            "num_train_epochs": 1.0 if use_max_steps else config.num_epochs,
+            "learning_rate": config.learning_rate,
             # Precision settings: Match the model's actual dtype using shared utilities
             "fp16": precision_config["fp16"],
             "bf16": precision_config["bf16"],
-            "logging_steps": logging_steps,
-            "optim": optim,
-            "weight_decay": weight_decay,
-            "lr_scheduler_type": lr_scheduler_type,
-            "max_grad_norm": max_grad_norm,
-            "adam_beta1": adam_beta1,
-            "adam_beta2": adam_beta2,
-            "adam_epsilon": adam_epsilon,
-            "dataloader_num_workers": dataloader_num_workers,
-            "dataloader_pin_memory": dataloader_pin_memory,
+            "logging_steps": config.logging_steps,
+            "optim": config.optim,
+            "weight_decay": config.weight_decay,
+            "lr_scheduler_type": config.lr_scheduler_type,
+            "max_grad_norm": config.max_grad_norm,
+            "adam_beta1": config.adam_beta1,
+            "adam_beta2": config.adam_beta2,
+            "adam_epsilon": config.adam_epsilon,
+            "dataloader_num_workers": config.dataloader_num_workers,
+            "dataloader_pin_memory": config.dataloader_pin_memory,
             "seed": 42,
-            "save_steps": save_steps,
-            "save_total_limit": save_total_limit,
+            "save_steps": config.save_steps,
+            "save_total_limit": config.save_total_limit,
             "report_to": "none",
             # CRITICAL for vision models - Unsloth requirements:
             "remove_unused_columns": False,
@@ -1064,7 +1092,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
 
         # Add evaluation settings if validation dataset provided
         if eval_dataset is not None:
-            training_args_dict["per_device_eval_batch_size"] = per_device_train_batch_size
+            training_args_dict["per_device_eval_batch_size"] = config.batch_size
             training_args_dict["do_eval"] = True
             training_args_dict["eval_strategy"] = final_eval_strategy
             training_args_dict["eval_steps"] = eval_steps_value
@@ -1082,42 +1110,42 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         instruction_marker, response_marker = self._detect_chat_markers(self.processor)
 
         # Choose data collator based on selective_loss flag
-        if selective_loss:
+        if config.selective_loss:
             # Lazy import to avoid spawning torch compile workers at module import time
             from model_garden.training.selective_loss import create_selective_loss_collator
 
             console.print(
-                f"[cyan]🎯 Using selective loss masking (level: {selective_loss_level})[/cyan]"
+                f"[cyan]🎯 Using selective loss masking (level: {config.selective_loss_level})[/cyan]"
             )
-            console.print(f"[cyan]   Strategy: {selective_loss_masking_strategy}[/cyan]")
+            console.print(f"[cyan]   Strategy: {config.selective_loss_masking_strategy}[/cyan]")
             if (
-                selective_loss_masking_strategy == "epoch_based"
-                and selective_loss_masking_start_epoch > 0.0
+                config.selective_loss_masking_strategy == "epoch_based"
+                and config.selective_loss_masking_start_epoch > 0.0
             ):
                 console.print(
-                    f"[yellow]   ⏱️  Masking delayed until epoch {selective_loss_masking_start_epoch}[/yellow]"
+                    f"[yellow]   ⏱️  Masking delayed until epoch {config.selective_loss_masking_start_epoch}[/yellow]"
                 )
-            elif selective_loss_masking_strategy == "alternating":
+            elif config.selective_loss_masking_strategy == "alternating":
                 console.print(
-                    f"[yellow]   🔄 Alternating: ON for {selective_loss_mask_for_n_steps}/{selective_loss_mask_every_n_steps} steps per cycle[/yellow]"
+                    f"[yellow]   🔄 Alternating: ON for {config.selective_loss_mask_for_n_steps}/{config.selective_loss_mask_every_n_steps} steps per cycle[/yellow]"
                 )
-            elif selective_loss_masking_strategy == "weighted":
+            elif config.selective_loss_masking_strategy == "weighted":
                 console.print(
-                    f"[yellow]   ⚖️  Weighted: structural tokens weight = {selective_loss_structural_weight}[/yellow]"
+                    f"[yellow]   ⚖️  Weighted: structural tokens weight = {config.selective_loss_structural_weight}[/yellow]"
                 )
 
             data_collator = create_selective_loss_collator(
                 model=self.model,
                 processor=self.processor,
-                mask_level=selective_loss_level,
-                schema_keys=selective_loss_schema_keys,
+                mask_level=config.selective_loss_level,
+                schema_keys=config.selective_loss_schema_keys,
                 dataset=train_dataset,  # Pass dataset for auto-detection
-                masking_strategy=selective_loss_masking_strategy,
-                masking_start_epoch=selective_loss_masking_start_epoch,
-                mask_every_n_steps=selective_loss_mask_every_n_steps,
-                mask_for_n_steps=selective_loss_mask_for_n_steps,
-                structural_weight=selective_loss_structural_weight,
-                verbose=selective_loss_verbose,
+                masking_strategy=config.selective_loss_masking_strategy,
+                masking_start_epoch=config.selective_loss_masking_start_epoch,
+                mask_every_n_steps=config.selective_loss_mask_every_n_steps,
+                mask_for_n_steps=config.selective_loss_mask_for_n_steps,
+                structural_weight=config.selective_loss_structural_weight,
+                verbose=config.selective_loss_verbose,
                 train_on_responses_only=True,  # Enable prompt masking
                 instruction_part=instruction_marker,  # Auto-detected from tokenizer
                 response_part=response_marker,  # Auto-detected from tokenizer
@@ -1170,7 +1198,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             )
 
         # Choose trainer based on masking strategy
-        if selective_loss and selective_loss_masking_strategy == "weighted":
+        if config.selective_loss and config.selective_loss_masking_strategy == "weighted":
             # Use WeightedLossTrainer for weighted masking
             from model_garden.training.weighted_loss import WeightedLossTrainer
 
@@ -1184,7 +1212,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
                 data_collator=data_collator,
                 callbacks=all_callbacks,
                 tokenizer=self.tokenizer,  # type: ignore
-                verbose_loss=selective_loss_verbose,
+                verbose_loss=config.selective_loss_verbose,
             )
         else:
             # Use our fixed SFTTrainer that passes num_items_in_batch during evaluation
@@ -1199,7 +1227,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             )
 
         # Link trainer to data collator for epoch-based masking
-        if selective_loss:
+        if config.selective_loss:
             from model_garden.training.selective_loss import SelectiveLossVisionCollator
 
             if isinstance(data_collator, SelectiveLossVisionCollator):
@@ -1210,7 +1238,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
         console.print("[bold green]✨ Training completed![/bold green]")
 
         # Print selective loss statistics if enabled
-        if selective_loss:
+        if config.selective_loss:
             from model_garden.training.selective_loss import SelectiveLossVisionCollator
 
             if isinstance(data_collator, SelectiveLossVisionCollator):

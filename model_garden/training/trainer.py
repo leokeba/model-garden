@@ -27,6 +27,9 @@ from unsloth import FastLanguageModel
 # Import backend base class
 from model_garden.backends.base import TextTrainer
 
+# Import configuration dataclasses
+from model_garden.training.config import TrainingConfig
+
 # Import shared training mixin and utilities
 from model_garden.training.mixins import TrainerMixin
 
@@ -226,65 +229,30 @@ class ModelTrainer(TrainerMixin, TextTrainer):
     def train(
         self,
         dataset: Dataset,
-        output_dir: str,
+        config: TrainingConfig,
         job_id: str | None = None,
         enable_carbon_tracking: bool = True,
-        num_train_epochs: int = 3,
-        per_device_train_batch_size: int = 2,
-        gradient_accumulation_steps: int = 4,
-        learning_rate: float = 2e-4,
-        warmup_steps: int = 10,
-        max_steps: int = -1,
-        logging_steps: int = 10,
-        save_steps: int = 100,
-        optim: str = "adamw_8bit",
-        weight_decay: float = 0.01,
-        lr_scheduler_type: str = "linear",
-        max_grad_norm: float = 1.0,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.999,
-        adam_epsilon: float = 1e-8,
-        dataloader_num_workers: int = 0,
-        dataloader_pin_memory: bool = True,
-        eval_strategy: str = "steps",
-        load_best_model_at_end: bool = True,
-        metric_for_best_model: str = "eval_loss",
-        save_total_limit: int = 3,
         callbacks: list | None = None,
         eval_dataset: Dataset | None = None,
-        eval_steps: int | None = None,
     ) -> None:
         """Train the model.
 
         Args:
             dataset: Training dataset (should have 'text' field)
-            output_dir: Directory to save checkpoints
+            config: Training configuration (hyperparameters, output directory, etc.)
             job_id: Optional job identifier for carbon tracking
             enable_carbon_tracking: Whether to track carbon emissions
-            num_train_epochs: Number of training epochs
-            per_device_train_batch_size: Batch size per device
-            gradient_accumulation_steps: Gradient accumulation steps
-            learning_rate: Learning rate
-            warmup_steps: Number of warmup steps
-            max_steps: Maximum training steps (-1 for full epochs)
-            logging_steps: Log every N steps
-            save_steps: Save checkpoint every N steps
-            optim: Optimizer to use (adamw_8bit, adamw_torch, adafactor, etc.)
-            weight_decay: Weight decay for regularization
-            lr_scheduler_type: Learning rate scheduler (linear, cosine, constant, etc.)
-            max_grad_norm: Maximum gradient norm for clipping
-            adam_beta1: Beta1 parameter for Adam optimizer
-            adam_beta2: Beta2 parameter for Adam optimizer
-            adam_epsilon: Epsilon parameter for Adam optimizer
-            dataloader_num_workers: Number of dataloader workers
-            dataloader_pin_memory: Whether to pin memory in dataloader
-            eval_strategy: Evaluation strategy ('no', 'steps', 'epoch')
-            load_best_model_at_end: Load best model at end of training
-            metric_for_best_model: Metric to use for best model selection
-            save_total_limit: Maximum number of checkpoints to keep
             callbacks: Optional list of TrainerCallback instances
             eval_dataset: Optional validation dataset for evaluation
-            eval_steps: Optional number of steps between evaluations (defaults to save_steps)
+
+        Example:
+            >>> config = TrainingConfig(
+            ...     output_dir="./models/my-model",
+            ...     num_epochs=3,
+            ...     batch_size=4,
+            ...     learning_rate=2e-4
+            ... )
+            >>> trainer.train(dataset, config)
         """
         console.print("[cyan]Starting training...[/cyan]")
 
@@ -294,37 +262,37 @@ class ModelTrainer(TrainerMixin, TextTrainer):
 
         # Start carbon tracking (uses mixin helper)
         if enable_carbon_tracking:
-            self._start_carbon_tracking(output_dir, job_id, "training")
+            self._start_carbon_tracking(config.output_dir, job_id, "training")
 
         # Create training arguments using mixin helper
         # NOTE: Text-only training uses 'text' field format (not messages)
         # For instruction fine-tuning, the format_dataset() method creates a single
         # 'text' field with instruction/input/output sections.
         training_args = self._create_training_args(
-            output_dir=output_dir,
-            num_train_epochs=num_train_epochs,
-            per_device_train_batch_size=per_device_train_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=learning_rate,
-            warmup_steps=warmup_steps,
-            max_steps=max_steps,
-            logging_steps=logging_steps,
-            save_steps=save_steps,
-            optim=optim,
-            weight_decay=weight_decay,
-            lr_scheduler_type=lr_scheduler_type,
-            max_grad_norm=max_grad_norm,
-            adam_beta1=adam_beta1,
-            adam_beta2=adam_beta2,
-            adam_epsilon=adam_epsilon,
-            dataloader_num_workers=dataloader_num_workers,
-            dataloader_pin_memory=dataloader_pin_memory,
-            save_total_limit=save_total_limit,
+            output_dir=config.output_dir,
+            num_train_epochs=config.num_epochs,
+            per_device_train_batch_size=config.batch_size,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
+            learning_rate=config.learning_rate,
+            warmup_steps=config.warmup_steps,
+            max_steps=config.max_steps,
+            logging_steps=config.logging_steps,
+            save_steps=config.save_steps,
+            optim=config.optim,
+            weight_decay=config.weight_decay,
+            lr_scheduler_type=config.lr_scheduler_type,
+            max_grad_norm=config.max_grad_norm,
+            adam_beta1=config.adam_beta1,
+            adam_beta2=config.adam_beta2,
+            adam_epsilon=config.adam_epsilon,
+            dataloader_num_workers=config.dataloader_num_workers,
+            dataloader_pin_memory=config.dataloader_pin_memory,
+            save_total_limit=config.save_total_limit,
             eval_dataset=eval_dataset,
-            eval_strategy=eval_strategy,
-            eval_steps=eval_steps,
-            load_best_model_at_end=load_best_model_at_end,
-            metric_for_best_model=metric_for_best_model,
+            eval_strategy=config.eval_strategy,
+            eval_steps=config.eval_steps,
+            load_best_model_at_end=config.load_best_model_at_end,
+            metric_for_best_model=config.metric_for_best_model,
         )
 
         # Get callbacks (uses mixin helper)
@@ -349,8 +317,8 @@ class ModelTrainer(TrainerMixin, TextTrainer):
         self._stop_carbon_tracking()
 
         # Save final model
-        console.print(f"[cyan]Saving model to: {output_dir}[/cyan]")
-        trainer.save_model(output_dir)
+        console.print(f"[cyan]Saving model to: {config.output_dir}[/cyan]")
+        trainer.save_model(config.output_dir)
 
         # Ensure tokenizer is available
         if self.tokenizer is None:

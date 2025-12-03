@@ -17,6 +17,8 @@ from typing import Any
 
 import torch
 
+from model_garden.training.config import TrainingConfig, VisionTrainingConfig
+
 from .storage import get_storage_manager
 from .websocket import get_connection_manager
 
@@ -659,27 +661,30 @@ def _run_vision_training(
             )
         )
 
-    # Train
+    # Train using VisionTrainingConfig
     hyperparams = job["hyperparameters"]
-    trainer.train(
-        dataset=formatted_train_dataset,
-        eval_dataset=formatted_val_dataset,
-        eval_steps=hyperparams.get("eval_steps"),
+    config = VisionTrainingConfig(
         output_dir=job["output_dir"],
-        num_train_epochs=hyperparams.get("num_epochs", 3),
-        per_device_train_batch_size=hyperparams.get("batch_size", 1),
+        num_epochs=hyperparams.get("num_epochs", 3),
+        batch_size=hyperparams.get("batch_size", 1),
         gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 8),
         learning_rate=hyperparams.get("learning_rate", 2e-5),
         warmup_steps=hyperparams.get("warmup_steps", 10),
         max_steps=hyperparams.get("max_steps", -1),
         logging_steps=hyperparams.get("logging_steps", 10),
         save_steps=hyperparams.get("save_steps", 100),
+        eval_steps=hyperparams.get("eval_steps"),
         optim=hyperparams.get("optim", "adamw_8bit"),
         weight_decay=hyperparams.get("weight_decay", 0.01),
         lr_scheduler_type=hyperparams.get("lr_scheduler_type", "cosine"),
-        callbacks=callbacks,
         selective_loss=job.get("selective_loss", False),
         selective_loss_level=job.get("selective_loss_level", "conservative"),
+    )
+    trainer.train(
+        dataset=formatted_train_dataset,
+        config=config,
+        eval_dataset=formatted_val_dataset,
+        callbacks=callbacks,
     )
 
     # Save
@@ -778,24 +783,27 @@ def _run_text_training(
             )
         )
 
-    # Train
+    # Train using TrainingConfig
     hyperparams = job["hyperparameters"]
-    trainer.train(
-        dataset=train_dataset,
-        eval_dataset=val_dataset,
-        eval_steps=hyperparams.get("eval_steps"),
+    config = TrainingConfig(
         output_dir=job["output_dir"],
-        num_train_epochs=hyperparams.get("num_epochs", 3),
-        per_device_train_batch_size=hyperparams.get("batch_size", 2),
+        num_epochs=hyperparams.get("num_epochs", 3),
+        batch_size=hyperparams.get("batch_size", 2),
         gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
         learning_rate=hyperparams.get("learning_rate", 2e-4),
         warmup_steps=hyperparams.get("warmup_steps", 10),
         max_steps=hyperparams.get("max_steps", -1),
         logging_steps=hyperparams.get("logging_steps", 10),
         save_steps=hyperparams.get("save_steps", 100),
+        eval_steps=hyperparams.get("eval_steps"),
         optim=hyperparams.get("optim", "adamw_8bit"),
         weight_decay=hyperparams.get("weight_decay", 0.01),
         lr_scheduler_type=hyperparams.get("lr_scheduler_type", "linear"),
+    )
+    trainer.train(
+        dataset=train_dataset,
+        config=config,
+        eval_dataset=val_dataset,
         callbacks=callbacks,
     )
 

@@ -7,6 +7,7 @@ Contains:
 
 import click
 
+from model_garden.training.config import TrainingConfig, VisionTrainingConfig
 from model_garden.utils.console import console
 
 
@@ -364,12 +365,11 @@ def train(
             output_field=output_field,
         )
 
-        # Train
-        trainer.train(
-            dataset=train_dataset,
+        # Train using TrainingConfig
+        config = TrainingConfig(
             output_dir=output_dir,
-            num_train_epochs=epochs,
-            per_device_train_batch_size=batch_size,
+            num_epochs=epochs,
+            batch_size=batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
             learning_rate=learning_rate,
             max_steps=max_steps,
@@ -386,6 +386,7 @@ def train(
             eval_strategy=eval_strategy,
             save_total_limit=save_total_limit,
         )
+        trainer.train(dataset=train_dataset, config=config)
 
         # Save final model
         if save_method != "lora":
@@ -846,12 +847,11 @@ def train_vision(
             schema_keys_list = [k.strip() for k in selective_loss_schema_keys.split(",")]
             console.print(f"[cyan]Schema keys to mask: {schema_keys_list}[/cyan]")
 
-        # Train
-        trainer.train(
-            dataset=train_dataset,
+        # Train using VisionTrainingConfig
+        config = VisionTrainingConfig(
             output_dir=output_dir,
-            num_train_epochs=epochs,
-            per_device_train_batch_size=batch_size,
+            num_epochs=epochs,
+            batch_size=batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
             learning_rate=learning_rate,
             max_steps=max_steps,
@@ -877,6 +877,7 @@ def train_vision(
             selective_loss_structural_weight=selective_loss_structural_weight,
             selective_loss_verbose=selective_loss_verbose,
         )
+        trainer.train(dataset=train_dataset, config=config)
 
         # Save final model with specified method
         trainer.save_model(output_dir, save_method=save_method)

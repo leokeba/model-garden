@@ -6,6 +6,8 @@ memory cleanup between jobs and prevent memory accumulation in the main API proc
 
 import multiprocessing as mp
 
+from model_garden.training.config import TrainingConfig, VisionTrainingConfig
+
 
 def run_training_in_subprocess(job_config: dict) -> dict:
     """Execute training in a subprocess with complete memory isolation.
@@ -85,21 +87,17 @@ def run_training_in_subprocess(job_config: dict) -> dict:
 
             # Train (no callbacks in subprocess - progress updates handled by parent)
             hyperparams = job_config["hyperparameters"]
-            trainer.train(
-                dataset=formatted_train_dataset,
-                eval_dataset=formatted_val_dataset,
-                eval_steps=hyperparams.get("eval_steps"),
+            config = VisionTrainingConfig(
                 output_dir=job_config["output_dir"],
-                job_id=job_id,
-                enable_carbon_tracking=True,
-                num_train_epochs=hyperparams.get("num_epochs", 3),
-                per_device_train_batch_size=hyperparams.get("batch_size", 1),
+                num_epochs=hyperparams.get("num_epochs", 3),
+                batch_size=hyperparams.get("batch_size", 1),
                 gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 8),
                 learning_rate=hyperparams.get("learning_rate", 2e-5),
                 warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
+                eval_steps=hyperparams.get("eval_steps"),
                 optim=hyperparams.get("optim", "adamw_8bit"),
                 weight_decay=hyperparams.get("weight_decay", 0.01),
                 lr_scheduler_type=hyperparams.get("lr_scheduler_type", "cosine"),
@@ -112,7 +110,6 @@ def run_training_in_subprocess(job_config: dict) -> dict:
                 load_best_model_at_end=hyperparams.get("load_best_model_at_end", True),
                 metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
                 save_total_limit=hyperparams.get("save_total_limit", 3),
-                callbacks=None,  # No callbacks in subprocess
                 selective_loss=job_config.get("selective_loss", False),
                 selective_loss_level=job_config.get("selective_loss_level", "conservative"),
                 selective_loss_schema_keys=job_config.get("selective_loss_schema_keys"),
@@ -120,6 +117,14 @@ def run_training_in_subprocess(job_config: dict) -> dict:
                     "selective_loss_masking_start_epoch", 0.0
                 ),
                 selective_loss_verbose=job_config.get("selective_loss_verbose", False),
+            )
+            trainer.train(
+                dataset=formatted_train_dataset,
+                config=config,
+                job_id=job_id,
+                enable_carbon_tracking=True,
+                eval_dataset=formatted_val_dataset,
+                callbacks=None,  # No callbacks in subprocess
             )
 
             # Save model
@@ -197,23 +202,19 @@ def run_training_in_subprocess(job_config: dict) -> dict:
                     output_field=job_config["hyperparameters"].get("output_field", "output"),
                 )
 
-            # Train
+            # Train using TrainingConfig
             hyperparams = job_config["hyperparameters"]
-            trainer.train(
-                dataset=train_dataset,
-                eval_dataset=val_dataset,
-                eval_steps=hyperparams.get("eval_steps"),
+            config = TrainingConfig(
                 output_dir=job_config["output_dir"],
-                job_id=job_id,
-                enable_carbon_tracking=True,
-                num_train_epochs=hyperparams.get("num_epochs", 3),
-                per_device_train_batch_size=hyperparams.get("batch_size", 2),
+                num_epochs=hyperparams.get("num_epochs", 3),
+                batch_size=hyperparams.get("batch_size", 2),
                 gradient_accumulation_steps=hyperparams.get("gradient_accumulation_steps", 4),
                 learning_rate=hyperparams.get("learning_rate", 2e-4),
                 warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
+                eval_steps=hyperparams.get("eval_steps"),
                 optim=hyperparams.get("optim", "adamw_8bit"),
                 weight_decay=hyperparams.get("weight_decay", 0.01),
                 lr_scheduler_type=hyperparams.get("lr_scheduler_type", "linear"),
@@ -226,6 +227,13 @@ def run_training_in_subprocess(job_config: dict) -> dict:
                 load_best_model_at_end=hyperparams.get("load_best_model_at_end", True),
                 metric_for_best_model=hyperparams.get("metric_for_best_model", "eval_loss"),
                 save_total_limit=hyperparams.get("save_total_limit", 3),
+            )
+            trainer.train(
+                dataset=train_dataset,
+                config=config,
+                job_id=job_id,
+                enable_carbon_tracking=True,
+                eval_dataset=val_dataset,
                 callbacks=None,
             )
 

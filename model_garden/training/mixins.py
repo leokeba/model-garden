@@ -28,48 +28,67 @@ from model_garden.utils.hf_cache import get_hf_token
 
 
 class MemoryMonitorCallback(TrainerCallback):
-    """Monitor memory usage and tensor count during training.
+    """Monitor memory usage during training.
 
     This callback provides visibility into memory usage patterns during training.
     Memory grows during the first ~80-100 steps (warmup phase) as PyTorch
     allocates memory pools, then stabilizes for the rest of training.
 
-    The callback handles weak references gracefully to prevent crashes during
-    garbage collection cycles.
+    Uses efficient CUDA memory APIs instead of iterating over all Python objects,
+    which was causing significant overhead (1M+ objects to iterate).
     """
 
+    def __init__(self, log_every_n_steps: int = 10):
+        """Initialize the memory monitor.
+
+        Args:
+            log_every_n_steps: How often to log memory stats (default: every 10 steps)
+        """
+        super().__init__()
+        self.log_every_n_steps = log_every_n_steps
+        self._peak_gpu_mb = 0.0
+        self._peak_ram_mb = 0.0
+
     def on_step_end(self, args, state, control, **kwargs):
-        """Log memory stats every 10 steps."""
-        if state.global_step % 10 == 0:
+        """Log memory stats periodically."""
+        if state.global_step % self.log_every_n_steps == 0:
             try:
-                # Count tensor objects for debugging
-                # Note: Wrap in try-except to handle weak references that may have been collected
-                tensors = []
-                for obj in gc.get_objects():
-                    try:
-                        if isinstance(obj, torch.Tensor):
-                            tensors.append(obj)
-                    except ReferenceError:
-                        # Object was weakly referenced and has been collected
-                        continue
-
-                cpu_tensors = [t for t in tensors if t.device.type == "cpu"]
-                cuda_tensors = [t for t in tensors if t.device.type == "cuda"]
-
-                # Get process memory usage
+                # Get process RAM usage (fast - single syscall)
                 process = psutil.Process()
-                mem_mb = process.memory_info().rss / (1024 * 1024)
+                ram_mb = process.memory_info().rss / (1024 * 1024)
+                self._peak_ram_mb = max(self._peak_ram_mb, ram_mb)
 
-                console.print(
-                    f"[cyan]Step {state.global_step}: {len(tensors)} tensors "
-                    f"(CPU: {len(cpu_tensors)}, GPU: {len(cuda_tensors)}), RAM: {int(mem_mb)} MB[/cyan]"
-                )
+                # Get GPU memory usage (fast - uses CUDA APIs directly)
+                if torch.cuda.is_available():
+                    gpu_allocated_mb = torch.cuda.memory_allocated() / (1024 * 1024)
+                    gpu_reserved_mb = torch.cuda.memory_reserved() / (1024 * 1024)
+                    self._peak_gpu_mb = max(self._peak_gpu_mb, gpu_allocated_mb)
+
+                    console.print(
+                        f"[cyan]Step {state.global_step}: "
+                        f"GPU {gpu_allocated_mb:.0f}MB allocated / {gpu_reserved_mb:.0f}MB reserved, "
+                        f"RAM {ram_mb:.0f}MB[/cyan]"
+                    )
+                else:
+                    console.print(f"[cyan]Step {state.global_step}: RAM {ram_mb:.0f}MB[/cyan]")
             except Exception as e:
                 # If memory monitoring fails, log but don't crash training
                 console.print(
                     f"[yellow]⚠️  Memory monitoring error at step {state.global_step}: {e}[/yellow]"
                 )
         # Return None to match base class signature (control is passed by reference and modified in place)
+        return None
+
+    def on_train_end(self, args, state, control, **kwargs):
+        """Log peak memory usage at end of training."""
+        try:
+            console.print(
+                f"[cyan]📊 Peak memory usage: RAM {self._peak_ram_mb:.0f}MB"
+                + (f", GPU {self._peak_gpu_mb:.0f}MB" if self._peak_gpu_mb > 0 else "")
+                + "[/cyan]"
+            )
+        except Exception:
+            pass
         return None
 
 
