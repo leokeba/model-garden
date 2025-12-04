@@ -3,9 +3,7 @@
 Supports multimodal models like Qwen2.5-VL for fine-tuning on vision-language tasks.
 """
 
-import gc
 import json
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -819,7 +817,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             f"[cyan]📊 Training precision: {'bf16' if precision_config['bf16'] else 'fp16'}[/cyan]"
         )
 
-        training_args_dict = {
+        training_args_dict: dict[str, Any] = {
             "output_dir": config.output_dir,
             "per_device_train_batch_size": config.batch_size,
             "gradient_accumulation_steps": config.gradient_accumulation_steps,
@@ -972,7 +970,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
                 args=training_args,
                 train_dataset=train_dataset,  # type: ignore
                 eval_dataset=eval_dataset,  # type: ignore
-                data_collator=data_collator,
+                data_collator=data_collator,  # type: ignore
                 callbacks=all_callbacks,
                 tokenizer=self.tokenizer,  # type: ignore
                 verbose_loss=config.selective_loss_verbose,
@@ -985,7 +983,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
                 args=training_args,
                 train_dataset=train_dataset,  # type: ignore
                 eval_dataset=eval_dataset,  # type: ignore
-                data_collator=data_collator,
+                data_collator=data_collator,  # type: ignore
                 callbacks=all_callbacks,
             )
 
