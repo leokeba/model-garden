@@ -549,6 +549,33 @@ class TestInferenceAPIRoutes:
         await service.unload_model()
         set_inference_service(None)
 
+    @pytest_asyncio.fixture
+    async def loaded_vision_model_client(self, vision_model_path: str):
+        """Async HTTP client with a vision model loaded."""
+        import httpx
+
+        from model_garden.api.app import create_app
+        from model_garden.inference import InferenceService, set_inference_service
+
+        service = InferenceService(
+            model_path=vision_model_path,
+            tensor_parallel_size=1,
+            gpu_memory_utilization=0.6,
+            max_model_len=2048,
+            enforce_eager=True,
+            limit_mm_per_prompt={"image": 1, "video": 0},
+        )
+        await service.load_model()
+        set_inference_service(service)
+
+        app = create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+
+        await service.unload_model()
+        set_inference_service(None)
+
     def test_inference_status_no_model(self, client):
         """Test inference status when no model is loaded."""
         response = client.get("/api/v1/inference/status")
@@ -595,6 +622,36 @@ class TestInferenceAPIRoutes:
         data = response.json()
         assert "choices" in data
         assert len(data["choices"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_chat_completions_endpoint_base64_image(
+        self,
+        loaded_vision_model_client,
+        sample_image_base64: str,
+    ):
+        """Ensure base64-only vision payloads are accepted by the API route."""
+        data_url = f"data:image/jpeg;base64,{sample_image_base64}"
+        response = await loaded_vision_model_client.post(
+            "/api/v1/chat/completions",
+            json={
+                "model": "test",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Describe the dominant color."},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                "max_tokens": 20,
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert "choices" in payload
+        assert payload["choices"][0]["message"]["content"]
 
     @pytest.mark.asyncio
     async def test_openai_compatible_endpoint(self, loaded_model_client):

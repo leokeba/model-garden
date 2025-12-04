@@ -12,6 +12,7 @@ Routes for inference and model serving:
 
 import json
 import re
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
@@ -148,6 +149,46 @@ def convert_response_format_to_structured_outputs(
         return {"json": schema}
 
     return None
+
+
+def ensure_openai_chat_response_format(response: dict, model_name: str | None) -> dict:
+    """Ensure chat responses include OpenAI-compatible choice structure."""
+    if not isinstance(response, dict):
+        return response
+
+    if "choices" in response and isinstance(response["choices"], list):
+        return response
+
+    text = response.get("text")
+    if text is None:
+        return response
+
+    usage = response.get("usage", {}) if isinstance(response.get("usage"), dict) else {}
+    timestamp = int(time.time())
+
+    converted = {
+        "id": response.get("id") or f"chatcmpl-local-{timestamp}",
+        "object": "chat.completion",
+        "created": timestamp,
+        "model": model_name or "unknown-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": response.get("finish_reason", "stop"),
+            }
+        ],
+        "usage": {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        },
+    }
+
+    if "x_carbon_trace" in response:
+        converted["x_carbon_trace"] = response["x_carbon_trace"]
+
+    return converted
 
 
 @router.post("/api/v1/inference/load", response_model=APIResponse)
@@ -451,7 +492,7 @@ async def chat_completions(request: ChatCompletionRequest):
     try:
         # Process messages and extract multimodal content
         processed_messages = []
-        image_data = None
+        image_data: str | dict | None = None
 
         for msg in request.messages:
             msg_dict = msg.model_dump()
@@ -472,9 +513,12 @@ async def chat_completions(request: ChatCompletionRequest):
                                 url = image_url
 
                             if url.startswith("data:image/"):
-                                match = re.match(r"data:image/[^;]+;base64,(.+)", url)
+                                match = re.match(r"data:(image/[^;]+);base64,(.+)", url)
                                 if match:
-                                    image_data = match.group(1)
+                                    image_data = {
+                                        "data": match.group(2),
+                                        "mime": match.group(1),
+                                    }
                             else:
                                 image_data = url
                     else:
@@ -492,9 +536,12 @@ async def chat_completions(request: ChatCompletionRequest):
                         url = image_url
 
                     if url.startswith("data:image/"):
-                        match = re.match(r"data:image/[^;]+;base64,(.+)", url)
+                        match = re.match(r"data:(image/[^;]+);base64,(.+)", url)
                         if match:
-                            image_data = match.group(1)
+                            image_data = {
+                                "data": match.group(2),
+                                "mime": match.group(1),
+                            }
                     else:
                         image_data = url
 
@@ -572,6 +619,7 @@ async def chat_completions(request: ChatCompletionRequest):
                 pass
 
             response = cast(dict, await service.chat_completion(**gen_params))
+            response = ensure_openai_chat_response_format(response, request.model or service.model_path)
 
             # Calculate carbon emissions
             try:
