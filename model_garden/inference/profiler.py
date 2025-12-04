@@ -99,33 +99,54 @@ class VLLMLogCapture:
         self.cuda_graphs_gib: float = 0.0
         self.max_concurrency: float = 0.0
         self._start_time: float = 0.0
+        self._start_timestamp: str = ""
 
     def start(self):
         """Record start time for journal query."""
         self._start_time = time.time()
+        # Format timestamp for journalctl --since (YYYY-MM-DD HH:MM:SS)
+        from datetime import datetime
 
-    def stop(self):
-        """Read systemd journal and parse vLLM logs."""
-        self._read_journal_logs()
+        self._start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def _read_journal_logs(self):
-        """Read recent systemd journal entries for model-garden service."""
+    def stop(self, elapsed_seconds: float = 0.0):
+        """Read systemd journal and parse vLLM logs.
 
+        Args:
+            elapsed_seconds: How long the model loading took. Used to determine
+                            the lookback window for journal queries.
+        """
+        self._read_journal_logs(elapsed_seconds)
+
+    def _read_journal_logs(self, elapsed_seconds: float = 0.0):
+        """Read systemd journal entries for model-garden service since loading started.
+
+        Args:
+            elapsed_seconds: How long the model loading took. Used as fallback
+                            if start timestamp is not available.
+        """
         try:
-            # Get logs from the last 60 seconds for model-garden service
+            # Prefer using the exact start timestamp if available
+            if self._start_timestamp:
+                since_arg = self._start_timestamp
+            else:
+                # Fallback: use elapsed time plus buffer
+                lookback = max(120, int(elapsed_seconds) + 60)
+                since_arg = f"-{lookback}s"
+
             result = subprocess.run(
                 [
                     "journalctl",
                     "-u",
                     "model-garden.service",
                     "--since",
-                    "-60s",
+                    since_arg,
                     "--no-pager",
                     "-q",  # quiet, no metadata
                 ],
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=10,
             )
             if result.returncode == 0:
                 self._parse_logs(result.stdout)
@@ -442,16 +463,16 @@ class GPUMemoryProfiler:
         # Take final snapshot
         self.snapshot("final")
 
-        # Stop log capture and parse results
-        vllm_stats: dict[str, Any] = {}
-        if self._log_capture:
-            self._log_capture.stop()
-            vllm_stats = self._log_capture.get_stats()
-
-        # Calculate load time
+        # Calculate load time first (needed for log capture)
         load_time = 0.0
         if self._start_time:
             load_time = time.time() - self._start_time
+
+        # Stop log capture and parse results (pass elapsed time for proper lookback)
+        vllm_stats: dict[str, Any] = {}
+        if self._log_capture:
+            self._log_capture.stop(elapsed_seconds=load_time)
+            vllm_stats = self._log_capture.get_stats()
 
         # Get snapshots
         baseline = self.snapshots.get("baseline")
