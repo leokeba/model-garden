@@ -160,13 +160,15 @@ def __getattr__(name: str):
 
         return create_vision_sample_dataset
     elif name == "merge_vision_lora_adapter":
-        # Unsloth-specific function
-        from model_garden.utils.optional_deps import require_unsloth
-
-        require_unsloth("merge_vision_lora_adapter is an Unsloth-specific function")
-        from model_garden.training.backends.unsloth_vision_trainer import merge_vision_lora_adapter
+        # Backend-agnostic merge function (uses Unsloth save if available)
+        from model_garden.training.merge import merge_vision_lora_adapter
 
         return merge_vision_lora_adapter
+    elif name == "merge_text_lora_adapter":
+        # Backend-agnostic merge function for text models
+        from model_garden.training.merge import merge_text_lora_adapter
+
+        return merge_text_lora_adapter
     # Selective loss Unsloth-specific exports (backwards compat)
     elif name == "SelectiveLossUnslothCollator":
         from model_garden.training.selective_loss import SelectiveLossUnslothCollator
@@ -205,6 +207,7 @@ __all__ = [
     "create_sample_dataset",
     "create_vision_sample_dataset",
     "merge_vision_lora_adapter",
+    "merge_text_lora_adapter",
     # Callbacks
     "EarlyStoppingCallback",
     "TrainingMetricsCallback",

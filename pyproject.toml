@@ -36,13 +36,14 @@ dependencies = [
     "xformers>=0.0.32",
     "torchvision>=0.23.0",
     "pillow>=10.0.0",
-    "vllm>=0.11.2",
+    "vllm>=0.12.0",
     "openai>=2.3.0",
     "pynvml>=13.0.1",
     "python-dotenv>=1.1.1",
     "codecarbon>=2.4.0",
     "transformers>=4.57.2",
     "seaborn>=0.13.2",
+    "numpy<2.3",  # Numba requires NumPy 2.2 or less
 ]
 
 [project.optional-dependencies]

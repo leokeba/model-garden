@@ -246,8 +246,8 @@ class InferenceService:
             temp_dir.mkdir(parents=True, exist_ok=True)
             self.merged_vision_model_path = str(temp_dir)
 
-            # Merge the adapter
-            from model_garden.training import merge_vision_lora_adapter
+            # Merge the adapter (backend-agnostic, uses Unsloth save if available)
+            from model_garden.training.merge import merge_vision_lora_adapter
 
             merged_path = merge_vision_lora_adapter(
                 adapter_path=self.adapter_path,
@@ -569,7 +569,11 @@ class InferenceService:
         For new code, prefer using chat_completions() directly with
         ChatCompletionRequest for full OpenAI API compatibility.
         """
-        from vllm.entrypoints.openai.protocol import ChatCompletionRequest
+        from vllm.entrypoints.openai.protocol import (
+            ChatCompletionRequest,
+            ChatCompletionResponse,
+            ErrorResponse,
+        )
 
         # Build messages
         messages = [{"role": "user", "content": prompt}]
@@ -583,7 +587,7 @@ class InferenceService:
             messages = [{"role": "user", "content": content}]
 
         # Build request
-        request_dict = {
+        request_dict: dict[str, Any] = {
             "model": Path(self.model_path).name,
             "messages": messages,
             "max_tokens": max_tokens or (16384 if structured_outputs else 512),
@@ -606,18 +610,42 @@ class InferenceService:
         request = ChatCompletionRequest(**request_dict)
         result = await self.chat_completions(request)
 
-        # Convert to legacy format if not streaming
-        if not stream and hasattr(result, "choices"):
+        if stream:
+            return result
+
+        if isinstance(result, AsyncGenerator):
+            raise RuntimeError("Streaming generator returned for non-streaming request")
+
+        if isinstance(result, ErrorResponse):
+            return result.model_dump()
+
+        if isinstance(result, ChatCompletionResponse):
+            text_content = ""
+            if result.choices:
+                first_choice = result.choices[0]
+                if first_choice.message and first_choice.message.content:
+                    text_content = first_choice.message.content
+
+            usage = result.usage
             return {
-                "text": result.choices[0].message.content,
+                "text": text_content,
                 "usage": {
-                    "prompt_tokens": result.usage.prompt_tokens if result.usage else 0,
-                    "completion_tokens": result.usage.completion_tokens if result.usage else 0,
-                    "total_tokens": result.usage.total_tokens if result.usage else 0,
+                    "prompt_tokens": usage.prompt_tokens if usage else 0,
+                    "completion_tokens": usage.completion_tokens if usage else 0,
+                    "total_tokens": usage.total_tokens if usage else 0,
                 },
             }
 
-        return result
+        if isinstance(result, dict):
+            return result
+
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+
+        return {
+            "text": str(getattr(result, "text", "")),
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
 
     async def generate_chat(
         self,
@@ -631,7 +659,7 @@ class InferenceService:
         repetition_penalty: float | None = None,
         stop: list[str] | None = None,
         stream: bool = False,
-        image: str | None = None,
+        image: str | dict[str, Any] | None = None,
         structured_outputs: dict | None = None,
         **kwargs,
     ) -> dict | AsyncGenerator[dict, None]:
@@ -648,7 +676,11 @@ class InferenceService:
         import copy
         import json
 
-        from vllm.entrypoints.openai.protocol import ChatCompletionRequest, ErrorResponse
+        from vllm.entrypoints.openai.protocol import (
+            ChatCompletionRequest,
+            ChatCompletionResponse,
+            ErrorResponse,
+        )
 
         messages = self._normalize_messages(copy.deepcopy(messages))
 
@@ -660,12 +692,13 @@ class InferenceService:
                     if not isinstance(content, list):
                         content = self._normalize_message_content(content)
 
-                    image_url = image
+                    image_url: str = ""
                     mime_type = "image/jpeg"
 
                     if isinstance(image, dict):
-                        if "url" in image and isinstance(image["url"], str):
-                            image_url = image["url"]
+                        url_value = image.get("url")
+                        if isinstance(url_value, str) and url_value:
+                            image_url = url_value
                         else:
                             base64_data = image.get("data") or image.get("base64")
                             if isinstance(base64_data, str):
@@ -676,6 +709,8 @@ class InferenceService:
                             image_url = image
                         elif not image.startswith(("http://", "https://", "file://")):
                             image_url = f"data:{mime_type};base64,{image}"
+                        else:
+                            image_url = image
 
                     msg["content"] = [
                         {"type": "image_url", "image_url": {"url": image_url}},
@@ -683,7 +718,7 @@ class InferenceService:
                     ]
                     break
 
-        request_dict = {
+        request_dict: dict[str, Any] = {
             "model": Path(self.model_path).name,
             "messages": messages,
             "max_tokens": max_tokens or (16384 if structured_outputs else 512),
@@ -706,21 +741,25 @@ class InferenceService:
 
         # Handle streaming - convert SSE strings to dicts
         if stream:
-            if isinstance(result, ErrorResponse) or not hasattr(result, "__aiter__"):
+            if isinstance(result, ErrorResponse):
 
-                async def error_stream():
-                    payload = (
-                        result.model_dump()
-                        if hasattr(result, "model_dump")
-                        else {"error": "Streaming response unavailable"}
-                    )
-                    yield payload
+                async def error_stream() -> AsyncGenerator[dict[str, Any], None]:
+                    yield result.model_dump()
 
                 return error_stream()
 
-            async def parse_sse_stream():
+            if not isinstance(result, AsyncGenerator):
+
+                async def fallback_stream() -> AsyncGenerator[dict[str, Any], None]:
+                    yield {"error": "Streaming response unavailable"}
+
+                return fallback_stream()
+
+            stream_result = result
+
+            async def parse_sse_stream() -> AsyncGenerator[dict[str, Any], None]:
                 """Parse vLLM's SSE stream into dict chunks."""
-                async for sse_line in result:
+                async for sse_line in stream_result:
                     # vLLM yields "data: {...}\n\n" strings
                     if sse_line.startswith("data: "):
                         data = sse_line[6:].strip()
@@ -732,20 +771,48 @@ class InferenceService:
 
             return parse_sse_stream()
 
-        # Non-streaming - convert response to legacy format
-        if hasattr(result, "choices") and result.choices:
-            return {
-                "text": result.choices[0].message.content,
-                "usage": {
-                    "prompt_tokens": result.usage.prompt_tokens if result.usage else 0,
-                    "completion_tokens": result.usage.completion_tokens if result.usage else 0,
-                    "total_tokens": result.usage.total_tokens if result.usage else 0,
-                },
-            }
-        elif hasattr(result, "model_dump"):
+        if isinstance(result, AsyncGenerator):
+            raise RuntimeError("Streaming generator returned for non-streaming request")
+
+        if isinstance(result, ErrorResponse):
             return result.model_dump()
 
-        return result
+        # Non-streaming - convert response to legacy format
+        if isinstance(result, ChatCompletionResponse) and result.choices:
+            first_choice = result.choices[0]
+            text_content = ""
+            if first_choice.message and first_choice.message.content:
+                text_content = first_choice.message.content
+
+            usage = result.usage
+            return {
+                "text": text_content,
+                "usage": {
+                    "prompt_tokens": usage.prompt_tokens if usage else 0,
+                    "completion_tokens": usage.completion_tokens if usage else 0,
+                    "total_tokens": usage.total_tokens if usage else 0,
+                },
+            }
+
+        if isinstance(result, ChatCompletionResponse):
+            # No choices returned
+            usage = result.usage
+            return {
+                "text": "",
+                "usage": {
+                    "prompt_tokens": usage.prompt_tokens if usage else 0,
+                    "completion_tokens": usage.completion_tokens if usage else 0,
+                    "total_tokens": usage.total_tokens if usage else 0,
+                },
+            }
+
+        if isinstance(result, dict):
+            return result
+
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+
+        return {"error": "Unexpected response type"}
 
     # Alias for backwards compatibility with routes
     async def chat_completion(

@@ -619,7 +619,9 @@ async def chat_completions(request: ChatCompletionRequest):
                 pass
 
             response = cast(dict, await service.chat_completion(**gen_params))
-            response = ensure_openai_chat_response_format(response, request.model or service.model_path)
+            response = ensure_openai_chat_response_format(
+                response, request.model or service.model_path
+            )
 
             # Calculate carbon emissions
             try:
