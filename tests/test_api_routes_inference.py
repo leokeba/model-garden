@@ -3,12 +3,10 @@
 These tests verify the inference and model serving endpoints work correctly.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # Mark all tests to bypass mock_heavy_imports
 pytestmark = pytest.mark.requires_gpu
@@ -162,9 +160,7 @@ class TestLoadModel:
 class TestUnloadModel:
     """Tests for POST /api/v1/inference/unload."""
 
-    def test_unload_no_model(
-        self, client: TestClient, mock_inference_service
-    ):
+    def test_unload_no_model(self, client: TestClient, mock_inference_service):
         """Test unloading when no model is loaded."""
         response = client.post("/api/v1/inference/unload")
         assert response.status_code == 200
@@ -173,9 +169,7 @@ class TestUnloadModel:
         assert data["success"] is False
         assert "No model" in data["message"]
 
-    def test_unload_model_success(
-        self, client: TestClient, mock_loaded_inference_service
-    ):
+    def test_unload_model_success(self, client: TestClient, mock_loaded_inference_service):
         """Test successfully unloading a model."""
         service, _ = mock_loaded_inference_service
         service.unload_model = AsyncMock()
@@ -202,9 +196,7 @@ class TestInferenceGenerate:
         assert response.status_code == 400
         assert "No model loaded" in response.json()["detail"]
 
-    def test_generate_success(
-        self, client: TestClient, mock_loaded_inference_service
-    ):
+    def test_generate_success(self, client: TestClient, mock_loaded_inference_service):
         """Test successful text generation."""
         response = client.post(
             "/api/v1/inference/generate",
@@ -219,9 +211,7 @@ class TestInferenceGenerate:
         data = response.json()
         assert "text" in data
 
-    def test_generate_with_all_params(
-        self, client: TestClient, mock_loaded_inference_service
-    ):
+    def test_generate_with_all_params(self, client: TestClient, mock_loaded_inference_service):
         """Test generation with all parameters."""
         response = client.post(
             "/api/v1/inference/generate",
@@ -271,9 +261,7 @@ class TestChatCompletions:
         data = response.json()
         assert "choices" in data
 
-    def test_chat_with_multimodal_content(
-        self, client: TestClient, mock_loaded_inference_service
-    ):
+    def test_chat_with_multimodal_content(self, client: TestClient, mock_loaded_inference_service):
         """Test chat with multimodal content (text + image)."""
         response = client.post(
             "/api/v1/chat/completions",
@@ -296,9 +284,7 @@ class TestChatCompletions:
         )
         assert response.status_code == 200
 
-    def test_chat_with_structured_output(
-        self, client: TestClient, mock_loaded_inference_service
-    ):
+    def test_chat_with_structured_output(self, client: TestClient, mock_loaded_inference_service):
         """Test chat with structured output response format."""
         response = client.post(
             "/api/v1/chat/completions",
@@ -322,9 +308,7 @@ class TestChatCompletions:
 class TestOpenAIChatCompletions:
     """Tests for POST /v1/chat/completions (OpenAI standard path)."""
 
-    def test_openai_path_works(
-        self, client: TestClient, mock_loaded_inference_service
-    ):
+    def test_openai_path_works(self, client: TestClient, mock_loaded_inference_service):
         """Test the OpenAI-standard path works."""
         response = client.post(
             "/v1/chat/completions",

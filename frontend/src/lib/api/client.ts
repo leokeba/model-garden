@@ -288,6 +288,68 @@ interface PackageOperationStatus {
   error: string | null;
 }
 
+// GPU Memory Profile Types
+interface GPUMemoryBreakdown {
+  weights_gb: number;
+  kv_cache_gb: number;
+  cuda_graphs_gb: number;
+  other_gb: number;
+  total_used_gb: number;
+  available_gb: number;
+}
+
+interface GPUMemoryUtilization {
+  used_percent: number;
+  available_percent: number;
+}
+
+interface GPUMemoryConfig {
+  model_path: string;
+  max_model_len: number;
+  enforce_eager: boolean;
+  tensor_parallel_size: number;
+  gpu_memory_utilization: number;
+}
+
+interface GPUMemoryKVCache {
+  tokens: number;
+  max_concurrency: number;
+}
+
+interface GPUMemoryTiming {
+  load_time_seconds: number;
+}
+
+interface GPUMemoryProfile {
+  gpu: {
+    name: string;
+    total_memory_gb: number;
+  };
+  breakdown: GPUMemoryBreakdown;
+  utilization: GPUMemoryUtilization;
+  config: GPUMemoryConfig;
+  kv_cache: GPUMemoryKVCache;
+  timing: GPUMemoryTiming;
+  weight_file_size_gb: number;
+}
+
+interface GPULiveStats {
+  gpu_name: string;
+  total_gb: number;
+  allocated_gb: number;
+  reserved_gb: number;
+  free_gb: number;
+  peak_allocated_gb: number;
+  peak_reserved_gb: number;
+  utilization_percent: number;
+  error?: string;
+}
+
+interface GPUMemoryStats {
+  live: GPULiveStats;
+  profile: GPUMemoryProfile | null;
+}
+
 interface SystemSettings {
   optional_dependencies: {
     unsloth: UnslothStatus;
@@ -590,6 +652,16 @@ class APIClient {
     return response.data;
   }
 
+  async getGpuMemoryStats(): Promise<GPUMemoryStats> {
+    const response = await this.request<{ success: boolean; data: GPUMemoryStats }>('/system/gpu/memory');
+    return response.data;
+  }
+
+  async getGpuMemoryProfile(): Promise<GPUMemoryProfile | null> {
+    const response = await this.request<{ success: boolean; data: GPUMemoryProfile | null }>('/system/gpu/memory/profile');
+    return response.data;
+  }
+
   async installUnsloth(): Promise<{ success: boolean; message: string; data?: { operation: string; command: string } }> {
     return this.request('/system/unsloth/install', { method: 'POST' });
   }
@@ -634,7 +706,7 @@ class APIClient {
 
 export const api = new APIClient(API_BASE);
 export type {
-  Config, Model, PackageOperationStatus, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemSettings, SystemStatus,
+  Config, GPULiveStats, GPUMemoryBreakdown, GPUMemoryConfig, GPUMemoryKVCache, GPUMemoryProfile, GPUMemoryStats, GPUMemoryTiming, GPUMemoryUtilization, Model, PackageOperationStatus, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemSettings, SystemStatus,
   TrainingBackend,
   TrainingJob, UnslothStatus
 };

@@ -4,12 +4,10 @@ These tests verify the model management endpoints work correctly.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # Mark all tests to bypass mock_heavy_imports
 pytestmark = pytest.mark.requires_gpu
@@ -98,9 +96,7 @@ class TestListModels:
             data = response.json()
             assert "items" in data
 
-    def test_list_models_with_data(
-        self, client: TestClient, sample_models
-    ):
+    def test_list_models_with_data(self, client: TestClient, sample_models):
         """Test listing models with existing data."""
         with patch("model_garden.api.routes.models.get_storage_manager") as mock_storage:
             storage = MagicMock()
@@ -116,9 +112,7 @@ class TestListModels:
             # The mock models are mixed with real models from disk
             assert data["total"] >= 2
 
-    def test_list_models_filter_by_type(
-        self, client: TestClient, sample_models
-    ):
+    def test_list_models_filter_by_type(self, client: TestClient, sample_models):
         """Test filtering models by type."""
         with patch("model_garden.api.routes.models.get_storage_manager") as mock_storage:
             storage = MagicMock()
@@ -136,9 +130,7 @@ class TestListModels:
             for item in data["items"]:
                 assert item["model_type"] == "vision"
 
-    def test_list_models_pagination(
-        self, client: TestClient, mock_storage, sample_models
-    ):
+    def test_list_models_pagination(self, client: TestClient, mock_storage, sample_models):
         """Test pagination of models."""
         mock_storage.load_models.return_value = sample_models
 
@@ -154,9 +146,7 @@ class TestListModels:
 class TestGetModel:
     """Tests for GET /api/v1/models/{model_id}."""
 
-    def test_get_existing_model(
-        self, client: TestClient, mock_storage, sample_models
-    ):
+    def test_get_existing_model(self, client: TestClient, mock_storage, sample_models):
         """Test getting an existing model."""
         mock_storage.load_models.return_value = sample_models
 
@@ -178,9 +168,7 @@ class TestGetModel:
 class TestRenameModel:
     """Tests for PUT /api/v1/models/{model_id}."""
 
-    def test_rename_model(
-        self, client: TestClient, mock_storage, sample_models
-    ):
+    def test_rename_model(self, client: TestClient, mock_storage, sample_models):
         """Test renaming a model."""
         mock_storage.load_models.return_value = sample_models.copy()
 
@@ -210,9 +198,7 @@ class TestRenameModel:
 class TestDeleteModel:
     """Tests for DELETE /api/v1/models/{model_id}."""
 
-    def test_delete_model_from_storage_only(
-        self, client: TestClient, mock_storage, sample_models
-    ):
+    def test_delete_model_from_storage_only(self, client: TestClient, mock_storage, sample_models):
         """Test deleting a model from storage only."""
         mock_storage.load_models.return_value = sample_models.copy()
 
@@ -409,10 +395,10 @@ class TestUploadToHub:
         # Create a valid model path
         model_path = tmp_path / "model-1"
         model_path.mkdir()
-        (model_path / "config.json").write_text('{}')
-        
+        (model_path / "config.json").write_text("{}")
+
         sample_models["model-1"]["path"] = str(model_path)
-        
+
         with patch("model_garden.api.routes.models.get_storage_manager") as mock_storage:
             storage = MagicMock()
             storage.load_models.return_value = sample_models
@@ -430,9 +416,7 @@ class TestUploadToHub:
         response = client.post("/api/v1/models/nonexistent/upload-to-hub")
         assert response.status_code == 404
 
-    def test_upload_model_path_not_exists(
-        self, client: TestClient, sample_models
-    ):
+    def test_upload_model_path_not_exists(self, client: TestClient, sample_models):
         """Test uploading when model path doesn't exist."""
         models = sample_models.copy()
         models["model-1"]["path"] = "/nonexistent/path"
@@ -442,9 +426,7 @@ class TestUploadToHub:
             storage.load_models.return_value = models
             mock_storage.return_value = storage
 
-            with patch(
-                "model_garden.api.routes.models.get_hf_token", return_value="hf_test_token"
-            ):
+            with patch("model_garden.api.routes.models.get_hf_token", return_value="hf_test_token"):
                 response = client.post("/api/v1/models/model-1/upload-to-hub")
                 assert response.status_code == 400
                 assert "path does not exist" in response.json()["detail"]

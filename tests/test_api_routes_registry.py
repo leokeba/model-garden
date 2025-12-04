@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-
 # Mark all tests to bypass mock_heavy_imports
 pytestmark = pytest.mark.requires_gpu
 
@@ -106,9 +105,7 @@ class TestListRegistryModels:
         assert data["success"] is True
         assert data["total"] == 0
 
-    def test_list_models_with_data(
-        self, client: TestClient, mock_registry, sample_model_info
-    ):
+    def test_list_models_with_data(self, client: TestClient, mock_registry, sample_model_info):
         """Test listing models with existing data."""
         mock_registry.get_model_list_for_ui.return_value = [
             {
@@ -181,9 +178,7 @@ class TestListRegistryModels:
 class TestGetRegistryModel:
     """Tests for GET /api/v1/registry/models/{model_id}."""
 
-    def test_get_existing_model(
-        self, client: TestClient, mock_registry, sample_model_info
-    ):
+    def test_get_existing_model(self, client: TestClient, mock_registry, sample_model_info):
         """Test getting an existing model."""
         mock_registry.get_model.return_value = sample_model_info
 
@@ -201,9 +196,7 @@ class TestGetRegistryModel:
         response = client.get("/api/v1/registry/models/nonexistent/model")
         assert response.status_code == 404
 
-    def test_get_model_full_details(
-        self, client: TestClient, mock_registry, sample_model_info
-    ):
+    def test_get_model_full_details(self, client: TestClient, mock_registry, sample_model_info):
         """Test that model details include all expected fields."""
         mock_registry.get_model.return_value = sample_model_info
 
@@ -251,9 +244,7 @@ class TestListCategories:
         assert "tinyllama" in data["data"]
         assert "llama" in data["data"]
 
-    def test_list_categories_registry_not_found(
-        self, client: TestClient, mock_registry
-    ):
+    def test_list_categories_registry_not_found(self, client: TestClient, mock_registry):
         """Test handling when registry file is not found."""
         mock_registry.get_categories.side_effect = FileNotFoundError("Not found")
 

@@ -3,13 +3,11 @@
 These tests verify the training job management endpoints work correctly.
 """
 
-import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # Mark all tests to bypass mock_heavy_imports
 pytestmark = pytest.mark.requires_gpu
@@ -117,9 +115,7 @@ class TestListTrainingJobs:
         assert "items" in data
         assert data["total"] == 0
 
-    def test_list_jobs_with_data(
-        self, client: TestClient, mock_storage, sample_training_jobs
-    ):
+    def test_list_jobs_with_data(self, client: TestClient, mock_storage, sample_training_jobs):
         """Test listing jobs with existing data."""
         mock_storage.load_training_jobs.return_value = sample_training_jobs
 
@@ -143,9 +139,7 @@ class TestListTrainingJobs:
         assert data["total"] == 1
         assert data["items"][0]["status"] == "running"
 
-    def test_list_jobs_pagination(
-        self, client: TestClient, mock_storage, sample_training_jobs
-    ):
+    def test_list_jobs_pagination(self, client: TestClient, mock_storage, sample_training_jobs):
         """Test pagination of jobs."""
         mock_storage.load_training_jobs.return_value = sample_training_jobs
 
@@ -175,9 +169,7 @@ class TestListTrainingJobs:
 class TestCreateTrainingJob:
     """Tests for POST /api/v1/training/jobs."""
 
-    def test_create_job_minimal(
-        self, client: TestClient, mock_storage, mock_job_queue
-    ):
+    def test_create_job_minimal(self, client: TestClient, mock_storage, mock_job_queue):
         """Test creating a job with minimal required fields."""
         mock_storage.load_training_jobs.return_value = {}
 
@@ -197,9 +189,7 @@ class TestCreateTrainingJob:
         assert "job_id" in data["data"]
         assert "queue_position" in data["data"]
 
-    def test_create_job_full_config(
-        self, client: TestClient, mock_storage, mock_job_queue
-    ):
+    def test_create_job_full_config(self, client: TestClient, mock_storage, mock_job_queue):
         """Test creating a job with full configuration."""
         mock_storage.load_training_jobs.return_value = {}
 
@@ -232,9 +222,7 @@ class TestCreateTrainingJob:
         data = response.json()
         assert data["success"] is True
 
-    def test_create_job_hub_dataset(
-        self, client: TestClient, mock_storage, mock_job_queue
-    ):
+    def test_create_job_hub_dataset(self, client: TestClient, mock_storage, mock_job_queue):
         """Test creating a job with HuggingFace Hub dataset."""
         mock_storage.load_training_jobs.return_value = {}
 
@@ -263,9 +251,7 @@ class TestCreateTrainingJob:
         )
         assert response.status_code == 422  # Validation error
 
-    def test_create_job_saves_to_storage(
-        self, client: TestClient, mock_storage, mock_job_queue
-    ):
+    def test_create_job_saves_to_storage(self, client: TestClient, mock_storage, mock_job_queue):
         """Test that job is saved to storage."""
         mock_storage.load_training_jobs.return_value = {}
 
@@ -287,9 +273,7 @@ class TestCreateTrainingJob:
 class TestGetTrainingJob:
     """Tests for GET /api/v1/training/jobs/{job_id}."""
 
-    def test_get_existing_job(
-        self, client: TestClient, mock_storage, sample_training_jobs
-    ):
+    def test_get_existing_job(self, client: TestClient, mock_storage, sample_training_jobs):
         """Test getting an existing job."""
         mock_storage.load_training_jobs.return_value = sample_training_jobs
 
@@ -360,9 +344,7 @@ class TestDeleteTrainingJob:
         data = response.json()
         assert data["success"] is True
 
-    def test_delete_nonexistent_job(
-        self, client: TestClient, mock_storage, mock_job_queue
-    ):
+    def test_delete_nonexistent_job(self, client: TestClient, mock_storage, mock_job_queue):
         """Test deleting a non-existent job."""
         mock_storage.load_training_jobs.return_value = {}
 
@@ -426,9 +408,7 @@ class TestRerunTrainingJob:
         assert "job_id" in data["data"]
         assert data["data"]["original_job_id"] == "job-1"
 
-    def test_rerun_running_job_fails(
-        self, client: TestClient, mock_storage, sample_training_jobs
-    ):
+    def test_rerun_running_job_fails(self, client: TestClient, mock_storage, sample_training_jobs):
         """Test that rerunning a running job fails."""
         mock_storage.load_training_jobs.return_value = sample_training_jobs
 

@@ -8,9 +8,8 @@ to bypass the mock_heavy_imports fixture in conftest.py.
 """
 
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -103,7 +102,7 @@ class TestMergeVisionLoraAdapter:
         # Mock the model loading to fail after output dir creation
         with patch("model_garden.training.merge.AutoModelForVision2Seq") as mock_model:
             mock_model.from_pretrained.side_effect = Exception("Model load failed")
-            
+
             with pytest.raises(Exception, match="Model load failed"):
                 merge_vision_lora_adapter(
                     adapter_path=str(temp_adapter_dir),
@@ -180,7 +179,9 @@ class TestMergeTextLoraAdapter:
                 base_model=None,
             )
 
-    def test_base_model_detection_from_local_config(self, temp_text_adapter_dir: Path, temp_dir: Path):
+    def test_base_model_detection_from_local_config(
+        self, temp_text_adapter_dir: Path, temp_dir: Path
+    ):
         """Test that base model is correctly read from adapter_config.json."""
         from model_garden.training.merge import merge_text_lora_adapter
 

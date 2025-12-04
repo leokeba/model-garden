@@ -34,9 +34,15 @@ FALLBACK_CHAT_TEMPLATE = """
 Assistant:
 """
 
+from .profiler import (
+    GPUMemoryProfiler,
+    MemoryProfile,
+    set_current_memory_profile,
+)
 from .utils import (
     calculate_gpu_memory_utilization,
     detect_quantization_method,
+    estimate_model_size_gb,
     get_base_model_from_adapter,
     is_lora_adapter,
     is_vision_model,
@@ -116,6 +122,9 @@ class InferenceService:
         self.merged_vision_model_path: str | None = None
         self.original_base_model: str | None = None
 
+        # Memory profiling
+        self.memory_profile: MemoryProfile | None = None
+
     async def load_model(self) -> None:
         """Load the model into vLLM engine with OpenAI serving layer."""
         if self.is_loaded:
@@ -130,6 +139,13 @@ class InferenceService:
         # Pre-load GPU cleanup
         self._cleanup_gpu()
 
+        # Start memory profiling
+        profiler = GPUMemoryProfiler()
+        profiler.start()
+
+        # Get weight file size for profile
+        weight_file_size_gb = estimate_model_size_gb(self.base_model_path or self.model_path)
+
         try:
             from vllm import AsyncEngineArgs
             from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
@@ -141,7 +157,7 @@ class InferenceService:
             override_template = self._should_override_chat_template(engine_args_dict)
             engine_args = AsyncEngineArgs(**engine_args_dict)
 
-            # Create async engine
+            # Create async engine (vLLM logs memory stats during this phase)
             console.print("[cyan]🚀 Starting vLLM engine...[/cyan]")
             self.engine = AsyncLLM.from_engine_args(engine_args)
 
@@ -182,6 +198,18 @@ class InferenceService:
 
             self.is_loaded = True
             console.print("[green]✓[/green] Model loaded successfully with OpenAI-compatible API")
+
+            # Generate and store memory profile (captures vLLM's logged memory stats)
+            self.memory_profile = profiler.get_profile(
+                model_path=self.model_path,
+                max_model_len=self.max_model_len or 0,
+                enforce_eager=self.enforce_eager,
+                tensor_parallel_size=self.tensor_parallel_size,
+                gpu_memory_utilization=engine_args_dict.get("gpu_memory_utilization", 0.9),
+                weight_file_size_gb=weight_file_size_gb,
+            )
+            set_current_memory_profile(self.memory_profile)
+            profiler.print_summary()
 
         except Exception as e:
             console.print(f"[red]❌ Failed to load model: {e}[/red]")
@@ -868,6 +896,10 @@ class InferenceService:
                 info["is_vision_adapter"] = True
                 info["merged_automatically"] = True
                 info["note"] = "Vision LoRA was automatically merged"
+
+        # Add memory profile if available
+        if self.memory_profile:
+            info["memory_profile"] = self.memory_profile.to_dict()
 
         return info
 

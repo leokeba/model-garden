@@ -3,6 +3,7 @@
   import Badge from "$lib/components/Badge.svelte";
   import Button from "$lib/components/Button.svelte";
   import Card from "$lib/components/Card.svelte";
+  import GpuMemoryProfile from "$lib/components/GpuMemoryProfile.svelte";
   import ModelLoader from "$lib/components/ModelLoader.svelte";
   import { onMount } from "svelte";
 
@@ -577,6 +578,11 @@
           onModelLoaded={loadInferenceStatus}
           onModelUnloaded={loadInferenceStatus}
         />
+
+        <!-- GPU Memory Profile -->
+        {#if inferenceStatus?.loaded}
+          <GpuMemoryProfile compact refreshInterval={10000} />
+        {/if}
 
         <!-- Mode Selection -->
         <Card>

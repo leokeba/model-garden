@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from model_garden.training.chat_template import (
-    ChatTemplateDetector,
     FALLBACK_MARKERS,
+    ChatTemplateDetector,
 )
 
 
@@ -86,10 +86,10 @@ class TestDetectMethod:
         processor = MagicMock()
         # Template without proper placeholders
         processor.apply_chat_template.return_value = "Some template without markers"
-        
+
         # Set up name_or_path to match "llama" for fallback detection
         processor.name_or_path = "meta-llama/Llama-3.2-3B"
-        
+
         # Also need to set up tokenizer.config to avoid that path
         processor.tokenizer = MagicMock()
         processor.tokenizer.config = MagicMock()

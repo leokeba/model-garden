@@ -4,6 +4,14 @@ Inference package for Model Garden.
 This package provides the vLLM-powered inference service for serving models.
 """
 
+from .profiler import (
+    GPUMemoryProfiler,
+    MemoryProfile,
+    MemorySnapshot,
+    get_current_memory_profile,
+    get_live_gpu_stats,
+    set_current_memory_profile,
+)
 from .service import (
     InferenceService,
     get_inference_service,
@@ -24,6 +32,13 @@ __all__ = [
     "InferenceService",
     "get_inference_service",
     "set_inference_service",
+    # Profiler
+    "GPUMemoryProfiler",
+    "MemoryProfile",
+    "MemorySnapshot",
+    "get_current_memory_profile",
+    "get_live_gpu_stats",
+    "set_current_memory_profile",
     # Utils
     "get_gpu_memory_gb",
     "estimate_model_size_gb",

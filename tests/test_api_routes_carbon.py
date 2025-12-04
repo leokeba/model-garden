@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-
 # Mark all tests to bypass mock_heavy_imports
 pytestmark = pytest.mark.requires_gpu
 
@@ -96,9 +95,7 @@ def sample_emissions():
 class TestListEmissions:
     """Tests for GET /api/v1/carbon/emissions."""
 
-    def test_list_empty_emissions(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_list_empty_emissions(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test listing when no emissions exist."""
         response = client.get("/api/v1/carbon/emissions")
         assert response.status_code == 200
@@ -149,9 +146,7 @@ class TestListEmissions:
 class TestEmissionsSummary:
     """Tests for GET /api/v1/carbon/summary."""
 
-    def test_get_empty_summary(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_get_empty_summary(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test getting summary when no emissions exist."""
         response = client.get("/api/v1/carbon/summary")
         assert response.status_code == 200
@@ -160,9 +155,7 @@ class TestEmissionsSummary:
         assert data["total_emissions_kg_co2"] == 0.0
         assert data["total_energy_kwh"] == 0.0
 
-    def test_get_summary_with_data(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_get_summary_with_data(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test getting summary with emissions data."""
         mock_emissions_db.get_total_emissions.return_value = {
             "total_emissions_kg_co2": 0.5,
@@ -202,9 +195,7 @@ class TestInferenceStats:
             "duration_seconds": 600,
         }
 
-        with patch(
-            "model_garden.carbon.get_inference_tracker", return_value=mock_tracker
-        ):
+        with patch("model_garden.carbon.get_inference_tracker", return_value=mock_tracker):
             response = client.get("/api/v1/carbon/inference/stats")
             assert response.status_code == 200
 
@@ -216,9 +207,7 @@ class TestInferenceStats:
 class TestBoampsReport:
     """Tests for GET /api/v1/carbon/boamps/{job_id}."""
 
-    def test_get_report_not_found(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_get_report_not_found(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test getting report for non-existent job."""
         mock_emissions_db.get_emission.return_value = None
 
@@ -239,9 +228,7 @@ class TestBoampsReport:
             "infrastructure": {},
         }
 
-        with patch(
-            "model_garden.carbon.get_boamps_generator", return_value=mock_generator
-        ):
+        with patch("model_garden.carbon.get_boamps_generator", return_value=mock_generator):
             response = client.get("/api/v1/carbon/boamps/job-1")
             assert response.status_code == 200
 
@@ -252,9 +239,7 @@ class TestBoampsReport:
 class TestAnalyticsTrends:
     """Tests for GET /api/v1/carbon/analytics/trends."""
 
-    def test_get_trends_empty(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_get_trends_empty(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test getting trends when no data exists."""
         response = client.get("/api/v1/carbon/analytics/trends")
         assert response.status_code == 200
@@ -294,9 +279,7 @@ class TestAnalyticsTrends:
         mock_emissions_db.get_all_emissions.return_value = sample_emissions
 
         for granularity in ["hour", "day", "week", "month"]:
-            response = client.get(
-                f"/api/v1/carbon/analytics/trends?granularity={granularity}"
-            )
+            response = client.get(f"/api/v1/carbon/analytics/trends?granularity={granularity}")
             assert response.status_code == 200
             assert response.json()["granularity"] == granularity
 
@@ -304,9 +287,7 @@ class TestAnalyticsTrends:
 class TestAnalyticsComparisons:
     """Tests for GET /api/v1/carbon/analytics/comparisons."""
 
-    def test_get_comparisons_empty(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_get_comparisons_empty(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test getting comparisons when no data exists."""
         response = client.get("/api/v1/carbon/analytics/comparisons")
         assert response.status_code == 200
@@ -334,9 +315,7 @@ class TestAnalyticsComparisons:
 class TestAnalyticsRecommendations:
     """Tests for GET /api/v1/carbon/analytics/recommendations."""
 
-    def test_get_recommendations_empty(
-        self, client: TestClient, mock_storage, mock_emissions_db
-    ):
+    def test_get_recommendations_empty(self, client: TestClient, mock_storage, mock_emissions_db):
         """Test getting recommendations when no data exists."""
         response = client.get("/api/v1/carbon/analytics/recommendations")
         assert response.status_code == 200

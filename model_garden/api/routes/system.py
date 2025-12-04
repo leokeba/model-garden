@@ -594,3 +594,46 @@ async def restart_service():
             status_code=500,
             detail=f"Error restarting service: {str(e)}",
         )
+
+
+@router.get("/gpu/memory")
+async def get_gpu_memory_stats():
+    """Get detailed GPU memory statistics.
+
+    Returns live GPU memory stats and the memory profile from the last model load.
+    """
+    from model_garden.inference import get_current_memory_profile, get_live_gpu_stats
+
+    live_stats = get_live_gpu_stats()
+    memory_profile = get_current_memory_profile()
+
+    return {
+        "success": True,
+        "data": {
+            "live": live_stats,
+            "profile": memory_profile.to_dict() if memory_profile else None,
+        },
+    }
+
+
+@router.get("/gpu/memory/profile")
+async def get_gpu_memory_profile():
+    """Get the GPU memory profile from the last model load.
+
+    Returns detailed breakdown of memory usage by component (weights, KV cache, CUDA graphs, etc.)
+    """
+    from model_garden.inference import get_current_memory_profile
+
+    profile = get_current_memory_profile()
+
+    if not profile:
+        return {
+            "success": False,
+            "message": "No memory profile available. Load a model first.",
+            "data": None,
+        }
+
+    return {
+        "success": True,
+        "data": profile.to_dict(),
+    }

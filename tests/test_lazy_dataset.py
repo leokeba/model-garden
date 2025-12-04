@@ -4,7 +4,7 @@ These tests verify the LazyVisionDataset class which loads images on-demand
 during training to prevent memory exhaustion.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -170,7 +170,9 @@ class TestLazyVisionDataset:
 
     def test_cache_eviction(self):
         """Test LRU cache eviction."""
-        examples = [{"text": f"Q{i}", "image": f"img{i}.jpg", "response": f"A{i}"} for i in range(5)]
+        examples = [
+            {"text": f"Q{i}", "image": f"img{i}.jpg", "response": f"A{i}"} for i in range(5)
+        ]
 
         load_count = {"count": 0}
 

@@ -3,12 +3,10 @@
 These tests verify the system management endpoints work correctly.
 """
 
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 
 # Mark all tests to bypass mock_heavy_imports
 pytestmark = pytest.mark.requires_gpu
@@ -86,9 +84,7 @@ class TestListBackends:
             },
         ]
 
-        with patch(
-            "model_garden.training.backends.list_backends", return_value=mock_backends
-        ):
+        with patch("model_garden.training.backends.list_backends", return_value=mock_backends):
             response = client.get("/api/v1/system/backends")
             assert response.status_code == 200
 
@@ -115,9 +111,7 @@ class TestCleanupGPU:
         """Test GPU cleanup with CUDA available."""
         with patch("torch.cuda.is_available", return_value=True):
             with patch("torch.cuda.synchronize"):
-                with patch(
-                    "torch.cuda.memory_allocated", side_effect=[1_000_000_000, 500_000_000]
-                ):
+                with patch("torch.cuda.memory_allocated", side_effect=[1_000_000_000, 500_000_000]):
                     with patch("torch.cuda.empty_cache"):
                         with patch("gc.collect", return_value=10):
                             response = client.post("/api/v1/system/cleanup")
@@ -132,9 +126,7 @@ class TestGetSettings:
 
     def test_get_settings_no_unsloth(self, client: TestClient):
         """Test getting settings when Unsloth is not installed."""
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=False
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=False):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=1)
 
@@ -151,9 +143,7 @@ class TestGetSettings:
         mock_unsloth = MagicMock()
         mock_unsloth.__version__ = "2024.12.0"
 
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=True
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=True):
             with patch.dict("sys.modules", {"unsloth": mock_unsloth}):
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(returncode=1)
@@ -162,10 +152,7 @@ class TestGetSettings:
                     assert response.status_code == 200
 
                     data = response.json()
-                    assert (
-                        data["data"]["optional_dependencies"]["unsloth"]["installed"]
-                        is True
-                    )
+                    assert data["data"]["optional_dependencies"]["unsloth"]["installed"] is True
 
 
 class TestInstallUnsloth:
@@ -173,9 +160,7 @@ class TestInstallUnsloth:
 
     def test_install_already_installed(self, client: TestClient):
         """Test installing when Unsloth is already installed."""
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=True
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=True):
             response = client.post("/api/v1/system/unsloth/install")
             assert response.status_code == 200
 
@@ -185,9 +170,7 @@ class TestInstallUnsloth:
 
     def test_install_starts_background_task(self, client: TestClient):
         """Test that install starts a background task."""
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=False
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=False):
             # Reset operation status
             import model_garden.api.routes.system as system_module
 
@@ -202,9 +185,7 @@ class TestInstallUnsloth:
 
     def test_install_operation_in_progress(self, client: TestClient):
         """Test installing when another operation is in progress."""
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=False
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=False):
             # Set operation in progress
             import model_garden.api.routes.system as system_module
 
@@ -227,9 +208,7 @@ class TestUninstallUnsloth:
 
     def test_uninstall_not_installed(self, client: TestClient):
         """Test uninstalling when Unsloth is not installed."""
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=False
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=False):
             response = client.post("/api/v1/system/unsloth/uninstall")
             assert response.status_code == 200
 
@@ -239,9 +218,7 @@ class TestUninstallUnsloth:
 
     def test_uninstall_starts_background_task(self, client: TestClient):
         """Test that uninstall starts a background task."""
-        with patch(
-            "model_garden.utils.optional_deps.is_unsloth_installed", return_value=True
-        ):
+        with patch("model_garden.utils.optional_deps.is_unsloth_installed", return_value=True):
             # Reset operation status
             import model_garden.api.routes.system as system_module
 
