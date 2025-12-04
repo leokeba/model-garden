@@ -239,6 +239,15 @@ async def get_settings():
         except Exception:
             unsloth_version = "unknown"
 
+    # Get transformers version
+    transformers_version = None
+    try:
+        import transformers
+
+        transformers_version = getattr(transformers, "__version__", "unknown")
+    except Exception:
+        transformers_version = "unknown"
+
     # Get Python and uv info
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
@@ -256,28 +265,22 @@ async def get_settings():
         pass
 
     # Check if passwordless sudo is available for restart
+    # Use sudo -l to list allowed commands for the user
     can_restart_service = False
     if is_systemd_service:
         try:
             result = subprocess.run(
-                ["sudo", "-n", "systemctl", "restart", "model-garden.service", "--dry-run"],
+                ["sudo", "-n", "-l"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
-            # If no password prompt and command exists, we can restart
-            can_restart_service = result.returncode == 0 or "dry-run" in result.stderr.lower()
+            # Check if the output contains our specific restart command
+            # The sudo -l output shows full path: /usr/bin/systemctl restart model-garden.service
+            if result.returncode == 0:
+                can_restart_service = "systemctl restart model-garden.service" in result.stdout
         except Exception:
-            # Try simpler check - just see if sudo -n works for systemctl
-            try:
-                result = subprocess.run(
-                    ["sudo", "-n", "true"],
-                    capture_output=True,
-                    timeout=5,
-                )
-                can_restart_service = result.returncode == 0
-            except Exception:
-                pass
+            pass
 
     return {
         "success": True,
@@ -291,6 +294,7 @@ async def get_settings():
             },
             "environment": {
                 "python_version": python_version,
+                "transformers_version": transformers_version,
                 "project_root": str(Path(__file__).parent.parent.parent.parent),
             },
             "service": {
@@ -356,6 +360,66 @@ def _run_package_command(command: list[str], operation: str):
     is_unsloth_installed.cache_clear()
 
 
+def _run_package_commands_sequence(commands: list[list[str]], operation: str):
+    """Run multiple package management commands in sequence."""
+    global _package_operation_status
+
+    _package_operation_status = {
+        "in_progress": True,
+        "operation": operation,
+        "output": [],
+        "success": None,
+        "error": None,
+    }
+
+    try:
+        project_root = Path(__file__).parent.parent.parent.parent
+        all_output = []
+
+        for i, command in enumerate(commands):
+            all_output.append(f">>> Running: {' '.join(command)}")
+
+            process = subprocess.Popen(
+                command,
+                cwd=str(project_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            if process.stdout:
+                for line in process.stdout:
+                    all_output.append(line.rstrip())
+                    # Keep last 100 lines
+                    if len(all_output) > 100:
+                        all_output.pop(0)
+
+            process.wait()
+
+            if process.returncode != 0:
+                _package_operation_status["output"] = all_output
+                _package_operation_status["success"] = False
+                _package_operation_status["error"] = (
+                    f"Command {i + 1} exited with code {process.returncode}"
+                )
+                return
+
+        _package_operation_status["output"] = all_output
+        _package_operation_status["success"] = True
+
+    except Exception as e:
+        _package_operation_status["success"] = False
+        _package_operation_status["error"] = str(e)
+    finally:
+        _package_operation_status["in_progress"] = False
+
+    # Clear the unsloth cache so next check gets fresh status
+    from model_garden.utils.optional_deps import is_unsloth_installed
+
+    is_unsloth_installed.cache_clear()
+
+
 @router.post("/unsloth/install")
 async def install_unsloth(background_tasks: BackgroundTasks):
     """Install the Unsloth package."""
@@ -376,7 +440,7 @@ async def install_unsloth(background_tasks: BackgroundTasks):
             "message": f"Another package operation is in progress: {_package_operation_status['operation']}",
         }
 
-    # Use uv pip install to add unsloth without affecting other dependencies
+    # Use uv pip install to add unsloth (this will bring in compatible transformers version)
     command = ["uv", "pip", "install", "unsloth"]
 
     background_tasks.add_task(_run_package_command, command, "install_unsloth")
@@ -411,17 +475,29 @@ async def uninstall_unsloth(background_tasks: BackgroundTasks):
             "message": f"Another package operation is in progress: {_package_operation_status['operation']}",
         }
 
-    # Use uv pip uninstall
-    command = ["uv", "pip", "uninstall", "unsloth", "-y"]
+    # Uninstall unsloth and unsloth-zoo, then upgrade transformers to latest
+    # unsloth-zoo is a dependency that also pins transformers to older versions
+    # Note: We use `uv pip install` instead of `uv sync` because the lockfile
+    # includes unsloth-zoo constraints (from the unsloth optional dependency)
+    # which would prevent upgrading transformers to the latest version.
+    uninstall_command = ["uv", "pip", "uninstall", "unsloth", "unsloth-zoo"]
+    upgrade_command = ["uv", "pip", "install", "--upgrade", "transformers"]
 
-    background_tasks.add_task(_run_package_command, command, "uninstall_unsloth")
+    background_tasks.add_task(
+        _run_package_commands_sequence,
+        [uninstall_command, upgrade_command],
+        "uninstall_unsloth",
+    )
 
     return {
         "success": True,
-        "message": "Unsloth uninstallation started. Check /api/v1/system/settings for progress.",
+        "message": "Unsloth uninstallation started. This will also upgrade transformers to the latest version. Check /api/v1/system/settings for progress.",
         "data": {
             "operation": "uninstall_unsloth",
-            "command": " ".join(command),
+            "commands": [
+                " ".join(uninstall_command),
+                " ".join(upgrade_command),
+            ],
         },
     }
 
@@ -444,7 +520,7 @@ async def restart_service():
     2. Passwordless sudo configured for the restart command
 
     To enable passwordless sudo, add to /etc/sudoers.d/model-garden:
-        <username> ALL=(root) NOPASSWD: /bin/systemctl restart model-garden.service
+        <username> ALL=(root) NOPASSWD: /usr/bin/systemctl restart model-garden.service
     """
     # Check if running as systemd service
     try:
@@ -472,42 +548,45 @@ async def restart_service():
 
     # Try to restart with passwordless sudo
     try:
-        # Use -n flag to prevent password prompt
-        result = subprocess.run(
-            ["sudo", "-n", "systemctl", "restart", "model-garden.service"],
+        # First, verify sudo access with a quick test (this won't restart anything)
+        test_result = subprocess.run(
+            ["sudo", "-n", "-l"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=5,
         )
-
-        if result.returncode != 0:
-            if "password is required" in result.stderr.lower() or "sudo:" in result.stderr.lower():
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        "Passwordless sudo not configured for service restart. "
-                        "Add to /etc/sudoers.d/model-garden:\n"
-                        "  <username> ALL=(root) NOPASSWD: /bin/systemctl restart model-garden.service"
-                    ),
-                )
+        if (
+            test_result.returncode != 0
+            or "systemctl restart model-garden.service" not in test_result.stdout
+        ):
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to restart service: {result.stderr}",
+                status_code=403,
+                detail=(
+                    "Passwordless sudo not configured for service restart. "
+                    "Add to /etc/sudoers.d/model-garden:\n"
+                    "  <username> ALL=(root) NOPASSWD: /usr/bin/systemctl restart model-garden.service"
+                ),
             )
 
-        # If we get here, restart was initiated successfully
-        # The response may not reach the client since the service is restarting
+        # Now run the actual restart in a detached process
+        # Use nohup and shell to ensure the command survives the service shutdown
+        subprocess.Popen(
+            "nohup sudo -n systemctl restart model-garden.service > /dev/null 2>&1 &",
+            shell=True,
+            start_new_session=True,
+        )
+
+        # Return success immediately - the service will restart momentarily
         return {
             "success": True,
             "message": "Service restart initiated. The connection will be lost momentarily.",
         }
 
     except subprocess.TimeoutExpired:
-        # Timeout might mean restart is happening
-        return {
-            "success": True,
-            "message": "Service restart initiated (response timed out, which is expected).",
-        }
+        raise HTTPException(
+            status_code=500,
+            detail="Timeout checking sudo permissions",
+        )
     except HTTPException:
         raise
     except Exception as e:

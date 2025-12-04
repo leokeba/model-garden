@@ -112,6 +112,12 @@ def create_app() -> FastAPI:
     app.include_router(system_router)
     app.include_router(registry_router)
 
+    # Health check endpoint (needed for service restart detection)
+    @app.get("/health")
+    async def health_check():
+        """Health check endpoint for service monitoring."""
+        return {"status": "ok", "message": "Model Garden API is running"}
+
     # Mount frontend static files if available
     frontend_build_path = Path(__file__).parent.parent.parent / "frontend" / "build"
     if frontend_build_path.exists():

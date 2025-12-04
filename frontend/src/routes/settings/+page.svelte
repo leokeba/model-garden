@@ -19,6 +19,7 @@
     let operationMessage = $state("");
     let showRestartConfirm = $state(false);
     let showUninstallConfirm = $state(false);
+    let restartRequired = $state(false);
     let pollingInterval: number | null = null;
 
     async function loadSettings() {
@@ -54,7 +55,11 @@
                 // Stop polling if operation completed
                 if (!response.data.in_progress) {
                     stopPolling();
-                    // Refresh settings to get updated unsloth status
+                    // Mark that restart is required for changes to take effect
+                    if (response.data.success) {
+                        restartRequired = true;
+                    }
+                    // Refresh settings
                     await loadSettings();
                 }
             } catch (err) {
@@ -120,20 +125,29 @@
 
         try {
             await api.restartService();
-            operationMessage =
-                "Service restart initiated. The page will reload in a moment...";
-
-            // Wait a bit then try to reconnect
-            setTimeout(() => {
-                checkServiceAndReload();
-            }, 3000);
         } catch (err) {
-            operationMessage =
-                err instanceof Error
-                    ? err.message
-                    : "Failed to restart service";
-            operationInProgress = false;
+            // Connection errors are expected - the service restarts before responding
+            // Only show error if it's a real API error (like permission denied)
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            if (
+                errorMsg.includes("403") ||
+                errorMsg.includes("sudo") ||
+                errorMsg.includes("permission")
+            ) {
+                operationMessage = errorMsg;
+                operationInProgress = false;
+                return;
+            }
+            // Otherwise, assume the restart was initiated and connection was lost
         }
+
+        operationMessage =
+            "Service restart initiated. Waiting for service to come back up...";
+
+        // Wait a bit then try to reconnect
+        setTimeout(() => {
+            checkServiceAndReload();
+        }, 3000);
     }
 
     async function checkServiceAndReload() {
@@ -245,6 +259,27 @@
                                             "\n",
                                         )}</pre>
                                 </details>
+                            {/if}
+                            {#if restartRequired && !settings.package_operation.in_progress}
+                                <div
+                                    class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg"
+                                >
+                                    <p class="text-sm text-amber-800 mb-2">
+                                        <strong>Restart required:</strong> The service
+                                        needs to be restarted for changes to take
+                                        effect.
+                                    </p>
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        onclick={() => {
+                                            restartRequired = false;
+                                            showRestartConfirm = true;
+                                        }}
+                                    >
+                                        Restart Now
+                                    </Button>
+                                </div>
                             {/if}
                         </div>
                     </div>
@@ -413,7 +448,7 @@
                                         >:
                                     </p>
                                     <pre
-                                        class="text-xs bg-gray-100 p-2 rounded mt-1 overflow-x-auto">&lt;username&gt; ALL=(root) NOPASSWD: /bin/systemctl restart model-garden.service</pre>
+                                        class="text-xs bg-gray-100 p-2 rounded mt-1 overflow-x-auto">&lt;username&gt; ALL=(root) NOPASSWD: /usr/bin/systemctl restart model-garden.service</pre>
                                 {/if}
                             {:else}
                                 <p class="text-sm text-gray-600">
@@ -451,13 +486,21 @@
                     Environment
                 </h2>
                 <Card>
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                             <span class="text-sm text-gray-500"
                                 >Python Version</span
                             >
                             <p class="font-medium text-gray-900">
                                 {settings.environment.python_version}
+                            </p>
+                        </div>
+                        <div>
+                            <span class="text-sm text-gray-500"
+                                >Transformers Version</span
+                            >
+                            <p class="font-medium text-gray-900">
+                                {settings.environment.transformers_version}
                             </p>
                         </div>
                         <div>
@@ -490,9 +533,10 @@
                     Uninstall Unsloth?
                 </h3>
                 <p class="text-gray-600 text-sm mb-6">
-                    This will remove the Unsloth package. You'll need to use the
-                    Transformers backend for training until Unsloth is
-                    reinstalled.
+                    This will remove Unsloth and reinstall the latest version of
+                    Transformers (which Unsloth constrains to older versions).
+                    You'll need to use the Transformers backend for training
+                    until Unsloth is reinstalled.
                 </p>
                 <div class="flex gap-3 justify-center">
                     <Button

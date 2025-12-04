@@ -294,6 +294,7 @@ interface SystemSettings {
   };
   environment: {
     python_version: string;
+    transformers_version: string;
     project_root: string;
   };
   service: {

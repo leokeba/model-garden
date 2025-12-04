@@ -41,7 +41,7 @@ dependencies = [
     "pynvml>=13.0.1",
     "python-dotenv>=1.1.1",
     "codecarbon>=2.4.0",
-    "transformers==4.57.2",
+    "transformers>=4.57.2",
     "seaborn>=0.13.2",
 ]
 
@@ -49,7 +49,7 @@ dependencies = [
 # Unsloth provides optimized training but is optional and platform-specific
 # Install with: pip install model-garden[unsloth] or uv sync --extra unsloth
 unsloth = [
-    "unsloth>=2025.10.8",
+    "unsloth>=2025.11.6",
 ]
 dev = [
     "ruff>=0.8.0",
@@ -63,7 +63,7 @@ test = [
 ]
 # Full installation includes unsloth
 full = [
-    "unsloth>=2025.10.8",
+    "unsloth>=2025.11.6",
 ]
 
 [project.scripts]
