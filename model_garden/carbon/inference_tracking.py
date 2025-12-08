@@ -29,6 +29,7 @@ class InferenceEmissionsTracker:
         self.session_start_time: float | None = None
         self.request_count = 0
         self.total_tokens = 0
+        self.total_prompt_tokens = 0
 
     def start_session(self) -> None:
         """Start tracking a session (e.g., when model is loaded)."""
@@ -48,11 +49,13 @@ class InferenceEmissionsTracker:
         self.session_start_time = time.time()
         self.request_count = 0
         self.total_tokens = 0
+        self.total_prompt_tokens = 0
 
-    def record_request(self, tokens_generated: int = 0) -> None:
+    def record_request(self, tokens_generated: int = 0, prompt_tokens: int = 0) -> None:
         """Record an inference request."""
         self.request_count += 1
         self.total_tokens += tokens_generated
+        self.total_prompt_tokens += prompt_tokens
 
     def get_request_emissions(self) -> dict[str, Any] | None:
         """
@@ -80,6 +83,8 @@ class InferenceEmissionsTracker:
             emissions_data["model_name"] = self.model_name
             emissions_data["request_count"] = self.request_count
             emissions_data["total_tokens"] = self.total_tokens
+            emissions_data["prompt_tokens"] = self.total_prompt_tokens
+            emissions_data["completion_tokens"] = self.total_tokens  # total_tokens tracks generated tokens
             emissions_data["requests_per_second"] = (
                 self.request_count / duration if duration > 0 else 0
             )

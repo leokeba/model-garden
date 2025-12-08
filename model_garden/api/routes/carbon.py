@@ -177,6 +177,8 @@ async def get_boamps_report(job_id: str):
                 "from_hub": job.get("from_hub", False),
                 "validation_dataset_path": job.get("validation_dataset_path"),
                 "validation_from_hub": job.get("validation_from_hub", False),
+                "dataset_size": job.get("dataset_size"),
+                "dataset_num_samples": job.get("dataset_num_samples"),
                 # Training config
                 "hyperparameters": job.get("hyperparameters", {}),
                 "lora_config": job.get("lora_config"),

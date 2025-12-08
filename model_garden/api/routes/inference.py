@@ -580,11 +580,13 @@ async def chat_completions(request: ChatCompletionRequest):
 
             async def generate_stream():
                 total_tokens = 0
+                prompt_tokens = 0
                 stream = cast(AsyncIterator[dict], await service.chat_completion(**gen_params))
 
                 async for chunk in stream:
                     if isinstance(chunk, dict) and "usage" in chunk:
                         total_tokens = chunk["usage"].get("completion_tokens", 0)
+                        prompt_tokens = chunk["usage"].get("prompt_tokens", 0)
 
                     yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -594,7 +596,9 @@ async def chat_completions(request: ChatCompletionRequest):
 
                     tracker = get_inference_tracker()
                     if tracker:
-                        tracker.record_request(tokens_generated=total_tokens)
+                        tracker.record_request(
+                            tokens_generated=total_tokens, prompt_tokens=prompt_tokens
+                        )
                 except Exception:
                     pass
 
@@ -638,18 +642,23 @@ async def chat_completions(request: ChatCompletionRequest):
                         ) - before_emissions.get("energy_consumed_kwh", 0.0)
 
                         tokens = 0
+                        prompt_tokens = 0
                         if isinstance(response, dict) and "usage" in response:
                             tokens = response["usage"].get("completion_tokens", 0)
+                            prompt_tokens = response["usage"].get("prompt_tokens", 0)
 
                         carbon_data = {
                             "emissions_g_co2": delta_emissions_kg * 1000,
                             "energy_consumed_wh": delta_energy_kwh * 1000,
                             "duration_seconds": request_duration,
                             "completion_tokens": tokens,
+                            "prompt_tokens": prompt_tokens,
                             "measured": True,
                         }
 
-                        session_tracker.record_request(tokens_generated=tokens)
+                        session_tracker.record_request(
+                            tokens_generated=tokens, prompt_tokens=prompt_tokens
+                        )
             except Exception:
                 pass
 

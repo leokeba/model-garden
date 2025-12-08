@@ -629,3 +629,96 @@ class TestBoAmpsQualityEstimation:
         report = generator.generate_report(emissions_data)
 
         assert report["quality"] == "low"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_dataset_file_type_detection(self, mock_hw_detector):
+        """Test detailed file type detection per BoAmps enum."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+        emissions_data = {"job_id": "test-job-123", "job_type": "training"}
+
+        job_config = {
+            "dataset_path": "data/train.jsonl",
+            "dataset_size": 1024 * 1024,  # 1MB
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        dataset = report["task"]["dataset"][0]
+
+        assert "fileType" in dataset
+        assert dataset["fileType"] == "json"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_dataset_volume_and_unit(self, mock_hw_detector):
+        """Test volume and volumeUnit fields."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+        emissions_data = {"job_id": "test-job-123", "job_type": "training"}
+
+        job_config = {
+            "dataset_path": "data/train.parquet",
+            "dataset_size": 1048576 * 5,  # 5 MB
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        dataset = report["task"]["dataset"][0]
+
+        assert "volume" in dataset
+        assert dataset["volume"] == 1048576 * 5
+        assert "volumeUnit" in dataset
+        assert dataset["volumeUnit"] == "byte"
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_dataset_items(self, mock_hw_detector):
+        """Test items field."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+        emissions_data = {"job_id": "test-job-123", "job_type": "training"}
+
+        job_config = {
+            "dataset_path": "data/train.jsonl",
+            "dataset_num_samples": 5000,
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+        dataset = report["task"]["dataset"][0]
+
+        assert "items" in dataset
+        assert dataset["items"] == 5000
+
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_inference_properties(self, mock_hw_detector):
+        """Test inference properties for inference jobs."""
+        mock_hw_detector.return_value = create_mock_hardware_detector()
+        from model_garden.carbon.boamps import BoAmpsReportGenerator
+
+        generator = BoAmpsReportGenerator()
+        emissions_data = {
+            "job_id": "infer-123",
+            "job_type": "inference",
+            "emissions_kg_co2": 0.1,
+        }
+        job_config = {
+            "model_path": "models/my-model",
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "num_requests": 10,
+        }
+
+        report = generator.generate_report(emissions_data, job_config=job_config)
+
+        # Check for input dataset with inference properties
+        found = False
+        for ds in report["task"]["dataset"]:
+            if "inferenceProperties" in ds:
+                found = True
+                props = ds["inferenceProperties"][0]
+                assert "queryTokens" in props
+                break
+        assert found

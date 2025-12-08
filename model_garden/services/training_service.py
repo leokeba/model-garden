@@ -609,6 +609,36 @@ class TrainingService:
         finally:
             self._cleanup()
 
+    def _analyze_dataset(self, dataset: Any, request: TrainingRequest) -> None:
+        """Analyze dataset and update training config with statistics."""
+        try:
+            if dataset is None:
+                return
+
+            # Get number of samples
+            num_samples = len(dataset)
+
+            # Estimate size in bytes
+            # If it's a local file, we can get file size
+            size_bytes = 0
+            if not request.from_hub:
+                from pathlib import Path
+
+                p = Path(request.dataset_path)
+                if p.exists() and p.is_file():
+                    size_bytes = p.stat().st_size
+
+            # Update config
+            if request.training_config:
+                request.training_config.dataset_num_samples = num_samples
+                if size_bytes > 0:
+                    request.training_config.dataset_size = size_bytes
+
+        except Exception as e:
+            from model_garden.utils.console import console
+
+            console.print(f"[yellow]⚠️  Failed to analyze dataset: {e}[/yellow]")
+
     def _train_text(
         self,
         request: TrainingRequest,
@@ -643,6 +673,9 @@ class TrainingService:
             )
         else:
             self._train_dataset = self._trainer.load_dataset_from_file(request.dataset_path)
+
+        # Analyze dataset for BoAmps reporting
+        self._analyze_dataset(self._train_dataset, request)
 
         # Format dataset
         self._train_dataset = self._trainer.format_dataset(
@@ -701,6 +734,10 @@ class TrainingService:
             output_dir=request.output_dir,
             model_type="text",
             base_model=request.base_model,
+            metrics={
+                "dataset_size": request.training_config.dataset_size,
+                "dataset_num_samples": request.training_config.dataset_num_samples,
+            },
         )
 
     def _train_vision(
@@ -740,6 +777,9 @@ class TrainingService:
             from_hub=request.from_hub,
             split="train",
         )
+
+        # Analyze dataset for BoAmps reporting
+        self._analyze_dataset(self._train_dataset, request)
 
         # Format dataset
         self._train_dataset = self._trainer.format_dataset(
@@ -792,6 +832,10 @@ class TrainingService:
             output_dir=request.output_dir,
             model_type="vision",
             base_model=request.base_model,
+            metrics={
+                "dataset_size": request.training_config.dataset_size,
+                "dataset_num_samples": request.training_config.dataset_num_samples,
+            },
         )
 
     def _cleanup(self):

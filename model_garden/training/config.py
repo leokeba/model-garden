@@ -219,6 +219,10 @@ class TrainingConfig:
     metric_for_best_model: str = "eval_loss"
     save_total_limit: int = DEFAULT_SAVE_TOTAL_LIMIT
 
+    # Dataset statistics (for BoAmps reporting)
+    dataset_size: int | None = None
+    dataset_num_samples: int | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for passing to trainer methods."""
         return {
@@ -245,6 +249,8 @@ class TrainingConfig:
             "load_best_model_at_end": self.load_best_model_at_end,
             "metric_for_best_model": self.metric_for_best_model,
             "save_total_limit": self.save_total_limit,
+            "dataset_size": self.dataset_size,
+            "dataset_num_samples": self.dataset_num_samples,
         }
 
     @classmethod

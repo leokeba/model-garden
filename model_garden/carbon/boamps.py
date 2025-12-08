@@ -391,6 +391,32 @@ class BoAmpsReportGenerator:
 
         return [algorithm]
 
+    def _detect_file_type(self, path: str, source_type: str) -> str:
+        """Detect detailed file type per BoAmps enum."""
+        path = path.lower()
+        if path.endswith(".json"):
+            return "json"
+        if path.endswith(".jsonl"):
+            return "json"  # BoAmps doesn't have jsonl, map to json
+        if path.endswith(".csv"):
+            return "csv"
+        if path.endswith(".parquet"):
+            return "parquet"
+        if path.endswith(".txt"):
+            return "txt"
+        if path.endswith(".jpg") or path.endswith(".jpeg"):
+            return "jpg"
+        if path.endswith(".png"):
+            return "png"
+        if path.endswith(".webp"):
+            return "webp"
+
+        if source_type == "public":
+            # HuggingFace datasets typically use parquet internally
+            return "parquet"
+
+        return "other"
+
     def _build_datasets(
         self,
         emissions_data: dict[str, Any],
@@ -449,7 +475,10 @@ class BoAmpsReportGenerator:
             else:
                 dataset_entry["sourceUri"] = dataset_path
 
-            # Determine data format from file extension or assume json for HF
+            # Determine data format and file type
+            dataset_entry["fileType"] = self._detect_file_type(dataset_path, source_type)
+
+            # Keep dataFormat for backward compatibility if needed, or map from fileType
             if dataset_path.endswith(".jsonl") or dataset_path.endswith(".json"):
                 dataset_entry["dataFormat"] = "json"
             elif dataset_path.endswith(".csv"):
@@ -457,21 +486,34 @@ class BoAmpsReportGenerator:
             elif dataset_path.endswith(".parquet"):
                 dataset_entry["dataFormat"] = "parquet"
             elif source_type == "public":
-                # HuggingFace datasets typically use parquet internally
                 dataset_entry["dataFormat"] = "parquet"
 
             # Add dataset size info if available
+            size_bytes = 0
             if "dataset_size" in job_config:
-                # dataSize is in GB per schema
                 size_bytes = job_config["dataset_size"]
-                if size_bytes > 0:
-                    dataset_entry["dataSize"] = round(size_bytes / (1024**3), 4)
+            elif source_type == "private":
+                try:
+                    p = Path(dataset_path)
+                    if p.exists() and p.is_file():
+                        size_bytes = p.stat().st_size
+                except Exception:
+                    pass
+
+            if size_bytes > 0:
+                # dataSize is in GB per schema
+                dataset_entry["dataSize"] = round(size_bytes / (1024**3), 4)
+                # volume is in bytes
+                dataset_entry["volume"] = size_bytes
+                dataset_entry["volumeUnit"] = "byte"
 
             # Add number of samples if available (dataQuantity per schema)
             if "dataset_num_samples" in job_config:
                 dataset_entry["dataQuantity"] = job_config["dataset_num_samples"]
+                dataset_entry["items"] = job_config["dataset_num_samples"]
             elif "num_samples" in job_config:
                 dataset_entry["dataQuantity"] = job_config["num_samples"]
+                dataset_entry["items"] = job_config["num_samples"]
 
             # Add shape info for vision datasets
             if is_vision and "image_size" in job_config:
@@ -504,16 +546,43 @@ class BoAmpsReportGenerator:
             else:
                 val_entry["sourceUri"] = val_path
 
+            val_entry["fileType"] = self._detect_file_type(val_path, source_type)
+
             datasets.append(val_entry)
 
         # For inference, add output dataset description
         if task_stage == "inference":
+            # Input dataset (prompts)
+            input_entry: dict[str, Any] = {
+                "dataUsage": "input",
+                "dataType": "text",
+                "source": "private",
+            }
+
+            inference_props = {}
+            if "prompt_tokens" in job_config:
+                inference_props["queryTokens"] = job_config["prompt_tokens"]
+
+            # If we have num_requests, we can estimate queryLength if we assume tokens ~= chars/4
+            # But better to just include what we know.
+
+            if inference_props:
+                input_entry["inferenceProperties"] = [inference_props]
+
+            if "num_requests" in job_config:
+                input_entry["dataQuantity"] = job_config["num_requests"]
+                input_entry["items"] = job_config["num_requests"]
+
+            datasets.append(input_entry)
+
+            # Output dataset (completions)
             output_entry: dict[str, Any] = {
                 "dataUsage": "output",
                 "dataType": "text",  # LLM/VLM outputs are text
             }
             if "num_requests" in job_config:
                 output_entry["dataQuantity"] = job_config["num_requests"]
+                output_entry["items"] = job_config["num_requests"]
             datasets.append(output_entry)
 
         # Ensure at least one dataset entry (required by schema)

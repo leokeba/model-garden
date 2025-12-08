@@ -405,6 +405,14 @@ def run_training_job(job_id: str):
         job = training_jobs[job_id]
         job["status"] = "completed"
         job["completed_at"] = utc_now_iso()
+
+        # Update job with dataset stats from result metrics
+        if result.metrics:
+            if "dataset_size" in result.metrics and result.metrics["dataset_size"]:
+                job["dataset_size"] = result.metrics["dataset_size"]
+            if "dataset_num_samples" in result.metrics and result.metrics["dataset_num_samples"]:
+                job["dataset_num_samples"] = result.metrics["dataset_num_samples"]
+
         storage.save_training_jobs(training_jobs)
 
         # Notify completion
