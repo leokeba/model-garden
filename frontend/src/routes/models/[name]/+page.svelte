@@ -109,7 +109,9 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center py-6">
         <div class="flex items-center">
-          <Button href="/models" variant="ghost" size="sm">← Models</Button>
+          <Button href="/inference" variant="ghost" size="sm"
+            >← Inference</Button
+          >
           <h1 class="text-3xl font-bold text-gray-900 ml-4">{modelName}</h1>
         </div>
       </div>
@@ -400,8 +402,8 @@
                   Refresh
                 </Button>
 
-                <Button href="/models" variant="secondary" fullWidth>
-                  Back to Models
+                <Button href="/inference" variant="secondary" fullWidth>
+                  Back to Inference
                 </Button>
                 <Button onclick={handleRename} variant="secondary" fullWidth>
                   ✏️ Rename Model

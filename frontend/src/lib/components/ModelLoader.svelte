@@ -9,8 +9,10 @@
     interface Props {
         /** Compact mode hides advanced settings by default */
         compact?: boolean;
-        /** Pre-selected model path */
+        /** Pre-selected local model path */
         selectedModelPath?: string;
+        /** Pre-selected HuggingFace model ID */
+        selectedHfModelId?: string;
         /** Callback when model is successfully loaded */
         onModelLoaded?: () => void;
         /** Callback when model is unloaded */
@@ -26,6 +28,7 @@
     let {
         compact = false,
         selectedModelPath = "",
+        selectedHfModelId = "",
         onModelLoaded,
         onModelUnloaded,
         showLocalModels = true,
@@ -241,6 +244,14 @@
         if (selectedModelPath && selectedModelPath !== localModelPath) {
             localModelPath = selectedModelPath;
             useHuggingFaceHub = false;
+        }
+    });
+
+    // Update huggingFaceModelId when prop changes
+    $effect(() => {
+        if (selectedHfModelId && selectedHfModelId !== huggingFaceModelId) {
+            huggingFaceModelId = selectedHfModelId;
+            useHuggingFaceHub = true;
         }
     });
 

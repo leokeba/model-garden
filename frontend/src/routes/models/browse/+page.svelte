@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import Button from '$lib/components/Button.svelte';
-  import Card from '$lib/components/Card.svelte';
-  import Badge from '$lib/components/Badge.svelte';
+  import { goto } from "$app/navigation";
+  import Badge from "$lib/components/Badge.svelte";
+  import Button from "$lib/components/Button.svelte";
+  import Card from "$lib/components/Card.svelte";
+  import { onMount } from "svelte";
 
   interface HuggingFaceModel {
     id: string;
@@ -23,123 +23,123 @@
   const popularModels: HuggingFaceModel[] = [
     // Conversational AI
     {
-      id: 'microsoft/DialoGPT-large',
-      author: 'microsoft',
-      modelName: 'DialoGPT-large',
+      id: "microsoft/DialoGPT-large",
+      author: "microsoft",
+      modelName: "DialoGPT-large",
       downloads: 2500000,
       likes: 850,
-      tags: ['conversational', 'dialogue', 'chatbot'],
-      pipeline_tag: 'conversational',
-      library_name: 'transformers',
-      lastModified: '2024-01-15',
-      description: 'Large-scale pretrained dialogue response generation model',
-      size: '774M'
+      tags: ["conversational", "dialogue", "chatbot"],
+      pipeline_tag: "conversational",
+      library_name: "transformers",
+      lastModified: "2024-01-15",
+      description: "Large-scale pretrained dialogue response generation model",
+      size: "774M",
     },
     {
-      id: 'microsoft/DialoGPT-medium',
-      author: 'microsoft',
-      modelName: 'DialoGPT-medium',
+      id: "microsoft/DialoGPT-medium",
+      author: "microsoft",
+      modelName: "DialoGPT-medium",
       downloads: 1800000,
       likes: 650,
-      tags: ['conversational', 'dialogue', 'chatbot'],
-      pipeline_tag: 'conversational',
-      library_name: 'transformers',
-      lastModified: '2024-01-15',
-      description: 'Medium-scale pretrained dialogue response generation model',
-      size: '345M'
+      tags: ["conversational", "dialogue", "chatbot"],
+      pipeline_tag: "conversational",
+      library_name: "transformers",
+      lastModified: "2024-01-15",
+      description: "Medium-scale pretrained dialogue response generation model",
+      size: "345M",
     },
-    
+
     // Text Generation
     {
-      id: 'gpt2',
-      author: 'openai-community',
-      modelName: 'gpt2',
+      id: "gpt2",
+      author: "openai-community",
+      modelName: "gpt2",
       downloads: 15000000,
       likes: 2100,
-      tags: ['text-generation', 'gpt2', 'causal-lm'],
-      pipeline_tag: 'text-generation',
-      library_name: 'transformers',
-      lastModified: '2024-02-01',
-      description: 'GPT-2 Base model (117M parameters)',
-      size: '117M'
+      tags: ["text-generation", "gpt2", "causal-lm"],
+      pipeline_tag: "text-generation",
+      library_name: "transformers",
+      lastModified: "2024-02-01",
+      description: "GPT-2 Base model (117M parameters)",
+      size: "117M",
     },
     {
-      id: 'gpt2-medium',
-      author: 'openai-community',
-      modelName: 'gpt2-medium',
+      id: "gpt2-medium",
+      author: "openai-community",
+      modelName: "gpt2-medium",
       downloads: 8500000,
       likes: 1200,
-      tags: ['text-generation', 'gpt2', 'causal-lm'],
-      pipeline_tag: 'text-generation',
-      library_name: 'transformers',
-      lastModified: '2024-02-01',
-      description: 'GPT-2 Medium model (345M parameters)',
-      size: '345M'
+      tags: ["text-generation", "gpt2", "causal-lm"],
+      pipeline_tag: "text-generation",
+      library_name: "transformers",
+      lastModified: "2024-02-01",
+      description: "GPT-2 Medium model (345M parameters)",
+      size: "345M",
     },
     {
-      id: 'gpt2-large',
-      author: 'openai-community',
-      modelName: 'gpt2-large',
+      id: "gpt2-large",
+      author: "openai-community",
+      modelName: "gpt2-large",
       downloads: 4200000,
       likes: 890,
-      tags: ['text-generation', 'gpt2', 'causal-lm'],
-      pipeline_tag: 'text-generation',
-      library_name: 'transformers',
-      lastModified: '2024-02-01',
-      description: 'GPT-2 Large model (774M parameters)',
-      size: '774M'
+      tags: ["text-generation", "gpt2", "causal-lm"],
+      pipeline_tag: "text-generation",
+      library_name: "transformers",
+      lastModified: "2024-02-01",
+      description: "GPT-2 Large model (774M parameters)",
+      size: "774M",
     },
 
     // Code Generation
     {
-      id: 'microsoft/CodeGPT-small-py',
-      author: 'microsoft',
-      modelName: 'CodeGPT-small-py',
+      id: "microsoft/CodeGPT-small-py",
+      author: "microsoft",
+      modelName: "CodeGPT-small-py",
       downloads: 950000,
       likes: 420,
-      tags: ['code-generation', 'python', 'programming'],
-      pipeline_tag: 'text-generation',
-      library_name: 'transformers',
-      lastModified: '2023-12-10',
-      description: 'Small model for Python code generation',
-      size: '124M'
+      tags: ["code-generation", "python", "programming"],
+      pipeline_tag: "text-generation",
+      library_name: "transformers",
+      lastModified: "2023-12-10",
+      description: "Small model for Python code generation",
+      size: "124M",
     },
 
     // Instruction Following
     {
-      id: 'distilgpt2',
-      author: 'distilbert-base-uncased',
-      modelName: 'distilgpt2',
+      id: "distilgpt2",
+      author: "distilbert-base-uncased",
+      modelName: "distilgpt2",
       downloads: 6800000,
       likes: 890,
-      tags: ['text-generation', 'distilgpt2', 'causal-lm'],
-      pipeline_tag: 'text-generation',
-      library_name: 'transformers',
-      lastModified: '2024-01-20',
-      description: 'Distilled version of GPT-2 (82M parameters)',
-      size: '82M'
-    }
+      tags: ["text-generation", "distilgpt2", "causal-lm"],
+      pipeline_tag: "text-generation",
+      library_name: "transformers",
+      lastModified: "2024-01-20",
+      description: "Distilled version of GPT-2 (82M parameters)",
+      size: "82M",
+    },
   ];
 
-  let searchQuery = $state('');
-  let selectedCategory = $state('all');
-  let selectedSize = $state('all');
+  let searchQuery = $state("");
+  let selectedCategory = $state("all");
+  let selectedSize = $state("all");
   let filteredModels = $state<HuggingFaceModel[]>([]);
 
   const categories = [
-    { value: 'all', label: 'All Categories' },
-    { value: 'conversational', label: '💬 Conversational' },
-    { value: 'text-generation', label: '✍️ Text Generation' },
-    { value: 'code-generation', label: '💻 Code Generation' },
-    { value: 'summarization', label: '📝 Summarization' },
-    { value: 'question-answering', label: '❓ Q&A' }
+    { value: "all", label: "All Categories" },
+    { value: "conversational", label: "💬 Conversational" },
+    { value: "text-generation", label: "✍️ Text Generation" },
+    { value: "code-generation", label: "💻 Code Generation" },
+    { value: "summarization", label: "📝 Summarization" },
+    { value: "question-answering", label: "❓ Q&A" },
   ];
 
   const sizes = [
-    { value: 'all', label: 'All Sizes' },
-    { value: 'small', label: '🟢 Small (<500M)' },
-    { value: 'medium', label: '🟡 Medium (500M-2B)' },
-    { value: 'large', label: '🔴 Large (>2B)' }
+    { value: "all", label: "All Sizes" },
+    { value: "small", label: "🟢 Small (<500M)" },
+    { value: "medium", label: "🟡 Medium (500M-2B)" },
+    { value: "large", label: "🔴 Large (>2B)" },
   ];
 
   function filterModels() {
@@ -148,39 +148,48 @@
     // Filter by search query
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(model => 
-        model.id.toLowerCase().includes(query) ||
-        model.modelName.toLowerCase().includes(query) ||
-        model.description?.toLowerCase().includes(query) ||
-        model.tags.some(tag => tag.toLowerCase().includes(query))
+      filtered = filtered.filter(
+        (model) =>
+          model.id.toLowerCase().includes(query) ||
+          model.modelName.toLowerCase().includes(query) ||
+          model.description?.toLowerCase().includes(query) ||
+          model.tags.some((tag) => tag.toLowerCase().includes(query)),
       );
     }
 
     // Filter by category
-    if (selectedCategory !== 'all') {
-      filtered = filtered.filter(model => 
-        model.pipeline_tag === selectedCategory ||
-        model.tags.includes(selectedCategory)
+    if (selectedCategory !== "all") {
+      filtered = filtered.filter(
+        (model) =>
+          model.pipeline_tag === selectedCategory ||
+          model.tags.includes(selectedCategory),
       );
     }
 
     // Filter by size
-    if (selectedSize !== 'all') {
-      filtered = filtered.filter(model => {
+    if (selectedSize !== "all") {
+      filtered = filtered.filter((model) => {
         if (!model.size) return false;
         const sizeMatch = model.size.match(/(\d+\.?\d*)([MGB])/);
         if (!sizeMatch) return false;
-        
+
         const [, sizeNum, unit] = sizeMatch;
-        const sizeInM = unit === 'G' ? parseFloat(sizeNum) * 1000 : 
-                       unit === 'B' ? parseFloat(sizeNum) / 1000 : 
-                       parseFloat(sizeNum);
-        
+        const sizeInM =
+          unit === "G"
+            ? parseFloat(sizeNum) * 1000
+            : unit === "B"
+              ? parseFloat(sizeNum) / 1000
+              : parseFloat(sizeNum);
+
         switch (selectedSize) {
-          case 'small': return sizeInM < 500;
-          case 'medium': return sizeInM >= 500 && sizeInM <= 2000;
-          case 'large': return sizeInM > 2000;
-          default: return true;
+          case "small":
+            return sizeInM < 500;
+          case "medium":
+            return sizeInM >= 500 && sizeInM <= 2000;
+          case "large":
+            return sizeInM > 2000;
+          default:
+            return true;
         }
       });
     }
@@ -190,27 +199,33 @@
 
   function formatNumber(num: number): string {
     if (num >= 1000000) {
-      return (num / 1000000).toFixed(1) + 'M';
+      return (num / 1000000).toFixed(1) + "M";
     } else if (num >= 1000) {
-      return (num / 1000).toFixed(1) + 'K';
+      return (num / 1000).toFixed(1) + "K";
     }
     return num.toString();
   }
 
   function getPipelineTagIcon(tag?: string): string {
     switch (tag) {
-      case 'conversational': return '💬';
-      case 'text-generation': return '✍️';
-      case 'code-generation': return '💻';
-      case 'summarization': return '📝';
-      case 'question-answering': return '❓';
-      default: return '🤖';
+      case "conversational":
+        return "💬";
+      case "text-generation":
+        return "✍️";
+      case "code-generation":
+        return "💻";
+      case "summarization":
+        return "📝";
+      case "question-answering":
+        return "❓";
+      default:
+        return "🤖";
     }
   }
 
   function handleLoadModel(modelId: string) {
-    // Navigate to load page with the model ID pre-filled
-    goto(`/models/load?hf_model=${encodeURIComponent(modelId)}`);
+    // Navigate to inference page with the model ID pre-filled
+    goto(`/inference?hf_model=${encodeURIComponent(modelId)}`);
   }
 
   onMount(() => {
@@ -233,12 +248,14 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center py-6">
         <div class="flex items-center">
-          <Button href="/models" variant="ghost" size="sm">← Models</Button>
-          <h1 class="text-3xl font-bold text-gray-900 ml-4">🤗 Browse HuggingFace Models</h1>
+          <Button href="/inference" variant="ghost" size="sm"
+            >← Inference</Button
+          >
+          <h1 class="text-3xl font-bold text-gray-900 ml-4">
+            🤗 Browse HuggingFace Models
+          </h1>
         </div>
-        <Button href="/models/load" variant="primary">
-          Load Custom Model
-        </Button>
+        <Button href="/inference" variant="primary">Back to Inference</Button>
       </div>
     </div>
   </div>
@@ -250,7 +267,10 @@
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <!-- Search -->
           <div class="md:col-span-2">
-            <label for="search" class="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              for="search"
+              class="block text-sm font-medium text-gray-700 mb-2"
+            >
               Search Models
             </label>
             <input
@@ -264,7 +284,10 @@
 
           <!-- Category Filter -->
           <div>
-            <label for="category" class="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              for="category"
+              class="block text-sm font-medium text-gray-700 mb-2"
+            >
               Category
             </label>
             <select
@@ -280,7 +303,10 @@
 
           <!-- Size Filter -->
           <div>
-            <label for="size" class="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              for="size"
+              class="block text-sm font-medium text-gray-700 mb-2"
+            >
               Model Size
             </label>
             <select
@@ -300,8 +326,8 @@
     <!-- Results Info -->
     <div class="mb-6">
       <p class="text-gray-600">
-        Showing <span class="font-semibold">{filteredModels.length}</span> 
-        {filteredModels.length === 1 ? 'model' : 'models'}
+        Showing <span class="font-semibold">{filteredModels.length}</span>
+        {filteredModels.length === 1 ? "model" : "models"}
       </p>
     </div>
 
@@ -310,11 +336,19 @@
       <Card>
         <div class="text-center py-12">
           <div class="text-gray-400 text-6xl mb-4">🔍</div>
-          <h3 class="text-lg font-medium text-gray-900 mb-2">No models found</h3>
+          <h3 class="text-lg font-medium text-gray-900 mb-2">
+            No models found
+          </h3>
           <p class="text-gray-500 mb-4">
             Try adjusting your search criteria or browse all models.
           </p>
-          <Button onclick={() => { searchQuery = ''; selectedCategory = 'all'; selectedSize = 'all'; }}>
+          <Button
+            onclick={() => {
+              searchQuery = "";
+              selectedCategory = "all";
+              selectedSize = "all";
+            }}
+          >
             Clear Filters
           </Button>
         </div>
@@ -328,7 +362,8 @@
               <div class="flex items-start justify-between mb-3">
                 <div class="flex-1 min-w-0">
                   <h3 class="text-lg font-semibold text-gray-900 truncate">
-                    {getPipelineTagIcon(model.pipeline_tag)} {model.modelName}
+                    {getPipelineTagIcon(model.pipeline_tag)}
+                    {model.modelName}
                   </h3>
                   <p class="text-sm text-gray-500">by {model.author}</p>
                 </div>
@@ -350,24 +385,28 @@
                   <Badge variant="info" class="text-xs">{tag}</Badge>
                 {/each}
                 {#if model.tags.length > 3}
-                  <Badge variant="info" class="text-xs">+{model.tags.length - 3}</Badge>
+                  <Badge variant="info" class="text-xs"
+                    >+{model.tags.length - 3}</Badge
+                  >
                 {/if}
               </div>
 
               <!-- Stats -->
-              <div class="flex items-center justify-between text-sm text-gray-500 mb-4">
+              <div
+                class="flex items-center justify-between text-sm text-gray-500 mb-4"
+              >
                 <div class="flex items-center gap-4">
                   <span>📥 {formatNumber(model.downloads)}</span>
                   <span>❤️ {formatNumber(model.likes)}</span>
                 </div>
-                <span>{model.library_name || 'transformers'}</span>
+                <span>{model.library_name || "transformers"}</span>
               </div>
 
               <!-- Actions -->
               <div class="flex gap-2">
-                <Button 
-                  onclick={() => handleLoadModel(model.id)} 
-                  variant="primary" 
+                <Button
+                  onclick={() => handleLoadModel(model.id)}
+                  variant="primary"
                   fullWidth
                   size="sm"
                 >
@@ -392,10 +431,14 @@
     <div class="mt-12 grid grid-cols-1 lg:grid-cols-2 gap-6">
       <Card>
         <div class="p-6">
-          <h3 class="text-lg font-semibold text-gray-900 mb-3">💡 Getting Started</h3>
+          <h3 class="text-lg font-semibold text-gray-900 mb-3">
+            💡 Getting Started
+          </h3>
           <ul class="text-sm text-gray-600 space-y-2">
             <li>• Browse popular models above or search by name/description</li>
-            <li>• Click "Load Model" to instantly load any model for inference</li>
+            <li>
+              • Click "Load Model" to instantly load any model for inference
+            </li>
             <li>• Use filters to find models by category and size</li>
             <li>• All models support text generation and chat completion</li>
           </ul>
@@ -404,12 +447,22 @@
 
       <Card>
         <div class="p-6">
-          <h3 class="text-lg font-semibold text-gray-900 mb-3">🏷️ Model Categories</h3>
+          <h3 class="text-lg font-semibold text-gray-900 mb-3">
+            🏷️ Model Categories
+          </h3>
           <ul class="text-sm text-gray-600 space-y-2">
-            <li>• <strong>Conversational:</strong> Optimized for dialogue and chat</li>
-            <li>• <strong>Text Generation:</strong> General-purpose language models</li>
-            <li>• <strong>Code Generation:</strong> Specialized for programming tasks</li>
-            <li>• <strong>Instruction Following:</strong> Fine-tuned to follow instructions</li>
+            <li>
+              • <strong>Conversational:</strong> Optimized for dialogue and chat
+            </li>
+            <li>
+              • <strong>Text Generation:</strong> General-purpose language models
+            </li>
+            <li>
+              • <strong>Code Generation:</strong> Specialized for programming tasks
+            </li>
+            <li>
+              • <strong>Instruction Following:</strong> Fine-tuned to follow instructions
+            </li>
           </ul>
         </div>
       </Card>

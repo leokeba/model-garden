@@ -9,10 +9,8 @@
 
   const navigation: NavItem[] = [
     { name: "Dashboard", href: "/", icon: "🏠" },
-    { name: "Models", href: "/models", icon: "📦" },
-    { name: "Training", href: "/training", icon: "🎓" },
     { name: "Inference", href: "/inference", icon: "💬" },
-    { name: "Load Model", href: "/models/load", icon: "🔌" },
+    { name: "Training", href: "/training", icon: "🎓" },
     { name: "Datasets", href: "/datasets", icon: "📊" },
     { name: "Emissions", href: "/emissions", icon: "🌱" },
     { name: "Settings", href: "/settings", icon: "⚙️" },
