@@ -78,6 +78,9 @@ def create_training_job_record(
     hyperparams = job_request.hyperparameters or {}
     lora_cfg = job_request.lora_config or {}
 
+    # Derive 4-bit flag so precision survives queue serialization
+    load_in_4bit = not (job_request.load_in_16bit or job_request.load_in_8bit)
+
     return TrainingJobInfo(
         id=job_id,
         name=job_request.name,
@@ -106,6 +109,7 @@ def create_training_job_record(
         quality_mode=job_request.quality_mode,
         load_in_16bit=job_request.load_in_16bit,
         load_in_8bit=job_request.load_in_8bit,
+        load_in_4bit=load_in_4bit,
         early_stopping_enabled=job_request.early_stopping_enabled,
         early_stopping_patience=job_request.early_stopping_patience,
         early_stopping_threshold=job_request.early_stopping_threshold,
@@ -157,7 +161,6 @@ async def create_training_job(job_request: TrainingJobRequest, background_tasks:
     training_jobs = storage.load_training_jobs()
 
     job_id = str(uuid.uuid4())
-
     # Only resolve paths for local files, not HuggingFace Hub datasets
     dataset_path = (
         job_request.dataset_path if job_request.from_hub else resolve_path(job_request.dataset_path)
@@ -424,6 +427,10 @@ async def rerun_training_job(job_id: str, background_tasks: BackgroundTasks):
         "quality_mode": original_job.get("quality_mode", False),
         "load_in_16bit": original_job.get("load_in_16bit", False),
         "load_in_8bit": original_job.get("load_in_8bit", False),
+        "load_in_4bit": original_job.get(
+            "load_in_4bit",
+            not (original_job.get("load_in_16bit") or original_job.get("load_in_8bit")),
+        ),
         # Clone early stopping settings
         "early_stopping_enabled": original_job.get("early_stopping_enabled", False),
         "early_stopping_patience": original_job.get("early_stopping_patience", 3),

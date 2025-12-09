@@ -167,7 +167,7 @@ def test_large_schema_with_small_max_tokens():
         print(f"Response size: {len(content)} chars")
 
         try:
-            doc = DocumentExtraction.model_validate_json(content)
+            DocumentExtraction.model_validate_json(content)
             print("✅ Surprisingly, it worked with 256 tokens!")
         except Exception as e:
             print(f"\n❌ Expected failure: {str(e)[:200]}")
@@ -209,7 +209,7 @@ def test_explicit_high_max_tokens():
         content = result["choices"][0]["message"]["content"]
 
         try:
-            doc = DocumentExtraction.model_validate_json(content)
+            DocumentExtraction.model_validate_json(content)
             print("✅ Complete document generated!")
             print(f"  JSON size: {len(content)} chars")
             print("  All fields: ✓")

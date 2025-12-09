@@ -210,7 +210,7 @@ class TestCarbonTracker:
         output_dir = temp_dir / "logs" / "test-job"
         assert not output_dir.exists()
 
-        tracker = CarbonTracker(
+        CarbonTracker(
             job_id="test-job",
             output_dir=output_dir,
         )

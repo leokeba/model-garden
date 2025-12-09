@@ -291,7 +291,7 @@ class TestRestartService:
                     stdout="/usr/bin/systemctl restart model-garden.service",
                 ),  # sudo -n -l
             ]
-            with patch("subprocess.Popen") as mock_popen:
+            with patch("subprocess.Popen"):
                 response = client.post("/api/v1/system/restart")
                 assert response.status_code == 200
 

@@ -49,14 +49,20 @@
     }
 
     function getDatasetType(dataset: Dataset): string {
-        const metaType = (dataset.metadata?.type || dataset.metadata?.modality || "")
+        const metaType = (
+            dataset.metadata?.type ||
+            dataset.metadata?.modality ||
+            ""
+        )
             .toString()
             .toLowerCase();
 
-        if (metaType.includes("vision") || metaType.includes("image")) return "Vision";
+        if (metaType.includes("vision") || metaType.includes("image"))
+            return "Vision";
         if (metaType.includes("multi")) return "Multimodal";
         if (metaType.includes("audio")) return "Audio";
-        if (metaType) return metaType.charAt(0).toUpperCase() + metaType.slice(1);
+        if (metaType)
+            return metaType.charAt(0).toUpperCase() + metaType.slice(1);
         return "Text";
     }
 
@@ -64,24 +70,33 @@
     const updatedAt = $derived(dataset.modified_at || dataset.created_at);
 </script>
 
-<Card class="group hover:shadow-xl transition-all duration-200 border border-gray-100 hover:-translate-y-[2px]">
+<Card
+    class="group hover:shadow-xl transition-all duration-200 border border-gray-100 hover:-translate-y-[2px]"
+>
     <div class="p-6 space-y-4">
         <!-- Header -->
         <div class="flex justify-between items-start gap-3">
             <div class="flex-1 min-w-0 space-y-2">
                 <div class="flex items-center gap-2 flex-wrap">
                     <span
-                        class="px-3 py-1 text-xs font-semibold rounded-full border {datasetType.toLowerCase().includes('vision')
+                        class="px-3 py-1 text-xs font-semibold rounded-full border {datasetType
+                            .toLowerCase()
+                            .includes('vision')
                             ? 'bg-primary-50 text-primary-700 border-primary-100'
                             : 'bg-gray-100 text-gray-700 border-gray-200'}"
                     >
                         {datasetType}
                     </span>
-                    <Badge variant={getFormatBadgeColor(dataset.format)} size="sm">
+                    <Badge
+                        variant={getFormatBadgeColor(dataset.format)}
+                        size="sm"
+                    >
                         {dataset.format.toUpperCase()}
                     </Badge>
                     {#if dataset.metadata?.split}
-                        <Badge variant="info" size="sm">{dataset.metadata.split}</Badge>
+                        <Badge variant="info" size="sm"
+                            >{dataset.metadata.split}</Badge
+                        >
                     {/if}
                 </div>
                 <h3 class="text-lg font-semibold text-gray-900 truncate">
@@ -119,18 +134,27 @@
             </div>
             <div class="rounded-xl bg-gray-50 px-3 py-2 border border-gray-100">
                 <p class="text-gray-500">Size</p>
-                <p class="font-semibold text-gray-900">{formatFileSize(dataset.size)}</p>
+                <p class="font-semibold text-gray-900">
+                    {formatFileSize(dataset.size)}
+                </p>
             </div>
             <div class="rounded-xl bg-gray-50 px-3 py-2 border border-gray-100">
                 <p class="text-gray-500">Updated</p>
-                <p class="font-semibold text-gray-900" title={updatedAt ? formatDate(updatedAt) : ''}>
-                    {updatedAt ? new Date(updatedAt).toLocaleDateString() : '—'}
+                <p
+                    class="font-semibold text-gray-900"
+                    title={updatedAt ? formatDate(updatedAt) : ""}
+                >
+                    {updatedAt ? new Date(updatedAt).toLocaleDateString() : "—"}
                 </p>
             </div>
             <div class="rounded-xl bg-gray-50 px-3 py-2 border border-gray-100">
                 <p class="text-gray-500">Path</p>
-                <p class="font-semibold text-gray-900 truncate" title={dataset.path}>
-                    {dataset.path.split('/').slice(-2).join('/') || dataset.name}
+                <p
+                    class="font-semibold text-gray-900 truncate"
+                    title={dataset.path}
+                >
+                    {dataset.path.split("/").slice(-2).join("/") ||
+                        dataset.name}
                 </p>
             </div>
         </div>

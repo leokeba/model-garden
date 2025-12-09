@@ -295,6 +295,7 @@ class TrainingRequest:
                 learning_rate=hyperparams.get("learning_rate", 2e-5),
                 warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
+                max_seq_length=hyperparams.get("max_seq_length", 16384),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
                 eval_steps=hyperparams.get("eval_steps"),
@@ -330,6 +331,7 @@ class TrainingRequest:
                 learning_rate=hyperparams.get("learning_rate", 2e-4),
                 warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
+                max_seq_length=hyperparams.get("max_seq_length", 2048),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
                 eval_steps=hyperparams.get("eval_steps"),
@@ -420,6 +422,7 @@ class TrainingRequest:
                 learning_rate=hyperparams.get("learning_rate", 2e-5),
                 warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
+                max_seq_length=hyperparams.get("max_seq_length", 16384),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
                 eval_steps=hyperparams.get("eval_steps"),
@@ -458,6 +461,7 @@ class TrainingRequest:
                 learning_rate=hyperparams.get("learning_rate", 2e-4),
                 warmup_steps=hyperparams.get("warmup_steps", 10),
                 max_steps=hyperparams.get("max_steps", -1),
+                max_seq_length=hyperparams.get("max_seq_length", 2048),
                 logging_steps=hyperparams.get("logging_steps", 10),
                 save_steps=hyperparams.get("save_steps", 100),
                 eval_steps=hyperparams.get("eval_steps"),
@@ -723,6 +727,8 @@ class TrainingService:
             config=request.training_config,
             eval_dataset=self._eval_dataset,
             callbacks=all_callbacks if all_callbacks else None,
+            job_id=request.job_id,
+            enable_carbon_tracking=request.enable_carbon_tracking,
         )
 
         # Save model
@@ -822,6 +828,8 @@ class TrainingService:
             config=request.training_config,
             eval_dataset=self._eval_dataset,
             callbacks=all_callbacks if all_callbacks else None,
+            job_id=request.job_id,
+            enable_carbon_tracking=request.enable_carbon_tracking,
         )
 
         # Save model

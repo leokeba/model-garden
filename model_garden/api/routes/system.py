@@ -535,16 +535,16 @@ async def restart_service():
                 status_code=400,
                 detail="Model Garden is not running as a systemd service. Please restart manually.",
             )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         raise HTTPException(
             status_code=500,
             detail="Timeout checking service status",
-        )
-    except FileNotFoundError:
+        ) from exc
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=400,
             detail="systemctl not found. Service restart requires systemd.",
-        )
+        ) from exc
 
     # Try to restart with passwordless sudo
     try:
@@ -582,18 +582,18 @@ async def restart_service():
             "message": "Service restart initiated. The connection will be lost momentarily.",
         }
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         raise HTTPException(
             status_code=500,
             detail="Timeout checking sudo permissions",
-        )
+        ) from exc
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Error restarting service: {str(e)}",
-        )
+        ) from e
 
 
 @router.get("/gpu/memory")

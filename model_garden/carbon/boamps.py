@@ -543,9 +543,9 @@ class BoAmpsReportGenerator:
             datasets.append(dataset_entry)
 
         # Validation dataset if present
-        if "validation_dataset_path" in job_config:
+        val_path = job_config.get("validation_dataset_path")
+        if val_path:
             source_type = "public" if job_config.get("validation_from_hub", False) else "private"
-            val_path = job_config["validation_dataset_path"]
 
             val_entry: dict[str, Any] = {
                 "dataUsage": "input",  # Validation is input data
@@ -605,6 +605,49 @@ class BoAmpsReportGenerator:
                     "dataType": primary_data_type,
                 }
             )
+
+        # Enrich the primary dataset entry with size and count metadata when available
+        primary_entry = datasets[0]
+
+        dataset_path = job_config.get("dataset_path")
+        if dataset_path:
+            source_type = "public" if job_config.get("from_hub", False) else "private"
+            primary_entry.setdefault("dataUsage", "input")
+            primary_entry.setdefault("dataType", primary_data_type)
+            primary_entry.setdefault("source", source_type)
+
+            if source_type == "public" and "/" in dataset_path:
+                primary_entry.setdefault(
+                    "sourceUri", f"https://huggingface.co/datasets/{dataset_path}"
+                )
+                primary_entry.setdefault("owner", dataset_path.split("/")[0])
+            else:
+                primary_entry.setdefault("sourceUri", dataset_path)
+
+            primary_entry.setdefault("fileType", self._detect_file_type(dataset_path, source_type))
+
+            # Keep dataFormat for backward compatibility
+            if dataset_path.endswith(".jsonl") or dataset_path.endswith(".json"):
+                primary_entry.setdefault("dataFormat", "json")
+            elif dataset_path.endswith(".csv"):
+                primary_entry.setdefault("dataFormat", "csv")
+            elif dataset_path.endswith(".parquet"):
+                primary_entry.setdefault("dataFormat", "parquet")
+            elif source_type == "public":
+                primary_entry.setdefault("dataFormat", "parquet")
+
+        size_bytes = _as_number(job_config.get("dataset_size", 0.0), 0.0)
+        if size_bytes > 0 and "dataSize" not in primary_entry:
+            primary_entry["dataSize"] = round(size_bytes / (1024**3), 4)
+            primary_entry["volume"] = size_bytes
+            primary_entry["volumeUnit"] = "byte"
+
+        samples = _as_number(
+            job_config.get("dataset_num_samples") or job_config.get("num_samples"), 0
+        )
+        if samples > 0 and "dataQuantity" not in primary_entry:
+            primary_entry["dataQuantity"] = int(samples)
+            primary_entry["items"] = int(samples)
 
         return datasets
 
@@ -841,12 +884,14 @@ class BoAmpsReportGenerator:
                 "share": round(cpu_share, 4),
             }
 
-            if cpu_info.get("manufacturer") != "Unknown":
+            cpu_manufacturer = cpu_info.get("manufacturer") or "Unknown"
+
+            if cpu_manufacturer != "Unknown":
                 cpu_model = cpu_info.get("model", "Unknown")
                 component.update(
                     {
                         "componentName": cpu_model,
-                        "manufacturer": cpu_info["manufacturer"],
+                        "manufacturer": cpu_manufacturer,
                         "series": cpu_model,
                         "family": cpu_info.get("family", "Unknown"),
                     }
@@ -1106,7 +1151,7 @@ def _select_training_job(
     if emitted_output and emitted_output.parent.name == "logs" and emitted_model_name:
         derived_output = emitted_output.parent.parent / emitted_model_name
 
-    candidates: list[tuple[int, dict[str, Any], str]] = []
+    candidates: list[tuple[int, datetime, dict[str, Any]]] = []
 
     for candidate in training_jobs.values():
         score = 0

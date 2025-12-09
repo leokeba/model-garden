@@ -5,8 +5,8 @@
   import {
     DatasetCard,
     HubDatasetCard,
-    UploadModal,
     PreviewModal,
+    UploadModal,
   } from "$lib/components/datasets";
   import { onMount } from "svelte";
 
@@ -40,9 +40,7 @@
 
   // Filtering & search
   let localSearch = $state("");
-  let formatFilter = $state<"all" | "text" | "vision" | "multimodal">(
-    "all",
-  );
+  let formatFilter = $state<"all" | "text" | "vision" | "multimodal">("all");
 
   // Tab state
   let activeTab = $state<"local" | "hub">("local");
@@ -98,16 +96,23 @@
   }
 
   function inferDatasetType(dataset: Dataset): string {
-    const metaType = (dataset.metadata?.type || dataset.metadata?.modality || "")
+    const metaType = (
+      dataset.metadata?.type ||
+      dataset.metadata?.modality ||
+      ""
+    )
       .toString()
       .toLowerCase();
 
-    if (metaType.includes("vision") || metaType.includes("image")) return "vision";
+    if (metaType.includes("vision") || metaType.includes("image"))
+      return "vision";
     if (metaType.includes("multi")) return "multimodal";
     if (metaType.includes("audio")) return "audio";
     if (metaType) return metaType;
     const format = dataset.format?.toLowerCase?.() || "";
-    if (["json", "jsonl", "csv", "txt", "parquet"].some((f) => format.includes(f))) {
+    if (
+      ["json", "jsonl", "csv", "txt", "parquet"].some((f) => format.includes(f))
+    ) {
       return "text";
     }
     if (format.includes("vision") || format.includes("image")) return "vision";
@@ -399,44 +404,70 @@
     <section
       class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-primary-800 to-primary-600 text-white shadow-2xl border border-white/10"
     >
-      <div class="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top_right,#ffffff55,transparent_40%)]"></div>
+      <div
+        class="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_top_right,#ffffff55,transparent_40%)]"
+      ></div>
       <div class="relative p-8 md:p-10">
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-8">
+        <div
+          class="flex flex-col md:flex-row md:items-center md:justify-between gap-8"
+        >
           <div class="space-y-4 max-w-3xl">
-            <p class="text-[11px] uppercase tracking-[0.25em] text-white/70">Dataset Studio</p>
+            <p class="text-[11px] uppercase tracking-[0.25em] text-white/70">
+              Dataset Studio
+            </p>
             <div class="space-y-2">
               <h1 class="text-3xl md:text-4xl font-bold leading-tight">
                 Curate, inspect, and launch training datasets
               </h1>
               <p class="text-sm md:text-base text-white/80 max-w-2xl">
-                Browse local files, pull from HuggingFace Hub, and spot-check samples (including vision data) before training.
+                Browse local files, pull from HuggingFace Hub, and spot-check
+                samples (including vision data) before training.
               </p>
             </div>
             <div class="flex flex-wrap gap-3">
-              <Button onclick={() => (showUploadModal = true)} variant="primary">
+              <Button
+                onclick={() => (showUploadModal = true)}
+                variant="primary"
+              >
                 🚀 Upload dataset
               </Button>
-              <Button onclick={() => (activeTab = "hub")}
-                variant="secondary"
-              >
+              <Button onclick={() => (activeTab = "hub")} variant="secondary">
                 🤗 Browse HuggingFace Hub
               </Button>
             </div>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full md:w-auto">
-            <div class="rounded-2xl bg-white/10 border border-white/20 p-4 backdrop-blur">
-              <p class="text-xs uppercase tracking-wide text-white/70 mb-1">Datasets</p>
+            <div
+              class="rounded-2xl bg-white/10 border border-white/20 p-4 backdrop-blur"
+            >
+              <p class="text-xs uppercase tracking-wide text-white/70 mb-1">
+                Datasets
+              </p>
               <div class="text-3xl font-semibold">{datasets.length}</div>
-              <p class="text-xs text-white/70 mt-1">{visionCount} vision-enabled</p>
+              <p class="text-xs text-white/70 mt-1">
+                {visionCount} vision-enabled
+              </p>
             </div>
-            <div class="rounded-2xl bg-white/10 border border-white/20 p-4 backdrop-blur">
-              <p class="text-xs uppercase tracking-wide text-white/70 mb-1">Total size</p>
-              <div class="text-3xl font-semibold">{formatBytes(totalSize) || "–"}</div>
-              <p class="text-xs text-white/70 mt-1">{totalExamples.toLocaleString()} samples</p>
+            <div
+              class="rounded-2xl bg-white/10 border border-white/20 p-4 backdrop-blur"
+            >
+              <p class="text-xs uppercase tracking-wide text-white/70 mb-1">
+                Total size
+              </p>
+              <div class="text-3xl font-semibold">
+                {formatBytes(totalSize) || "–"}
+              </div>
+              <p class="text-xs text-white/70 mt-1">
+                {totalExamples.toLocaleString()} samples
+              </p>
             </div>
-            <div class="rounded-2xl bg-white/10 border border-white/20 p-4 backdrop-blur">
-              <p class="text-xs uppercase tracking-wide text-white/70 mb-1">Last updated</p>
+            <div
+              class="rounded-2xl bg-white/10 border border-white/20 p-4 backdrop-blur"
+            >
+              <p class="text-xs uppercase tracking-wide text-white/70 mb-1">
+                Last updated
+              </p>
               <div class="text-3xl font-semibold">
                 {lastUpdated ? new Date(lastUpdated).toLocaleDateString() : "–"}
               </div>
@@ -466,7 +497,9 @@
 
     <!-- Tabs / actions -->
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl p-1 shadow-sm">
+      <div
+        class="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl p-1 shadow-sm"
+      >
         <button
           onclick={() => (activeTab = "local")}
           class="px-4 py-2 text-sm font-medium rounded-xl transition-colors {activeTab ===
@@ -488,10 +521,7 @@
       </div>
 
       <div class="flex gap-2">
-        <Button
-          onclick={() => (showUploadModal = true)}
-          variant="secondary"
-        >
+        <Button onclick={() => (showUploadModal = true)} variant="secondary">
           + Upload
         </Button>
         <Button
@@ -531,7 +561,10 @@
               placeholder="Search by name or path..."
               class="w-full px-4 py-2 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
-            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">⌕</span>
+            <span
+              class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"
+              >⌕</span
+            >
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
@@ -551,10 +584,16 @@
           </div>
 
           <div class="flex items-center gap-2 ml-auto text-xs text-gray-500">
-            <span class="px-3 py-2 rounded-full bg-gray-100 border border-gray-200">
+            <span
+              class="px-3 py-2 rounded-full bg-gray-100 border border-gray-200"
+            >
               {filteredDatasets.length} shown
             </span>
-            <Button onclick={() => (showUploadModal = true)} variant="primary" size="sm">
+            <Button
+              onclick={() => (showUploadModal = true)}
+              variant="primary"
+              size="sm"
+            >
               + Upload
             </Button>
           </div>
@@ -572,11 +611,18 @@
           <div class="text-center py-14 space-y-4">
             <div class="text-6xl">📊</div>
             <div class="space-y-2">
-              <h3 class="text-xl font-semibold text-gray-800">No datasets yet</h3>
-              <p class="text-gray-500">Upload a dataset or browse the Hub to get started.</p>
+              <h3 class="text-xl font-semibold text-gray-800">
+                No datasets yet
+              </h3>
+              <p class="text-gray-500">
+                Upload a dataset or browse the Hub to get started.
+              </p>
             </div>
             <div class="flex gap-3 justify-center">
-              <Button onclick={() => (showUploadModal = true)} variant="primary">
+              <Button
+                onclick={() => (showUploadModal = true)}
+                variant="primary"
+              >
                 Upload dataset
               </Button>
               <Button onclick={() => (activeTab = "hub")} variant="secondary">
@@ -589,13 +635,20 @@
         <Card>
           <div class="flex items-center justify-between gap-4 p-6">
             <div>
-              <h3 class="text-lg font-semibold text-gray-800">No datasets match your filters</h3>
-              <p class="text-sm text-gray-500">Try another keyword or reset filters.</p>
+              <h3 class="text-lg font-semibold text-gray-800">
+                No datasets match your filters
+              </h3>
+              <p class="text-sm text-gray-500">
+                Try another keyword or reset filters.
+              </p>
             </div>
-            <Button variant="secondary" onclick={() => {
-              formatFilter = "all";
-              localSearch = "";
-            }}>
+            <Button
+              variant="secondary"
+              onclick={() => {
+                formatFilter = "all";
+                localSearch = "";
+              }}
+            >
               Reset
             </Button>
           </div>
@@ -643,7 +696,10 @@
               </select>
             </div>
           </div>
-          <p class="text-xs text-gray-500">We keep a curated set of high-signal instruction and vision datasets handy.</p>
+          <p class="text-xs text-gray-500">
+            We keep a curated set of high-signal instruction and vision datasets
+            handy.
+          </p>
         </div>
       </Card>
 

@@ -202,6 +202,7 @@ class TrainingConfig:
     learning_rate: float = TEXT_DEFAULT_LEARNING_RATE
     warmup_steps: int = DEFAULT_WARMUP_STEPS
     max_steps: int = -1
+    max_seq_length: int = TEXT_DEFAULT_MAX_SEQ_LENGTH
     logging_steps: int = DEFAULT_LOGGING_STEPS
     save_steps: int = DEFAULT_SAVE_STEPS
     optim: str = DEFAULT_OPTIMIZER
@@ -233,6 +234,7 @@ class TrainingConfig:
             "learning_rate": self.learning_rate,
             "warmup_steps": self.warmup_steps,
             "max_steps": self.max_steps,
+            "max_seq_length": self.max_seq_length,
             "logging_steps": self.logging_steps,
             "save_steps": self.save_steps,
             "optim": self.optim,
@@ -261,6 +263,7 @@ class TrainingConfig:
             "num_train_epochs": "num_epochs",
             "per_device_train_batch_size": "batch_size",
             "epochs": "num_epochs",
+            "max_seq_length": "max_seq_length",
         }
 
         normalized = {}
@@ -429,6 +432,7 @@ class VisionTrainingConfig(TrainingConfig):
     gradient_accumulation_steps: int = VISION_DEFAULT_GRADIENT_ACCUMULATION
     learning_rate: float = VISION_DEFAULT_LEARNING_RATE
     lr_scheduler_type: str = VISION_DEFAULT_LR_SCHEDULER
+    max_seq_length: int = VISION_DEFAULT_MAX_SEQ_LENGTH
     dataloader_pin_memory: bool = False
 
     # Memory optimization

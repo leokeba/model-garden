@@ -101,9 +101,9 @@ class TestMergeVisionLoraAdapter:
 
         # Mock the model loading to fail after output dir creation
         with patch("model_garden.training.merge.AutoModelForVision2Seq") as mock_model:
-            mock_model.from_pretrained.side_effect = Exception("Model load failed")
+            mock_model.from_pretrained.side_effect = RuntimeError("Model load failed")
 
-            with pytest.raises(Exception, match="Model load failed"):
+            with pytest.raises(RuntimeError, match="Model load failed"):
                 merge_vision_lora_adapter(
                     adapter_path=str(temp_adapter_dir),
                     output_dir=str(output_dir),
@@ -119,9 +119,9 @@ class TestMergeVisionLoraAdapter:
 
         # Mock to fail early but after reading the config
         with patch("model_garden.training.merge.AutoModelForVision2Seq") as mock_model:
-            mock_model.from_pretrained.side_effect = Exception("Expected failure")
+            mock_model.from_pretrained.side_effect = RuntimeError("Expected failure")
 
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError):
                 merge_vision_lora_adapter(
                     adapter_path=str(temp_adapter_dir),
                     output_dir=str(temp_dir / "output"),
@@ -137,9 +137,9 @@ class TestMergeVisionLoraAdapter:
         from model_garden.training.merge import merge_vision_lora_adapter
 
         with patch("model_garden.training.merge.AutoModelForVision2Seq") as mock_model:
-            mock_model.from_pretrained.side_effect = Exception("Expected failure")
+            mock_model.from_pretrained.side_effect = RuntimeError("Expected failure")
 
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError):
                 merge_vision_lora_adapter(
                     adapter_path=str(temp_adapter_dir),
                     output_dir=str(temp_dir / "output"),
@@ -186,9 +186,9 @@ class TestMergeTextLoraAdapter:
         from model_garden.training.merge import merge_text_lora_adapter
 
         with patch("transformers.AutoModelForCausalLM") as mock_model:
-            mock_model.from_pretrained.side_effect = Exception("Expected failure")
+            mock_model.from_pretrained.side_effect = RuntimeError("Expected failure")
 
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError):
                 merge_text_lora_adapter(
                     adapter_path=str(temp_text_adapter_dir),
                     output_dir=str(temp_dir / "output"),
@@ -204,9 +204,9 @@ class TestMergeTextLoraAdapter:
         from model_garden.training.merge import merge_text_lora_adapter
 
         with patch("transformers.AutoModelForCausalLM") as mock_model:
-            mock_model.from_pretrained.side_effect = Exception("Expected failure")
+            mock_model.from_pretrained.side_effect = RuntimeError("Expected failure")
 
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError):
                 merge_text_lora_adapter(
                     adapter_path=str(temp_text_adapter_dir),
                     output_dir=str(temp_dir / "output"),
@@ -237,9 +237,9 @@ class TestHuggingFaceHubAdapters:
         ):
             mock_token.return_value = "test_token"
             mock_download.return_value = str(config_path)
-            mock_model.from_pretrained.side_effect = Exception("Expected failure")
+            mock_model.from_pretrained.side_effect = RuntimeError("Expected failure")
 
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError):
                 merge_vision_lora_adapter(
                     adapter_path="user/vision-adapter",  # Hub ID, not local path
                     output_dir=str(temp_dir / "output"),
@@ -267,9 +267,9 @@ class TestHuggingFaceHubAdapters:
         ):
             mock_token.return_value = "test_token"
             mock_download.return_value = str(config_path)
-            mock_model.from_pretrained.side_effect = Exception("Expected failure")
+            mock_model.from_pretrained.side_effect = RuntimeError("Expected failure")
 
-            with pytest.raises(Exception):
+            with pytest.raises(RuntimeError):
                 merge_text_lora_adapter(
                     adapter_path="user/text-adapter",
                     output_dir=str(temp_dir / "output"),

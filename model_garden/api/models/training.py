@@ -40,6 +40,7 @@ class TrainingJobRequest(BaseModel):
     quality_mode: bool = False  # Enable quality-optimized settings (16-bit, better optimizer, etc.)
     load_in_16bit: bool = False  # Load model in 16-bit precision (better quality, 4x more memory)
     load_in_8bit: bool = False  # Load model in 8-bit precision (balanced quality/memory)
+    # Note: load_in_4bit is derived server-side as the default when neither 16-bit nor 8-bit is set
 
 
 class TrainingJobInfo(BaseModel):
@@ -83,6 +84,7 @@ class TrainingJobInfo(BaseModel):
     quality_mode: bool | None = False
     load_in_16bit: bool | None = False
     load_in_8bit: bool | None = False
+    load_in_4bit: bool | None = True
     # Early stopping settings
     early_stopping_enabled: bool | None = False
     early_stopping_patience: int | None = 3

@@ -472,7 +472,7 @@ class TestEdgeCases:
             image_loader=tracking_loader,
         )
 
-        result = dataset[0]
+        dataset[0]
 
         # Loader should be called with None
         assert None in loader_calls

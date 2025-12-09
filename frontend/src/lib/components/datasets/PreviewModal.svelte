@@ -65,12 +65,14 @@
                 const normalized = trimmed.replace(/^\.\//, "");
                 return `${window.location.origin}/${normalized}`;
             }
-            if (isLikelyBase64(trimmed)) return `data:image/png;base64,${trimmed}`;
+            if (isLikelyBase64(trimmed))
+                return `data:image/png;base64,${trimmed}`;
             return null;
         }
 
         if (typeof value === "object") {
-            const candidate = value.url || value.uri || value.image || value.data;
+            const candidate =
+                value.url || value.uri || value.image || value.data;
             return typeof candidate === "string" ? toImageSrc(candidate) : null;
         }
 
@@ -95,14 +97,21 @@
             }
 
             if (Array.isArray(node)) {
-                node.forEach((item, index) => visit(item, `${label}${node.length > 1 ? ` #${index + 1}` : ""}`));
+                node.forEach((item, index) =>
+                    visit(
+                        item,
+                        `${label}${node.length > 1 ? ` #${index + 1}` : ""}`,
+                    ),
+                );
                 return;
             }
 
             if (typeof node === "object") {
                 // OpenAI-style content entries: { type: "image_url", image_url: { url: "data:..." } }
                 if (node.type === "image_url" && node.image_url) {
-                    const src = toImageSrc(node.image_url.url || node.image_url);
+                    const src = toImageSrc(
+                        node.image_url.url || node.image_url,
+                    );
                     if (src && !seen.has(src)) {
                         seen.add(src);
                         results.push({ src, label: node.type });
@@ -128,12 +137,16 @@
     function normalizeText(value: any): string {
         if (value === null || value === undefined) return "";
         if (typeof value === "string") return value;
-        if (typeof value === "number" || typeof value === "boolean") return value.toString();
-        if (Array.isArray(value)) return value.map((v) => normalizeText(v)).join("\n");
+        if (typeof value === "number" || typeof value === "boolean")
+            return value.toString();
+        if (Array.isArray(value))
+            return value.map((v) => normalizeText(v)).join("\n");
         return JSON.stringify(value, null, 2);
     }
 
-    function extractTextSections(sample: any): { label: string; value: string }[] {
+    function extractTextSections(
+        sample: any,
+    ): { label: string; value: string }[] {
         if (!sample || typeof sample !== "object") return [];
 
         // Support OpenAI message-style schemas
@@ -142,8 +155,13 @@
                 .flatMap((msg: any) => {
                     if (!Array.isArray(msg?.content)) return [];
                     return msg.content
-                        .filter((part: any) => part?.type === "text" && part.text)
-                        .map((part: any, idx: number) => ({ label: `${msg.role || "message"}#${idx + 1}`, value: normalizeText(part.text) }));
+                        .filter(
+                            (part: any) => part?.type === "text" && part.text,
+                        )
+                        .map((part: any, idx: number) => ({
+                            label: `${msg.role || "message"}#${idx + 1}`,
+                            value: normalizeText(part.text),
+                        }));
                 })
                 .filter(Boolean);
             if (collected.length) return collected.slice(0, 8);
@@ -165,7 +183,10 @@
 
         preferredOrder.forEach((key) => {
             if (key in sample) {
-                sections.push({ label: key, value: normalizeText(sample[key]) });
+                sections.push({
+                    label: key,
+                    value: normalizeText(sample[key]),
+                });
                 seen.add(key);
             }
         });
@@ -201,7 +222,10 @@
                             <h2 class="text-2xl font-bold text-gray-900">
                                 {dataset.name}
                             </h2>
-                            <span class="text-xs px-3 py-1 rounded-full bg-primary-50 text-primary-700 border border-primary-100">Previewing first 10</span>
+                            <span
+                                class="text-xs px-3 py-1 rounded-full bg-primary-50 text-primary-700 border border-primary-100"
+                                >Previewing first 10</span
+                            >
                         </div>
                         <p class="text-sm text-gray-600 mt-1 break-all">
                             {dataset.path}
@@ -231,15 +255,29 @@
                     <div class="space-y-4">
                         {#each previewData as sample, index}
                             {@const sections = getPreviewSections(sample)}
-                            <div class="border border-gray-200 rounded-2xl shadow-sm overflow-hidden bg-gray-50">
-                                <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
+                            <div
+                                class="border border-gray-200 rounded-2xl shadow-sm overflow-hidden bg-gray-50"
+                            >
+                                <div
+                                    class="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white"
+                                >
                                     <div class="flex items-center gap-3">
-                                        <div class="h-9 w-9 rounded-xl bg-primary-50 text-primary-700 font-semibold flex items-center justify-center">
+                                        <div
+                                            class="h-9 w-9 rounded-xl bg-primary-50 text-primary-700 font-semibold flex items-center justify-center"
+                                        >
                                             {index + 1}
                                         </div>
                                         <div>
-                                            <p class="text-sm font-semibold text-gray-900">Sample {index + 1}</p>
-                                            <p class="text-xs text-gray-500">{sections.images.length ? "Includes images" : "Text only"}</p>
+                                            <p
+                                                class="text-sm font-semibold text-gray-900"
+                                            >
+                                                Sample {index + 1}
+                                            </p>
+                                            <p class="text-xs text-gray-500">
+                                                {sections.images.length
+                                                    ? "Includes images"
+                                                    : "Text only"}
+                                            </p>
                                         </div>
                                     </div>
                                     <div class="text-xs text-gray-500">
@@ -251,28 +289,44 @@
                                     <div class="space-y-3 md:col-span-7">
                                         {#if sections.textSections.length}
                                             {#each sections.textSections as section}
-                                                <div class="bg-white rounded-xl border border-gray-200 px-3 py-2 shadow-inner">
-                                                    <div class="text-[11px] uppercase tracking-wide text-gray-500 mb-1">{section.label}</div>
-                                                    <div class="text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">
+                                                <div
+                                                    class="bg-white rounded-xl border border-gray-200 px-3 py-2 shadow-inner"
+                                                >
+                                                    <div
+                                                        class="text-[11px] uppercase tracking-wide text-gray-500 mb-1"
+                                                    >
+                                                        {section.label}
+                                                    </div>
+                                                    <div
+                                                        class="text-sm text-gray-900 whitespace-pre-wrap leading-relaxed"
+                                                    >
                                                         {section.value}
                                                     </div>
                                                 </div>
                                             {/each}
                                         {:else}
-                                            <p class="text-sm text-gray-500">No textual fields detected.</p>
+                                            <p class="text-sm text-gray-500">
+                                                No textual fields detected.
+                                            </p>
                                         {/if}
                                     </div>
 
                                     {#if sections.images.length}
                                         <div class="md:col-span-5">
-                                            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 gap-3 h-full">
+                                            <div
+                                                class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 gap-3 h-full"
+                                            >
                                                 {#each sections.images as image}
                                                     <button
                                                         class="relative overflow-hidden rounded-xl border border-gray-200 bg-white group h-full w-full"
-                                                        onclick={() => (zoomedImage = image)}
+                                                        onclick={() =>
+                                                            (zoomedImage =
+                                                                image)}
                                                         aria-label={`View ${image.label}`}
                                                     >
-                                                        <div class="aspect-[3/4] bg-gray-100 flex items-center justify-center">
+                                                        <div
+                                                            class="aspect-[3/4] bg-gray-100 flex items-center justify-center"
+                                                        >
                                                             <img
                                                                 src={image.src}
                                                                 alt={image.label}
@@ -280,10 +334,14 @@
                                                                 loading="lazy"
                                                             />
                                                         </div>
-                                                        <div class="absolute bottom-2 left-2 text-[11px] px-2 py-1 rounded-full bg-black/60 text-white">
+                                                        <div
+                                                            class="absolute bottom-2 left-2 text-[11px] px-2 py-1 rounded-full bg-black/60 text-white"
+                                                        >
                                                             {image.label}
                                                         </div>
-                                                        <div class="absolute top-2 right-2 text-[11px] px-2 py-1 rounded-full bg-white/80 text-gray-700 border border-gray-200">
+                                                        <div
+                                                            class="absolute top-2 right-2 text-[11px] px-2 py-1 rounded-full bg-white/80 text-gray-700 border border-gray-200"
+                                                        >
                                                             Tap to zoom
                                                         </div>
                                                     </button>
@@ -291,19 +349,27 @@
                                             </div>
                                         </div>
                                     {:else}
-                                        <div class="flex items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white text-sm text-gray-500 md:col-span-5">
+                                        <div
+                                            class="flex items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white text-sm text-gray-500 md:col-span-5"
+                                        >
                                             No images detected in this sample
                                         </div>
                                     {/if}
                                 </div>
 
-                                <details class="bg-white border-t border-gray-200 px-4 py-3 text-sm text-gray-600">
-                                    <summary class="cursor-pointer text-gray-700 font-medium">Raw JSON</summary>
-                                    <pre class="mt-3 text-xs text-gray-800 bg-gray-50 rounded-lg p-3 overflow-x-auto">{JSON.stringify(
-                                        sample,
-                                        null,
-                                        2,
-                                    )}</pre>
+                                <details
+                                    class="bg-white border-t border-gray-200 px-4 py-3 text-sm text-gray-600"
+                                >
+                                    <summary
+                                        class="cursor-pointer text-gray-700 font-medium"
+                                        >Raw JSON</summary
+                                    >
+                                    <pre
+                                        class="mt-3 text-xs text-gray-800 bg-gray-50 rounded-lg p-3 overflow-x-auto">{JSON.stringify(
+                                            sample,
+                                            null,
+                                            2,
+                                        )}</pre>
                                 </details>
                             </div>
                         {/each}
@@ -320,8 +386,14 @@
     </div>
 
     {#if zoomedImage}
-        <div class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" role="dialog" aria-label="Image preview">
-            <div class="relative max-w-5xl w-full bg-white rounded-2xl shadow-2xl overflow-hidden">
+        <div
+            class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            role="dialog"
+            aria-label="Image preview"
+        >
+            <div
+                class="relative max-w-5xl w-full bg-white rounded-2xl shadow-2xl overflow-hidden"
+            >
                 <button
                     class="absolute top-3 right-3 text-gray-600 hover:text-gray-900 bg-white/80 rounded-full h-10 w-10 flex items-center justify-center shadow"
                     onclick={() => (zoomedImage = null)}

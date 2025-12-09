@@ -149,7 +149,6 @@ async def get_boamps_report(job_id: str):
     - Carbon intensity and location data
     """
     try:
-        from model_garden.api.storage import get_storage_manager
         from model_garden.carbon import (
             build_boamps_job_config,
             get_boamps_generator,
@@ -167,13 +166,60 @@ async def get_boamps_report(job_id: str):
 
         # Build comprehensive job config for BoAmps report (includes dataset info)
         storage = get_storage_manager()
-        job_config = build_boamps_job_config(job_id, storage, emissions_data=emission_data)
+        try:
+            training_jobs = storage.load_training_jobs()
+        except Exception:
+            training_jobs = {}
+
+        job_config = training_jobs.get(job_id) or build_boamps_job_config(
+            job_id, storage, emissions_data=emission_data
+        )
+
+        # Fallback: if enrichment failed, merge raw training metadata directly
+        if not job_config or not job_config.get("dataset_path"):
+            if job_id in training_jobs:
+                # Merge training job fields while preserving any existing entries
+                enriched = dict(training_jobs[job_id])
+                enriched.update(job_config or {})
+                job_config = enriched
 
         # Generate report
         generator = get_boamps_generator()
         report = generator.generate_report(
             emissions_data=emission_data, job_config=job_config, report_status="final"
         )
+
+        # Ensure dataset metadata is surfaced even if the generator could not infer it
+        source_config = job_config or training_jobs.get(job_id, {})
+
+        if source_config:
+            datasets = report.get("task", {}).get("dataset")
+            if datasets:
+                primary = datasets[0]
+
+                dataset_path = source_config.get("dataset_path")
+                if dataset_path:
+                    source_type = "public" if source_config.get("from_hub", False) else "private"
+                    primary.setdefault("source", source_type)
+                    if source_type == "public" and "/" in dataset_path:
+                        primary.setdefault(
+                            "sourceUri",
+                            f"https://huggingface.co/datasets/{dataset_path}",
+                        )
+                        primary.setdefault("owner", dataset_path.split("/")[0])
+                    else:
+                        primary.setdefault("sourceUri", dataset_path)
+
+                size_bytes = source_config.get("dataset_size")
+                if size_bytes and "dataSize" not in primary:
+                    primary["dataSize"] = round(float(size_bytes) / (1024**3), 4)
+                    primary["volume"] = float(size_bytes)
+                    primary["volumeUnit"] = "byte"
+
+                samples = source_config.get("dataset_num_samples")
+                if samples and "dataQuantity" not in primary:
+                    primary["dataQuantity"] = int(samples)
+                    primary["items"] = int(samples)
 
         return report
 
