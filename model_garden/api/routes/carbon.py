@@ -149,10 +149,12 @@ async def get_boamps_report(job_id: str):
     - Carbon intensity and location data
     """
     try:
-        from model_garden.carbon import get_boamps_generator, get_emissions_db
-
-        storage = get_storage_manager()
-        training_jobs = storage.load_training_jobs()
+        from model_garden.api.storage import get_storage_manager
+        from model_garden.carbon import (
+            build_boamps_job_config,
+            get_boamps_generator,
+            get_emissions_db,
+        )
 
         db = get_emissions_db()
         emission_data = db.get_emission(job_id)
@@ -163,57 +165,9 @@ async def get_boamps_report(job_id: str):
                 detail=f"No emissions data found for job {job_id}",
             )
 
-        # Build comprehensive job config for BoAmps report
-        job_config = {}
-        if job_id in training_jobs:
-            job = training_jobs[job_id]
-            job_config = {
-                # Core model info
-                "base_model": job.get("base_model"),
-                "model_type": job.get("model_type"),
-                "is_vision": job.get("is_vision", False),
-                # Dataset info
-                "dataset_path": job.get("dataset_path"),
-                "from_hub": job.get("from_hub", False),
-                "validation_dataset_path": job.get("validation_dataset_path"),
-                "validation_from_hub": job.get("validation_from_hub", False),
-                "dataset_size": job.get("dataset_size"),
-                "dataset_num_samples": job.get("dataset_num_samples"),
-                # Training config
-                "hyperparameters": job.get("hyperparameters", {}),
-                "lora_config": job.get("lora_config"),
-                "selective_loss": job.get("selective_loss", False),
-                "max_seq_length": job.get("max_seq_length"),
-                "save_method": job.get("save_method"),
-                # Progress/metrics
-                "current_step": job.get("current_step"),
-                "total_steps": job.get("total_steps"),
-                "current_epoch": job.get("current_epoch"),
-            }
-
-            # Extract dataset size from metrics if available
-            metrics = job.get("metrics", {})
-            if metrics:
-                # Try to get dataset info from training metrics
-                training_metrics = metrics.get("training", [])
-                if training_metrics and len(training_metrics) > 0:
-                    # Estimate samples from steps and batch size
-                    hyperparams = job.get("hyperparameters", {})
-                    batch_size = hyperparams.get("batch_size", 1)
-                    grad_accum = hyperparams.get("gradient_accumulation_steps", 1)
-                    total_steps = job.get("total_steps", 0)
-                    epochs = hyperparams.get("num_epochs", 1)
-                    if total_steps > 0 and epochs > 0:
-                        # samples = steps * batch_size * grad_accum / epochs
-                        estimated_samples = int((total_steps * batch_size * grad_accum) / epochs)
-                        if estimated_samples > 0:
-                            job_config["dataset_num_samples"] = estimated_samples
-
-            # Get final loss if available
-            if metrics.get("training"):
-                last_metric = metrics["training"][-1]
-                if "loss" in last_metric:
-                    job_config["final_loss"] = last_metric["loss"]
+        # Build comprehensive job config for BoAmps report (includes dataset info)
+        storage = get_storage_manager()
+        job_config = build_boamps_job_config(job_id, storage, emissions_data=emission_data)
 
         # Generate report
         generator = get_boamps_generator()

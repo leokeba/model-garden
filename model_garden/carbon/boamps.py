@@ -17,6 +17,16 @@ from typing import Any
 from .hardware_detection import get_hardware_detector
 
 
+def _as_number(value: Any, default: float = 0.0) -> float:
+    """Convert arbitrary input to a float, falling back safely."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 def _extract_model_params_from_name(model_name: str) -> float | None:
     """Extract parameter count (in billions) from model name.
 
@@ -489,31 +499,33 @@ class BoAmpsReportGenerator:
                 dataset_entry["dataFormat"] = "parquet"
 
             # Add dataset size info if available
-            size_bytes = 0
+            size_bytes = 0.0
             if "dataset_size" in job_config:
-                size_bytes = job_config["dataset_size"]
+                size_bytes = _as_number(job_config["dataset_size"], 0.0)
             elif source_type == "private":
                 try:
                     p = Path(dataset_path)
                     if p.exists() and p.is_file():
-                        size_bytes = p.stat().st_size
+                        size_bytes = float(p.stat().st_size)
                 except Exception:
                     pass
 
             if size_bytes > 0:
-                # dataSize is in GB per schema
                 dataset_entry["dataSize"] = round(size_bytes / (1024**3), 4)
-                # volume is in bytes
                 dataset_entry["volume"] = size_bytes
                 dataset_entry["volumeUnit"] = "byte"
 
             # Add number of samples if available (dataQuantity per schema)
             if "dataset_num_samples" in job_config:
-                dataset_entry["dataQuantity"] = job_config["dataset_num_samples"]
-                dataset_entry["items"] = job_config["dataset_num_samples"]
+                samples = _as_number(job_config["dataset_num_samples"], 0)
+                if samples > 0:
+                    dataset_entry["dataQuantity"] = int(samples)
+                    dataset_entry["items"] = int(samples)
             elif "num_samples" in job_config:
-                dataset_entry["dataQuantity"] = job_config["num_samples"]
-                dataset_entry["items"] = job_config["num_samples"]
+                samples = _as_number(job_config["num_samples"], 0)
+                if samples > 0:
+                    dataset_entry["dataQuantity"] = int(samples)
+                    dataset_entry["items"] = int(samples)
 
             # Add shape info for vision datasets
             if is_vision and "image_size" in job_config:
@@ -678,8 +690,8 @@ class BoAmpsReportGenerator:
         cpu_util = None
         gpu_util = None
 
-        cpu_power = emissions_data.get("cpu_power_watts", 0)
-        gpu_power = emissions_data.get("gpu_power_watts", 0)
+        cpu_power = _as_number(emissions_data.get("cpu_power_watts", 0), 0.0)
+        gpu_power = _as_number(emissions_data.get("gpu_power_watts", 0), 0.0)
 
         # Get actual hardware max power specs for accurate utilization
         cpu_info = hardware.get_cpu_info()
@@ -738,8 +750,12 @@ class BoAmpsReportGenerator:
             "version": "2.5.0",
             "cpuTrackingMode": tracking_mode,
             "gpuTrackingMode": "nvml" if gpu_power > 0 else "none",
-            "powerConsumption": round(emissions_data.get("energy_consumed_kwh", 0.0), 6),
-            "measurementDuration": round(emissions_data.get("duration_seconds", 0.0), 2),
+            "powerConsumption": round(
+                _as_number(emissions_data.get("energy_consumed_kwh", 0.0), 0.0), 6
+            ),
+            "measurementDuration": round(
+                _as_number(emissions_data.get("duration_seconds", 0.0), 0.0), 2
+            ),
             "measurementDateTime": measurement_datetime,
         }
 
@@ -757,10 +773,10 @@ class BoAmpsReportGenerator:
         components = []
         hardware = get_hardware_detector()
 
-        total_energy = emissions_data.get("energy_consumed_kwh", 0.0)
+        total_energy = _as_number(emissions_data.get("energy_consumed_kwh", 0.0), 0.0)
 
         # Add GPU if GPU energy is present
-        gpu_energy = emissions_data.get("gpu_energy_kwh", 0)
+        gpu_energy = _as_number(emissions_data.get("gpu_energy_kwh", 0.0), 0.0)
         if gpu_energy > 0:
             gpu_share = gpu_energy / total_energy if total_energy > 0 else 0
             gpu_info = hardware.get_gpu_info()
@@ -814,7 +830,7 @@ class BoAmpsReportGenerator:
             components.append(component)
 
         # Add CPU
-        cpu_energy = emissions_data.get("cpu_energy_kwh", 0)
+        cpu_energy = _as_number(emissions_data.get("cpu_energy_kwh", 0.0), 0.0)
         if cpu_energy > 0:
             cpu_share = cpu_energy / total_energy if total_energy > 0 else 0
             cpu_info = hardware.get_cpu_info()
@@ -842,7 +858,7 @@ class BoAmpsReportGenerator:
             components.append(component)
 
         # Add RAM
-        ram_energy = emissions_data.get("ram_energy_kwh", 0)
+        ram_energy = _as_number(emissions_data.get("ram_energy_kwh", 0.0), 0.0)
         if ram_energy > 0:
             ram_share = ram_energy / total_energy if total_energy > 0 else 0
             ram_info = hardware.get_ram_info()
@@ -854,8 +870,9 @@ class BoAmpsReportGenerator:
             }
 
             # Add memory size as integer in GB
-            if ram_info.get("total_gb", 0) > 0:
-                component["memorySize"] = int(ram_info["total_gb"])
+            ram_total = _as_number(ram_info.get("total_gb", 0), 0)
+            if ram_total > 0:
+                component["memorySize"] = int(ram_total)
 
             components.append(component)
 
@@ -921,12 +938,12 @@ class BoAmpsReportGenerator:
         # Use actual data from CodeCarbon
         country_name = emissions_data.get("country_name", "USA")
         region = emissions_data.get("region", "Unknown")
-        carbon_intensity = emissions_data.get("carbon_intensity_g_per_kwh", 0.0)
+        carbon_intensity = _as_number(emissions_data.get("carbon_intensity_g_per_kwh", 0.0), 0.0)
 
         # If carbon intensity is 0, try to calculate it from emissions and energy
         if carbon_intensity == 0.0:
-            emissions_kg = emissions_data.get("emissions_kg_co2", 0.0)
-            energy_kwh = emissions_data.get("energy_consumed_kwh", 0.0)
+            emissions_kg = _as_number(emissions_data.get("emissions_kg_co2", 0.0), 0.0)
+            energy_kwh = _as_number(emissions_data.get("energy_consumed_kwh", 0.0), 0.0)
             if energy_kwh > 0 and emissions_kg > 0:
                 # carbon_intensity (g/kWh) = emissions (kg) * 1000 / energy (kWh)
                 carbon_intensity = (emissions_kg * 1000) / energy_kwh
@@ -983,13 +1000,13 @@ class BoAmpsReportGenerator:
         - Duration of measurement
         """
         # Check what data we have available
-        has_gpu_data = emissions_data.get("gpu_energy_kwh", 0) > 0
-        has_cpu_data = emissions_data.get("cpu_energy_kwh", 0) > 0
-        has_ram_data = emissions_data.get("ram_energy_kwh", 0) > 0
-        has_duration = emissions_data.get("duration_seconds", 0) > 0
+        has_gpu_data = _as_number(emissions_data.get("gpu_energy_kwh", 0), 0) > 0
+        has_cpu_data = _as_number(emissions_data.get("cpu_energy_kwh", 0), 0) > 0
+        has_ram_data = _as_number(emissions_data.get("ram_energy_kwh", 0), 0) > 0
+        has_duration = _as_number(emissions_data.get("duration_seconds", 0), 0) > 0
         has_power_data = (
-            emissions_data.get("gpu_power_watts", 0) > 0
-            or emissions_data.get("cpu_power_watts", 0) > 0
+            _as_number(emissions_data.get("gpu_power_watts", 0), 0) > 0
+            or _as_number(emissions_data.get("cpu_power_watts", 0), 0) > 0
         )
         tracking_mode = emissions_data.get("tracking_mode", "constant")
 
@@ -1026,3 +1043,197 @@ def get_boamps_generator() -> BoAmpsReportGenerator:
         publisher_division="AI Research",
         confidentiality_level="public",
     )
+
+
+def _normalize_path(path_like: Any) -> Path | None:
+    """Normalize a filesystem path, returning None if invalid."""
+    if not path_like:
+        return None
+    try:
+        return Path(path_like).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    """Parse ISO timestamp to datetime, returning None on failure."""
+    if not value:
+        return None
+    try:
+        if isinstance(value, str):
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    return None
+
+
+def _select_training_job(
+    emissions_data: dict[str, Any] | None, training_jobs: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Select a training job deterministically using strong signals only.
+
+    Matching order (all are exact matches, no fuzzy heuristics):
+    1) Exact job_id match against keys or embedded id
+    2) Exact resolved output_dir match
+    3) Combined strong identity signals (name/base_model) when unique
+
+    A match is accepted only if its score clears a strict threshold and is unique
+    at that score to avoid accidental pairings.
+    """
+
+    if not training_jobs:
+        return None
+
+    job_id = emissions_data.get("job_id") if emissions_data else None
+
+    # Strongest: direct key match
+    if job_id and job_id in training_jobs:
+        return training_jobs[job_id]
+
+    # Strongest: embedded id field match
+    if job_id:
+        for candidate in training_jobs.values():
+            if candidate.get("id") == job_id:
+                return candidate
+
+    # Prepare emitted hints
+    emitted_output = _normalize_path(emissions_data.get("output_dir")) if emissions_data else None
+    emitted_model_name = (emissions_data.get("model_name") or "") if emissions_data else ""
+    emitted_base_model = (emissions_data.get("base_model") or "") if emissions_data else ""
+
+    # Derive a likely training output dir from log paths (e.g., .../logs/<job> -> .../<model_name>)
+    derived_output = None
+    if emitted_output and emitted_output.parent.name == "logs" and emitted_model_name:
+        derived_output = emitted_output.parent.parent / emitted_model_name
+
+    candidates: list[tuple[int, dict[str, Any], str]] = []
+
+    for candidate in training_jobs.values():
+        score = 0
+
+        cand_output = _normalize_path(candidate.get("output_dir"))
+        if emitted_output and cand_output:
+            if emitted_output == cand_output:
+                score += 90  # exact output dir match
+            else:
+                try:
+                    if emitted_output.is_relative_to(cand_output) or cand_output.is_relative_to(
+                        emitted_output
+                    ):
+                        score += 60  # nested relationship
+                except Exception:
+                    pass
+
+        if derived_output and cand_output and derived_output == cand_output:
+            score += 85  # derived training dir match from logs path
+
+        if emitted_model_name and candidate.get("name") == emitted_model_name:
+            score += 40
+
+        if emitted_base_model and candidate.get("base_model") == emitted_base_model:
+            score += 30
+
+        if score > 0:
+            ts_hint = (
+                _parse_timestamp(candidate.get("completed_at"))
+                or _parse_timestamp(candidate.get("started_at"))
+                or _parse_timestamp(candidate.get("created_at"))
+                or datetime.min.replace(tzinfo=UTC)
+            )
+            candidates.append((score, ts_hint, candidate))
+
+    if not candidates:
+        return None
+
+    # Choose highest score, breaking ties by most recent timestamp
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    best_score, _, best_job = candidates[0]
+
+    if best_score < 50:
+        return None  # Require reasonable evidence
+
+    return best_job
+
+
+def build_boamps_job_config(
+    job_id: str | None,
+    storage: Any | None = None,
+    emissions_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build BoAmps job_config by enriching from stored training jobs.
+
+    This centralizes how dataset and hyperparameter metadata are surfaced in
+    BoAmps reports for both the API (WebUI) and CLI paths. If training job
+    metadata is missing or storage is unavailable, returns an empty config.
+    """
+
+    if not job_id:
+        return {}
+
+    try:
+        # Prefer provided storage (lets API tests inject a mock)
+        if storage is None:
+            from model_garden.api.storage import get_storage_manager
+
+            storage = get_storage_manager()
+
+        training_jobs = storage.load_training_jobs()
+    except Exception:
+        return {}
+
+    job = _select_training_job(emissions_data, training_jobs)
+
+    if not job:
+        return {}
+
+    job_config: dict[str, Any] = {
+        # Core model info
+        "base_model": job.get("base_model"),
+        "model_type": job.get("model_type"),
+        "is_vision": job.get("is_vision", False),
+        # Dataset info
+        "dataset_path": job.get("dataset_path"),
+        "from_hub": job.get("from_hub", False),
+        "validation_dataset_path": job.get("validation_dataset_path"),
+        "validation_from_hub": job.get("validation_from_hub", False),
+        "dataset_size": job.get("dataset_size"),
+        "dataset_num_samples": job.get("dataset_num_samples"),
+        # Training config
+        "hyperparameters": job.get("hyperparameters", {}),
+        "lora_config": job.get("lora_config"),
+        "selective_loss": job.get("selective_loss", False),
+        "max_seq_length": job.get("max_seq_length"),
+        "save_method": job.get("save_method"),
+        # Progress/metrics
+        "current_step": job.get("current_step"),
+        "total_steps": job.get("total_steps"),
+        "current_epoch": job.get("current_epoch"),
+    }
+
+    # Extract dataset stats from metrics if present
+    metrics = job.get("metrics", {})
+    if metrics:
+        training_metrics = metrics.get("training", [])
+        if training_metrics:
+            hyperparams = job.get("hyperparameters", {})
+            batch_size = hyperparams.get("batch_size") or hyperparams.get(
+                "per_device_train_batch_size", 1
+            )
+            grad_accum = hyperparams.get("gradient_accumulation_steps", 1)
+            total_steps = job.get("total_steps", 0)
+            epochs = hyperparams.get("num_epochs") or hyperparams.get("num_train_epochs", 1)
+
+            if total_steps and epochs:
+                estimated_samples = int((total_steps * batch_size * grad_accum) / epochs)
+                if estimated_samples > 0:
+                    job_config["dataset_num_samples"] = (
+                        job_config.get("dataset_num_samples") or estimated_samples
+                    )
+
+        # Capture final loss if available for context
+        if metrics.get("training"):
+            last_metric = metrics["training"][-1]
+            if "loss" in last_metric:
+                job_config["final_loss"] = last_metric["loss"]
+
+    return job_config

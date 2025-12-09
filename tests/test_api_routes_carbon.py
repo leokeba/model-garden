@@ -235,6 +235,54 @@ class TestBoampsReport:
             data = response.json()
             assert "version" in data
 
+    @patch("model_garden.carbon.boamps.get_hardware_detector")
+    def test_get_report_includes_dataset_info(
+        self,
+        mock_hw_detector,
+        client: TestClient,
+        mock_storage,
+        mock_emissions_db,
+        sample_emissions,
+    ):
+        """BoAmps report should include dataset metadata from training job storage."""
+
+        # Minimal hardware info to satisfy generator
+        hw = MagicMock()
+        hw.get_gpu_info.return_value = {}
+        hw.get_cpu_info.return_value = {"family": "CPU"}
+        hw.get_ram_info.return_value = {"total_gb": 16}
+        hw.get_system_info.return_value = {
+            "os_name": "Linux",
+            "os_version": "6.5",
+            "python_version": "3.11",
+        }
+        mock_hw_detector.return_value = hw
+
+        # Emission and training job metadata
+        mock_emissions_db.get_emission.return_value = sample_emissions[0]
+        mock_storage.load_training_jobs.return_value = {
+            "job-1": {
+                "base_model": "meta-llama/Meta-Llama-3-8B",
+                "dataset_path": "org/sample-dataset",
+                "from_hub": True,
+                "dataset_size": 1024**3,  # 1 GiB
+                "dataset_num_samples": 42,
+            }
+        }
+
+        response = client.get("/api/v1/carbon/boamps/job-1")
+        assert response.status_code == 200
+
+        report = response.json()
+        dataset = report["task"]["dataset"]
+
+        assert dataset
+        first = dataset[0]
+        assert first["dataSize"] == pytest.approx(1.0)
+        assert first["dataQuantity"] == 42
+        assert first["source"] == "public"
+        assert first.get("sourceUri", "").endswith("org/sample-dataset")
+
 
 class TestAnalyticsTrends:
     """Tests for GET /api/v1/carbon/analytics/trends."""

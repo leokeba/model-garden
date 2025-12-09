@@ -50,7 +50,7 @@ def carbon_report(job_id: str | None, output_format: str, output_file: str | Non
         model-garden carbon report --format json
         model-garden carbon report job_abc123 --format boamps -o report.json
     """
-    from model_garden.carbon import BoAmpsReportGenerator, get_emissions_db
+    from model_garden.carbon import BoAmpsReportGenerator, build_boamps_job_config, get_emissions_db
 
     db = get_emissions_db()
 
@@ -80,10 +80,17 @@ def carbon_report(job_id: str | None, output_format: str, output_file: str | Non
     elif output_format == "boamps":
         generator = BoAmpsReportGenerator()
         if job_id and len(emissions) == 1:
-            report = generator.generate_report(emissions[0])
+            report = generator.generate_report(
+                emissions[0], job_config=build_boamps_job_config(job_id, emissions_data=emissions[0])
+            )
         else:
             # Generate reports for all
-            report = [generator.generate_report(e) for e in emissions]
+            report = [
+                generator.generate_report(
+                    e, job_config=build_boamps_job_config(e.get("job_id"), emissions_data=e)
+                )
+                for e in emissions
+            ]
 
         output = json.dumps(report, indent=2, default=str)
         if output_file:
@@ -361,7 +368,7 @@ def carbon_export(output_format: str, output_file: str, job_type: str, limit: in
         model-garden carbon export --format csv -o emissions.csv
         model-garden carbon export --format boamps -o report.json --type training
     """
-    from model_garden.carbon import BoAmpsReportGenerator, get_emissions_db
+    from model_garden.carbon import BoAmpsReportGenerator, build_boamps_job_config, get_emissions_db
 
     db = get_emissions_db()
 
@@ -400,7 +407,10 @@ def carbon_export(output_format: str, output_file: str, job_type: str, limit: in
 
     elif output_format == "boamps":
         generator = BoAmpsReportGenerator()
-        reports = [generator.generate_report(e) for e in emissions]
+        reports = [
+            generator.generate_report(e, job_config=build_boamps_job_config(e.get("job_id")))
+            for e in emissions
+        ]
 
         output_path.write_text(json.dumps(reports, indent=2, default=str))
         console.print(f"[green]✓ Generated {len(reports)} BoAmps reports to {output_file}[/green]")
