@@ -235,6 +235,8 @@ async def delete_or_cancel_training_job(job_id: str):
     """Delete or cancel a training job."""
     from model_garden.queue import get_job_queue
 
+    from .. import cancellation_events
+
     storage = get_storage_manager()
     manager = get_connection_manager()
     training_jobs = storage.load_training_jobs()
@@ -245,6 +247,12 @@ async def delete_or_cancel_training_job(job_id: str):
         )
 
     job = training_jobs[job_id]
+
+    # If the job is running, signal the training thread to stop
+    if job["status"] == "running":
+        event = cancellation_events.get(job_id)
+        if event:
+            event.set()
 
     # If job is finished, delete it from the list
     if job["status"] in ["completed", "failed", "cancelled"]:

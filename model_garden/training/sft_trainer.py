@@ -61,7 +61,7 @@ class FixedSFTTrainer(SFTTrainer):
         """
         # Force num_items_in_batch=None for both training and eval
         # This makes both use reduction='mean' (default behavior)
-        num_items_in_batch = None
+        # num_items_in_batch = None
 
         # Call parent with num_items_in_batch=None
         return super().compute_loss(
