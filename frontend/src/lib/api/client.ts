@@ -45,6 +45,9 @@ interface TrainingJob {
     current_step: number;
     total_steps: number;
     epoch: number;
+    percentage?: number;
+    eta_seconds?: number;
+    steps_per_second?: number;
   };
   current_step?: number;
   total_steps?: number;
@@ -55,6 +58,9 @@ interface TrainingJob {
   model_type?: string;
   save_method?: string;
   backend?: string;  // Training backend (unsloth, transformers, etc.)
+  // Dataset stats
+  dataset_size?: number;
+  dataset_num_samples?: number;
   // Quality settings
   quality_mode?: boolean;
   load_in_16bit?: boolean;

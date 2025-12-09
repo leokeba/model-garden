@@ -84,7 +84,9 @@ class InferenceEmissionsTracker:
             emissions_data["request_count"] = self.request_count
             emissions_data["total_tokens"] = self.total_tokens
             emissions_data["prompt_tokens"] = self.total_prompt_tokens
-            emissions_data["completion_tokens"] = self.total_tokens  # total_tokens tracks generated tokens
+            emissions_data["completion_tokens"] = (
+                self.total_tokens
+            )  # total_tokens tracks generated tokens
             emissions_data["requests_per_second"] = (
                 self.request_count / duration if duration > 0 else 0
             )

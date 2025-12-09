@@ -153,10 +153,17 @@
             ];
             setTimeout(() => scrollLogsToBottom(), 10);
           } else if (update.type === "progress" && job) {
-            job.progress = update.progress;
-            job.current_step = update.progress?.current_step;
-            job.total_steps = update.progress?.total_steps;
-            job.current_epoch = update.progress?.epoch;
+            job.progress = {
+              current_step: update.current_step,
+              total_steps: update.total_steps,
+              epoch: update.epoch,
+              percentage: update.percentage,
+              eta_seconds: update.eta_seconds,
+              steps_per_second: update.steps_per_second,
+            };
+            job.current_step = update.current_step;
+            job.total_steps = update.total_steps;
+            job.current_epoch = update.epoch;
           } else if (update.type === "training_metrics") {
             // Add new training metric point
             trainingMetrics = [...trainingMetrics, update.metrics];

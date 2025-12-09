@@ -109,21 +109,6 @@
   let showAdvancedHyperparams = $state(false);
   let showAdvancedLora = $state(false);
 
-  // Selective loss config object for the component
-  let selectiveLossConfig = $derived({
-    selective_loss: formData.selective_loss,
-    selective_loss_level: formData.selective_loss_level,
-    selective_loss_schema_keys: formData.selective_loss_schema_keys,
-    selective_loss_masking_strategy: formData.selective_loss_masking_strategy,
-    selective_loss_masking_start_epoch:
-      formData.selective_loss_masking_start_epoch,
-    selective_loss_mask_every_n_steps:
-      formData.selective_loss_mask_every_n_steps,
-    selective_loss_mask_for_n_steps: formData.selective_loss_mask_for_n_steps,
-    selective_loss_structural_weight: formData.selective_loss_structural_weight,
-    selective_loss_verbose: formData.selective_loss_verbose,
-  });
-
   // Load models from registry on mount
   onMount(async () => {
     // Load backends
@@ -565,7 +550,7 @@
         <!-- Selective Loss for Structured Outputs (Vision Models Only) -->
         {#if formData.model_type === "vision"}
           <SelectiveLossSection
-            bind:config={selectiveLossConfig}
+            bind:config={formData}
             numEpochs={formData.hyperparameters.num_epochs}
           />
         {/if}

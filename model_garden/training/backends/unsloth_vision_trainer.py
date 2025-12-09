@@ -979,7 +979,7 @@ class VisionLanguageTrainer(TrainerMixin, VisionTrainer):
             # Use our fixed SFTTrainer that passes num_items_in_batch during evaluation
             trainer = FixedSFTTrainer(
                 model=self.model,
-                tokenizer=self.tokenizer,  # type: ignore
+                processing_class=self.tokenizer,  # type: ignore
                 args=training_args,
                 train_dataset=train_dataset,  # type: ignore
                 eval_dataset=eval_dataset,  # type: ignore

@@ -23,7 +23,6 @@ configure_pytorch_memory()
 # This file is only loaded when Unsloth is available (checked in backends/__init__.py)
 from datasets import Dataset
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from trl.trainer.sft_trainer import SFTTrainer
 from unsloth import FastLanguageModel
 
 # Import backend base class
@@ -34,6 +33,7 @@ from model_garden.training.config import TrainingConfig
 
 # Import shared training mixin and utilities
 from model_garden.training.mixins import TrainerMixin
+from model_garden.training.sft_trainer import FixedSFTTrainer
 
 # Import centralized console
 from model_garden.utils.console import console
@@ -254,9 +254,9 @@ class ModelTrainer(TrainerMixin, TextTrainer):
         if callbacks:
             all_callbacks.extend(callbacks)
 
-        trainer = SFTTrainer(
+        trainer = FixedSFTTrainer(
             model=self.model,
-            tokenizer=self.tokenizer,  # type: ignore
+            processing_class=self.tokenizer,  # type: ignore
             train_dataset=dataset,
             eval_dataset=eval_dataset,
             args=training_args,

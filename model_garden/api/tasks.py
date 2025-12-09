@@ -13,6 +13,7 @@ eliminating duplicated training logic.
 
 import asyncio
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -152,6 +153,12 @@ def create_progress_callback(job_id: str, manager: Any):
             self.validation_metrics: list[dict] = []
             self.cancellation_event: threading.Event | None = None
 
+            # ETA calculation state
+            self.start_time = None
+            self.last_step_time = None
+            self.steps_per_second_ema = 0.0
+            self.ema_alpha = 0.1
+
         def on_train_begin(self, args, state, control, **kwargs):
             """Called at the beginning of training."""
             # Initialize metrics
@@ -159,6 +166,10 @@ def create_progress_callback(job_id: str, manager: Any):
             if self.job_id in training_jobs:
                 training_jobs[self.job_id]["metrics"] = {"training": [], "validation": []}
                 storage.save_training_jobs(training_jobs)
+
+            # Initialize timing
+            self.start_time = time.time()
+            self.last_step_time = time.time()
 
         def on_step_end(self, args, state, control, **kwargs):
             """Called at the end of each training step."""
@@ -176,12 +187,40 @@ def create_progress_callback(job_id: str, manager: Any):
             )
             epoch = state.epoch or 0
 
+            # Calculate ETA
+            current_time = time.time()
+            # Initialize last_step_time if not set (e.g. if on_train_begin wasn't called or resumed)
+            if self.last_step_time is None:
+                self.last_step_time = current_time
+
+            step_time = current_time - self.last_step_time
+            self.last_step_time = current_time
+
+            # Avoid division by zero
+            if step_time > 0:
+                current_steps_per_sec = 1.0 / step_time
+                if self.steps_per_second_ema == 0:
+                    self.steps_per_second_ema = current_steps_per_sec
+                else:
+                    self.steps_per_second_ema = (
+                        self.ema_alpha * current_steps_per_sec
+                        + (1 - self.ema_alpha) * self.steps_per_second_ema
+                    )
+
+            remaining_steps = total_steps - current_step
+            eta_seconds = (
+                remaining_steps / self.steps_per_second_ema if self.steps_per_second_ema > 0 else 0
+            )
+
             training_jobs = storage.load_training_jobs()
             if self.job_id in training_jobs:
                 training_jobs[self.job_id]["progress"] = {
                     "current_step": current_step,
                     "total_steps": total_steps,
                     "epoch": epoch,
+                    "percentage": (current_step / total_steps * 100) if total_steps > 0 else 0,
+                    "eta_seconds": eta_seconds,
+                    "steps_per_second": self.steps_per_second_ema,
                 }
                 training_jobs[self.job_id]["current_step"] = current_step
                 training_jobs[self.job_id]["total_steps"] = total_steps
@@ -198,6 +237,9 @@ def create_progress_callback(job_id: str, manager: Any):
                         "current_step": current_step,
                         "total_steps": total_steps,
                         "epoch": epoch,
+                        "percentage": (current_step / total_steps * 100) if total_steps > 0 else 0,
+                        "eta_seconds": eta_seconds,
+                        "steps_per_second": self.steps_per_second_ema,
                         "timestamp": utc_now_iso(),
                     },
                 )

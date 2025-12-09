@@ -75,6 +75,16 @@
                 <dt class="text-sm font-medium text-gray-700">Dataset</dt>
                 <dd class="mt-1 text-sm text-gray-900">
                     {job.config?.dataset_path || job.dataset_path}
+                    {#if job.dataset_num_samples}
+                        <span class="text-xs text-gray-500 block">
+                            {job.dataset_num_samples.toLocaleString()} samples
+                        </span>
+                    {/if}
+                    {#if job.dataset_size}
+                        <span class="text-xs text-gray-500 block">
+                            {(job.dataset_size / 1024 / 1024).toFixed(2)} MB
+                        </span>
+                    {/if}
                 </dd>
             </div>
 

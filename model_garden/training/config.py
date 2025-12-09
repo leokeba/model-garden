@@ -334,7 +334,9 @@ class SelectiveLossConfig:
     enabled: bool = False
     level: Literal["conservative", "moderate", "aggressive"] = DEFAULT_SELECTIVE_LOSS_LEVEL  # type: ignore[assignment]
     schema_keys: list[str] | None = None
-    masking_strategy: Literal["epoch_based", "alternating", "weighted"] = DEFAULT_SELECTIVE_LOSS_STRATEGY  # type: ignore[assignment]
+    masking_strategy: Literal["epoch_based", "alternating", "weighted"] = (
+        DEFAULT_SELECTIVE_LOSS_STRATEGY  # type: ignore[assignment]
+    )
     masking_start_epoch: float = 0.0
     mask_every_n_steps: int = DEFAULT_MASK_EVERY_N_STEPS
     mask_for_n_steps: int = DEFAULT_MASK_FOR_N_STEPS
@@ -365,7 +367,7 @@ class SelectiveLossConfig:
         for key, value in d.items():
             # Remove prefix if present
             if key.startswith(prefix) and key != "selective_loss":
-                clean_key = key[len(prefix):]
+                clean_key = key[len(prefix) :]
             elif key == "selective_loss":
                 clean_key = "enabled"
             else:
