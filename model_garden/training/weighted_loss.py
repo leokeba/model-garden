@@ -75,9 +75,16 @@ class WeightedLossTrainer(Trainer):
         self.verbose_loss = verbose_loss
         self._loss_step_counter = 0
 
+        # Disable token-count kwargs so gradient accumulation scaling stays active
+        self.model_accepts_loss_kwargs = False
+
         # Print info on initialization
         if self.verbose_loss:
             console.print("[cyan]Initialized WeightedLossTrainer with verbose loss logging[/cyan]")
+
+    def _get_num_items_in_batch(self, batch_samples, device):  # type: ignore[override]
+        """Disable token counting to keep GA scaling consistent."""
+        return None
 
     def compute_loss(
         self,

@@ -9,61 +9,36 @@ from trl.trainer.sft_trainer import SFTTrainer
 
 
 class FixedSFTTrainer(SFTTrainer):
-    """Custom SFTTrainer that fixes the eval loss computation bug.
+    """Custom SFTTrainer that keeps loss scaling consistent.
 
-    The bug: Trainer.prediction_step() doesn't pass num_items_in_batch to compute_loss,
-    causing incorrect loss normalization during evaluation when using masked tokens.
+    HF/TRL recently added token-count-aware loss scaling via ``num_items_in_batch``.
+    For models that *ignore* that kwarg (like our Unsloth vision/text setups), the
+    Trainer will **skip** dividing by ``gradient_accumulation_steps`` whenever
+    ``num_items_in_batch`` is provided, inflating the reported/used train loss by
+    exactly that factor. Eval never receives ``num_items_in_batch``, so train vs eval
+    losses become incomparable (train is N× larger where N = grad_accum steps).
 
-    Training path: compute_loss(model, inputs, num_items_in_batch=...) → correct
-    Eval path: compute_loss(model, inputs, return_outputs=True) → MISSING num_items_in_batch!
+    We opt out of that path entirely by:
+    1) Forcing ``num_items_in_batch`` to ``None`` in ``compute_loss``
+    2) Disabling token counting via ``_get_num_items_in_batch``
 
-    Problem explained:
-    - Training sums tokens across gradient_accumulation_steps batches (~1700 tokens)
-      and computes loss = sum / 1700
-    - Eval uses a single batch (~425 tokens) with loss = sum / 425
-    - Even though both are "per-token averages", they differ due to batch composition
-    - This makes train/eval loss comparison unreliable
-
-    Solution:
-    Force num_items_in_batch=None for both train and eval to use consistent
-    reduction='mean' behavior across all tokens in each batch independently.
-
-    Note:
-    This fix ensures train and eval losses are computed using the same method,
-    making them directly comparable. The tradeoff is slightly different gradient
-    scaling, but in practice this has minimal impact on training quality.
-
-    Example:
-        >>> from model_garden.training.sft_trainer import FixedSFTTrainer
-        >>> trainer = FixedSFTTrainer(
-        ...     model=model,
-        ...     args=training_args,
-        ...     train_dataset=train_dataset,
-        ...     eval_dataset=eval_dataset,
-        ... )
-        >>> trainer.train()  # Train and eval losses now comparable
+    This restores the classic behavior: per-batch mean loss with explicit division
+    by ``gradient_accumulation_steps`` handled by the Trainer, matching eval.
     """
 
+    def __init__(self, *args, **kwargs):
+        """Force classic loss scaling (ignore token-count kwargs)."""
+        super().__init__(*args, **kwargs)
+        # Disable loss kwargs so Trainer always applies GA scaling
+        self.model_accepts_loss_kwargs = False
+
+    def _get_num_items_in_batch(self, batch_samples, device):  # type: ignore[override]
+        """Disable token counting so GA scaling remains active."""
+        return None
+
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        """Override to disable num_items_in_batch entirely.
-
-        This makes both training and evaluation use reduction='mean' (default behavior),
-        ensuring consistent loss computation across both phases.
-
-        Args:
-            model: The model to compute loss for
-            inputs: The input batch
-            return_outputs: Whether to return model outputs along with loss
-            num_items_in_batch: Ignored - always set to None for consistency
-
-        Returns:
-            Loss tensor, or (loss, outputs) if return_outputs=True
-        """
-        # Force num_items_in_batch=None for both training and eval
-        # This makes both use reduction='mean' (default behavior)
-        # num_items_in_batch = None
-
-        # Call parent with num_items_in_batch=None
+        """Ignore ``num_items_in_batch`` to keep loss reduction uniform."""
+        num_items_in_batch = None
         return super().compute_loss(
             model, inputs, return_outputs=return_outputs, num_items_in_batch=num_items_in_batch
         )
