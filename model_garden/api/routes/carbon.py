@@ -266,7 +266,8 @@ async def get_emissions_trends(
                 },
             }
 
-        # Calculate cutoff date
+        # Calculate cutoff date using timezone-aware datetimes to avoid
+        # comparison errors when parsing stored timestamps.
         now = datetime.now(UTC)
         if period == "7d":
             cutoff = now - timedelta(days=7)
@@ -275,7 +276,21 @@ async def get_emissions_trends(
         elif period == "90d":
             cutoff = now - timedelta(days=90)
         else:  # all
-            cutoff = datetime.min
+            cutoff = datetime.min.replace(tzinfo=UTC)
+
+        def parse_timestamp(ts_str: str) -> datetime | None:
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except (TypeError, ValueError, AttributeError):
+                return None
+
+            # Normalize to UTC and ensure timezone awareness
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            else:
+                ts = ts.astimezone(UTC)
+
+            return ts
 
         # Filter and group by time period
         grouped_data: dict[str, dict] = defaultdict(
@@ -289,16 +304,8 @@ async def get_emissions_trends(
         )
 
         for record in all_emissions:
-            ts_str = record.get("timestamp", "")
-            if not ts_str:
-                continue
-
-            try:
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
-            except (ValueError, AttributeError):
-                continue
-
-            if ts < cutoff:
+            ts = parse_timestamp(record.get("timestamp", ""))
+            if not ts or ts < cutoff:
                 continue
 
             # Determine bucket key based on granularity

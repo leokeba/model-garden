@@ -43,7 +43,7 @@ dependencies = [
     "codecarbon>=2.4.0",
     "transformers>=4.57.2",
     "seaborn>=0.13.2",
-    "numpy<2.3",  # Numba requires NumPy 2.2 or less
+    "numpy<=2.2.0", # Numba requires NumPy 2.2 or less
 ]
 
 [project.optional-dependencies]
