@@ -30,6 +30,7 @@ Model Garden is a comprehensive platform for fine-tuning, deploying, and serving
 - 4-bit, 8-bit, and 16-bit quantization
 - **🆕 Vision-Language Models** - Fine-tune Qwen2.5-VL (3B/7B/72B) for image + text tasks
 - **🎨 Multimodal Training** - Unified interface for text-only and vision-language models
+- **🧪 Axolotl backend** (optional) - drive Axolotl CLI for text + vision fine-tuning when installed
 - **📊 Dataset Validation** - Auto-detect schemas, validate formats, generate statistics
 
 ### ⚡ Efficient Inference (NEW!)
@@ -182,6 +183,35 @@ uv run model-garden train-vision \
 ```
 
 📖 **Full guide**: [Vision-Language Training](./docs/08-vision-language-training.md)
+
+### 🧪 Axolotl Backend (optional)
+
+Leverage Axolotl's training stack while keeping Model Garden's CLI and job tracking.
+
+```bash
+# Install optional extra
+uv pip install 'model-garden[axolotl]'
+
+# Text fine-tuning via Axolotl CLI
+uv run model-garden train \
+  --backend axolotl \
+  --base-model <model> \
+  --dataset ./data/sample.jsonl \
+  --output-dir ./models/my-axolotl-model
+
+# Vision fine-tuning (OpenChat-style messages are generated automatically)
+uv run model-garden train-vision \
+  --backend axolotl \
+  --base-model Qwen/Qwen2.5-VL-3B-Instruct \
+  --dataset ./data/vision_dataset.jsonl \
+  --output-dir ./models/my-axolotl-vlm
+```
+
+Notes:
+- Hugging Face Hub datasets are downloaded then materialized to JSONL for Axolotl.
+- Eval datasets are not yet wired into the Axolotl config; run eval separately.
+
+📖 **Backend details**: [Axolotl Backend](./docs/19-axolotl-backend.md)
 
 ### 🆕 Model Inference & Serving
 

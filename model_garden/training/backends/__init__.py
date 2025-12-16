@@ -36,6 +36,19 @@ def _register_backends():
 
         print(f"Warning: Error checking Unsloth availability: {e}", file=sys.stderr)
 
+    # Register Axolotl backend (optional)
+    try:
+        from model_garden.utils.optional_deps import is_axolotl_installed
+
+        if is_axolotl_installed():
+            from model_garden.training.backends.axolotl_backend import AxolotlBackend
+
+            register_backend("axolotl", AxolotlBackend)
+    except Exception as e:
+        import sys
+
+        print(f"Warning: Error checking Axolotl availability: {e}", file=sys.stderr)
+
     # Register Transformers backend (standard HF - always available)
     try:
         from model_garden.training.backends.transformers_backend import TransformersBackend

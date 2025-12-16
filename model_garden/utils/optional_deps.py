@@ -64,3 +64,49 @@ def get_unsloth_import_error() -> str:
         "Alternatively, use the 'transformers' backend which works without Unsloth:\n"
         "  model-garden train --backend transformers ..."
     )
+
+
+@lru_cache(maxsize=1)
+def is_axolotl_installed() -> bool:
+    """Check if Axolotl is installed and importable.
+
+    Returns:
+        True if Axolotl is available, False otherwise.
+
+    Note:
+        Result is cached after first call for performance.
+        We catch broad exceptions because axolotl can raise during import
+        if optional CUDA/Flash dependencies are missing.
+    """
+
+    try:
+        import axolotl  # noqa: F401
+
+        return True
+    except (ImportError, Exception):
+        return False
+
+
+def require_axolotl(feature_name: str = "This feature") -> None:
+    """Raise ImportError if Axolotl is not installed."""
+
+    if not is_axolotl_installed():
+        raise ImportError(
+            f"{feature_name} requires Axolotl. "
+            "Install it with: pip install 'model-garden[axolotl]' "
+            "or: pip install axolotl"
+        )
+
+
+def get_axolotl_import_error() -> str:
+    """Get a helpful error message for missing Axolotl installation."""
+
+    return (
+        "Axolotl is not installed. The Axolotl backend provides flexible "
+        "training pipelines (LLaMA, Mistral, DeepSpeed/FSDP).\n\n"
+        "To install Axolotl:\n"
+        "  pip install 'model-garden[axolotl]'\n"
+        "  # or\n"
+        "  pip install axolotl\n\n"
+        "Alternatively, use the 'unsloth' or 'transformers' backends."
+    )
