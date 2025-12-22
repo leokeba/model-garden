@@ -132,21 +132,16 @@ def convert_response_format_to_structured_outputs(
         return None
 
     elif response_format.type == "json_object":
-        return {"json": {"type": "object", "properties": {}, "additionalProperties": True}}
+        return {"type": "json_object"}
 
     elif response_format.type == "json_schema":
         if not response_format.json_schema:
             raise ValueError("json_schema must be provided when type is 'json_schema'")
 
-        schema = response_format.json_schema
-        if isinstance(schema, dict):
-            if "schema" in schema:
-                actual_schema = schema["schema"]
-            else:
-                actual_schema = schema
-            return {"json": actual_schema}
-
-        return {"json": schema}
+        return {
+            "type": "json_schema",
+            "json_schema": response_format.json_schema,
+        }
 
     return None
 

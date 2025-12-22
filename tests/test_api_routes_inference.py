@@ -372,7 +372,7 @@ class TestResponseFormatConversion:
         response_format = ResponseFormat(type="json_object")
         result = convert_response_format_to_structured_outputs(response_format)
         assert result is not None
-        assert "json" in result
+        assert result["type"] == "json_object"
 
     def test_convert_json_schema_format(self):
         """Test converting json_schema format."""
@@ -390,7 +390,8 @@ class TestResponseFormatConversion:
         )
         result = convert_response_format_to_structured_outputs(response_format)
         assert result is not None
-        assert "json" in result
+        assert result["type"] == "json_schema"
+        assert "json_schema" in result
 
     def test_convert_none_format(self):
         """Test converting None format."""
