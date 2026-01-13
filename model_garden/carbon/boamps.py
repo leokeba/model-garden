@@ -8,6 +8,7 @@ Schema: https://raw.githubusercontent.com/Boavizta/BoAmps/main/model/report_sche
 """
 
 import json
+import os
 import re
 import uuid
 from datetime import UTC, datetime
@@ -421,11 +422,229 @@ class BoAmpsReportGenerator:
         if path.endswith(".webp"):
             return "webp"
 
-        if source_type == "public":
-            # HuggingFace datasets typically use parquet internally
-            return "parquet"
-
         return "other"
+
+    def _compute_dataset_stats(self, dataset_path: str) -> tuple[float | None, int | None]:
+        """Estimate dataset size (bytes) and item count for local paths."""
+        try:
+            path = Path(dataset_path).expanduser()
+        except Exception:
+            return None, None
+
+        try:
+            if path.is_file():
+                size_bytes = float(path.stat().st_size)
+                num_items = None
+
+                # Avoid expensive scans on very large files
+                max_scan_bytes = 256 * 1024 * 1024  # 256 MB safety guard
+                suffix = path.suffix.lower()
+
+                if size_bytes <= max_scan_bytes:
+                    if suffix in {".jsonl", ".txt"}:
+                        with path.open("r", encoding="utf-8", errors="ignore") as f:
+                            num_items = sum(1 for _ in f)
+                    elif suffix == ".json":
+                        with path.open("r", encoding="utf-8", errors="ignore") as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                num_items = len(data)
+                            elif isinstance(data, dict):
+                                for key in ["data", "samples", "records"]:
+                                    if isinstance(data.get(key), list):
+                                        num_items = len(data[key])
+                                        break
+                    elif suffix == ".csv":
+                        with path.open("r", encoding="utf-8", errors="ignore") as f:
+                            rows = sum(1 for _ in f)
+                            if rows > 1:
+                                num_items = rows - 1  # Drop header
+                            elif rows > 0:
+                                num_items = rows
+
+                return size_bytes, num_items
+
+            if path.is_dir():
+                size_bytes = 0.0
+                num_items = 0
+                image_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff"}
+
+                for file in path.rglob("*"):
+                    if not file.is_file():
+                        continue
+                    try:
+                        size_bytes += float(file.stat().st_size)
+                    except Exception:
+                        continue
+
+                    if file.suffix.lower() in image_exts:
+                        num_items += 1
+
+                return (size_bytes or None), (num_items or None)
+
+        except Exception:
+            return None, None
+
+        return None, None
+
+    def _infer_file_type_from_name(self, name: str) -> tuple[str | None, str | None]:
+        """Infer BoAmps fileType and dataFormat from a filename or path."""
+        lower = name.lower()
+        mappings = {
+            ".jsonl": ("json", "json"),
+            ".json": ("json", "json"),
+            ".csv": ("csv", "csv"),
+            ".tsv": ("csv", "csv"),
+            ".parquet": ("parquet", "parquet"),
+            ".txt": ("txt", "txt"),
+            ".jpg": ("jpg", None),
+            ".jpeg": ("jpg", None),
+            ".png": ("png", None),
+            ".webp": ("webp", None),
+        }
+        for ext, val in mappings.items():
+            if lower.endswith(ext):
+                return val
+        return None, None
+
+    def _infer_hf_file_type(self, dataset_path: str) -> tuple[str | None, str | None]:
+        """Infer fileType and dataFormat for a Hub dataset by inspecting files."""
+        if not dataset_path or "/" not in dataset_path:
+            return None, None
+
+        if os.getenv("BOAMPS_SKIP_HF_FETCH", "0") == "1":
+            return None, None
+
+        try:
+            from model_garden.utils.hf_cache import configure_hf_cache
+
+            configure_hf_cache()
+            from huggingface_hub import HfApi
+
+            api = HfApi()
+            files = api.list_files_info(dataset_path, repo_type="dataset")
+
+            # Count extensions to pick the dominant type
+            counts: dict[str, int] = {}
+            formats: dict[str, str | None] = {}
+            for file_info in files:
+                candidate = getattr(file_info, "path", "") or getattr(file_info, "rfilename", "")
+                ftype, dformat = self._infer_file_type_from_name(candidate)
+                if ftype:
+                    counts[ftype] = counts.get(ftype, 0) + 1
+                    if ftype not in formats and dformat:
+                        formats[ftype] = dformat
+
+            if not counts:
+                return None, None
+
+            # Priority: json > jsonl (maps to json) when present
+            for preferred in ["json", "csv", "parquet", "txt", "jpg", "png", "webp"]:
+                if preferred in counts:
+                    return preferred, formats.get(preferred)
+
+            # Otherwise pick the most frequent fileType
+            file_type = max(counts.items(), key=lambda kv: kv[1])[0]
+            data_format = formats.get(file_type)
+            return file_type, data_format
+        except Exception:
+            return None, None
+
+    def _fetch_hf_dataset_metadata(self, dataset_path: str) -> tuple[float | None, int | None]:
+        """Fetch dataset size and items from HuggingFace Hub metadata.
+
+        Returns (size_bytes, num_items) when available, otherwise (None, None).
+        Respects HF_HUB_OFFLINE and can be disabled via BOAMPS_SKIP_HF_FETCH=1.
+        """
+        if not dataset_path or "/" not in dataset_path:
+            return None, None
+
+        if os.getenv("BOAMPS_SKIP_HF_FETCH", "0") == "1":
+            return None, None
+
+        try:
+            # Ensure HF caches are configured before importing hub client
+            from model_garden.utils.hf_cache import configure_hf_cache
+
+            configure_hf_cache()
+
+            from huggingface_hub import HfApi
+
+            api = HfApi()
+            # files_metadata=True ensures sizes are returned for siblings
+            info = api.dataset_info(dataset_path, files_metadata=True)
+
+            size_bytes = None
+            num_items = None
+
+            # Prefer explicit dataset_size/download_size fields when present
+            try:
+                for key in ["dataset_size", "download_size", "size"]:
+                    if getattr(info, key, None):
+                        size_bytes = float(getattr(info, key))
+                        break
+            except Exception:
+                size_bytes = None
+
+            # Sum file sizes from siblings when provided (fallback)
+            try:
+                if size_bytes is None and getattr(info, "siblings", None):
+                    total = 0.0
+                    for sibling in info.siblings:
+                        sibling_size = getattr(sibling, "size", None)
+                        if sibling_size:
+                            total += float(sibling_size)
+                    if total > 0:
+                        size_bytes = total
+            except Exception:
+                size_bytes = None
+
+            # As a last resort, list files to accumulate sizes (may require auth for private datasets)
+            try:
+                if size_bytes is None:
+                    files = api.list_files_info(dataset_path, repo_type="dataset")
+                    total = 0.0
+                    for file_info in files:
+                        if getattr(file_info, "size", None):
+                            total += float(file_info.size)
+                    if total > 0:
+                        size_bytes = total
+            except Exception:
+                size_bytes = size_bytes
+
+            # Extract counts from cardData hints
+            try:
+                card = getattr(info, "cardData", None) or {}
+                if isinstance(card, dict):
+                    for key in [
+                        "num_rows",
+                        "num_examples",
+                        "samples",
+                        "dataset_num_samples",
+                        "num_items",
+                    ]:
+                        if isinstance(card.get(key), (int, float)):
+                            num_items = int(card[key])
+                            break
+
+                    # Aggregate split counts if present
+                    splits = card.get("splits")
+                    if isinstance(splits, list):
+                        total_rows = 0
+                        for split in splits:
+                            if not isinstance(split, dict):
+                                continue
+                            rows = split.get("num_examples") or split.get("num_rows")
+                            if isinstance(rows, (int, float)):
+                                total_rows += int(rows)
+                        if total_rows > 0:
+                            num_items = total_rows
+            except Exception:
+                num_items = num_items
+
+            return size_bytes, num_items
+        except Exception:
+            return None, None
 
     def _build_datasets(
         self,
@@ -472,6 +691,18 @@ class BoAmpsReportGenerator:
             source_type = "public" if job_config.get("from_hub", False) else "private"
             dataset_path = job_config["dataset_path"]
 
+            # Used for later fallback enrichment
+            computed_size_bytes = None
+            computed_items = None
+
+            # Try fetching Hub metadata for public datasets when explicit stats are missing
+            if source_type == "public":
+                hub_size, hub_items = self._fetch_hf_dataset_metadata(dataset_path)
+                if hub_size:
+                    computed_size_bytes = hub_size
+                if hub_items:
+                    computed_items = hub_items
+
             dataset_entry: dict[str, Any] = {
                 "dataUsage": "input",
                 "dataType": primary_data_type,
@@ -486,17 +717,40 @@ class BoAmpsReportGenerator:
                 dataset_entry["sourceUri"] = dataset_path
 
             # Determine data format and file type
-            dataset_entry["fileType"] = self._detect_file_type(dataset_path, source_type)
+            # Determine data format and file type
+            file_type = None
+            data_format = None
 
-            # Keep dataFormat for backward compatibility if needed, or map from fileType
-            if dataset_path.endswith(".jsonl") or dataset_path.endswith(".json"):
-                dataset_entry["dataFormat"] = "json"
-            elif dataset_path.endswith(".csv"):
-                dataset_entry["dataFormat"] = "csv"
-            elif dataset_path.endswith(".parquet"):
-                dataset_entry["dataFormat"] = "parquet"
-            elif source_type == "public":
-                dataset_entry["dataFormat"] = "parquet"
+            # 1) From explicit path extension
+            file_type, data_format = self._infer_file_type_from_name(dataset_path)
+
+            # 2) If public and still unknown, infer from Hub file list
+            if source_type == "public" and not file_type:
+                inferred_type, inferred_format = self._infer_hf_file_type(dataset_path)
+                file_type = inferred_type or file_type
+                data_format = inferred_format or data_format
+
+            # 3) Fallback to generic detect, then "other"
+            if not file_type:
+                file_type = self._detect_file_type(dataset_path, source_type)
+            if not data_format:
+                # Map file_type to a sensible dataFormat when possible
+                mapping = {
+                    "json": "json",
+                    "csv": "csv",
+                    "parquet": "parquet",
+                    "txt": "txt",
+                }
+                data_format = mapping.get(file_type)
+
+            dataset_entry["fileType"] = file_type or "other"
+            if data_format:
+                dataset_entry["dataFormat"] = data_format
+
+            # If still unknown for public HF datasets, default to json/jsonl
+            if source_type == "public" and dataset_entry["fileType"] == "other":
+                dataset_entry["fileType"] = "json"
+                dataset_entry.setdefault("dataFormat", "json")
 
             # Add dataset size info if available
             size_bytes = 0.0
@@ -509,6 +763,15 @@ class BoAmpsReportGenerator:
                         size_bytes = float(p.stat().st_size)
                 except Exception:
                     pass
+
+            if size_bytes <= 0:
+                # Prefer Hub-derived size if available; otherwise scan local
+                if computed_size_bytes:
+                    size_bytes = computed_size_bytes
+                else:
+                    computed_size_bytes, computed_items = self._compute_dataset_stats(dataset_path)
+                    if computed_size_bytes:
+                        size_bytes = computed_size_bytes
 
             if size_bytes > 0:
                 dataset_entry["dataSize"] = round(size_bytes / (1024**3), 4)
@@ -526,6 +789,9 @@ class BoAmpsReportGenerator:
                 if samples > 0:
                     dataset_entry["dataQuantity"] = int(samples)
                     dataset_entry["items"] = int(samples)
+            elif computed_items:
+                dataset_entry["dataQuantity"] = int(computed_items)
+                dataset_entry["items"] = int(computed_items)
 
             # Add shape info for vision datasets
             if is_vision and "image_size" in job_config:
@@ -1130,6 +1396,9 @@ def _select_training_job(
         return None
 
     job_id = emissions_data.get("job_id") if emissions_data else None
+    job_type = (emissions_data.get("job_type") or "").lower() if emissions_data else ""
+    emitted_model_name = (emissions_data.get("model_name") or "").strip()
+    emitted_base_model = (emissions_data.get("base_model") or "").strip()
 
     # Strongest: direct key match
     if job_id and job_id in training_jobs:
@@ -1142,10 +1411,21 @@ def _select_training_job(
                 return candidate
 
     # Prepare emitted hints
-    emitted_output = _normalize_path(emissions_data.get("output_dir")) if emissions_data else None
-    emitted_model_name = (emissions_data.get("model_name") or "") if emissions_data else ""
-    emitted_base_model = (emissions_data.get("base_model") or "") if emissions_data else ""
+    emitted_output_raw = emissions_data.get("output_dir") if emissions_data else None
+    emitted_output = _normalize_path(emitted_output_raw) if emissions_data else None
 
+    # Heuristic: derive model name hint from raw output_dir (without resolving ..)
+    # Example: /.../models/qwen-7b/../logs/<job> -> hint = qwen-7b
+    model_name_hint = None
+    if emitted_output_raw:
+        try:
+            raw_parts = Path(emitted_output_raw).parts
+            if "models" in raw_parts:
+                idx = raw_parts.index("models")
+                if len(raw_parts) > idx + 1 and raw_parts[idx + 1] not in ["..", "."]:
+                    model_name_hint = raw_parts[idx + 1]
+        except Exception:
+            model_name_hint = None
     # Derive a likely training output dir from log paths (e.g., .../logs/<job> -> .../<model_name>)
     derived_output = None
     if emitted_output and emitted_output.parent.name == "logs" and emitted_model_name:
@@ -1175,8 +1455,21 @@ def _select_training_job(
         if emitted_model_name and candidate.get("name") == emitted_model_name:
             score += 40
 
+            # Vision-specific boost to rescue VL training jobs lacking job_id
+            if job_type.startswith("vision") or candidate.get("is_vision"):
+                score += 25
+
+        if model_name_hint and candidate.get("name") == model_name_hint:
+            score += 70
+
         if emitted_base_model and candidate.get("base_model") == emitted_base_model:
             score += 30
+
+        # Match on model name appearing inside emitted output path
+        candidate_name = candidate.get("name")
+        if emitted_output and candidate_name:
+            if candidate_name in emitted_output.as_posix():
+                score += 20
 
         if score > 0:
             ts_hint = (
