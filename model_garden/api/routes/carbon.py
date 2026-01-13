@@ -25,6 +25,7 @@ async def list_emissions(job_type: str | None = None, limit: int | None = None):
     """List all carbon emissions records."""
     try:
         from model_garden.carbon import get_emissions_db
+        from model_garden.carbon.boamps import _select_training_job
 
         storage = get_storage_manager()
         training_jobs = storage.load_training_jobs()
@@ -36,21 +37,26 @@ async def list_emissions(job_type: str | None = None, limit: int | None = None):
         formatted_emissions = []
         for record in emissions_records:
             job_name = record.get("job_id", "Unknown")
+
+            matched_job = None
             if record["job_id"] in training_jobs:
-                job_name = training_jobs[record["job_id"]].get("name", job_name)
+                matched_job = training_jobs[record["job_id"]]
+            else:
+                matched_job = _select_training_job(record, training_jobs)
+
+            if matched_job:
+                job_name = matched_job.get("name", job_name)
 
             model_name = record.get("model_name") or "Unknown"
             base_model = record.get("base_model")
 
-            # Fallback: if model_name is Unknown, try to get from training jobs
-            if model_name == "Unknown" and record["job_id"] in training_jobs:
-                job = training_jobs[record["job_id"]]
-                model_name = job.get("name") or job.get("base_model") or model_name
+            # Fallback: if model_name is Unknown, try to get from matched training job
+            if model_name == "Unknown" and matched_job:
+                model_name = matched_job.get("name") or matched_job.get("base_model") or model_name
 
-            # Use base_model from record, or fallback to training job
-            if not base_model:
-                if record["job_id"] in training_jobs:
-                    base_model = training_jobs[record["job_id"]].get("base_model")
+            # Use base_model from record, or fallback to matched training job
+            if not base_model and matched_job:
+                base_model = matched_job.get("base_model")
 
             # Calculate carbon intensity if it's 0 (for historical data)
             carbon_intensity = record.get("carbon_intensity_g_per_kwh", 0.0)
