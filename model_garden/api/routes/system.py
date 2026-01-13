@@ -9,6 +9,7 @@ Routes for system management:
 - POST /api/v1/system/restart - Restart the Model Garden service
 """
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,61 @@ _package_operation_status: dict = {
     "success": None,
     "error": None,
 }
+
+# Persistent settings storage
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+SETTINGS_FILE = PROJECT_ROOT / "storage" / "system_settings.json"
+
+
+def _default_persistent_settings() -> dict:
+    return {
+        "carbon": {
+            "power_calibration_kwh": 0.0,
+            "duration_calibration_seconds": 0.0,
+        },
+        "report": {
+            "publisher_name": "",
+            "division": "",
+            "default_project_name": "",
+            "infra_type": "",
+            "location_country": "",
+            "location_region": "",
+        },
+    }
+
+
+def _load_persistent_settings() -> dict:
+    settings = _default_persistent_settings()
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE) as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    settings.update(loaded)
+    except Exception:
+        pass
+
+    # Ensure required sections exist
+    settings.setdefault("carbon", {})
+    settings["carbon"].setdefault("power_calibration_kwh", 0.0)
+    settings["carbon"].setdefault("duration_calibration_seconds", 0.0)
+    settings.setdefault("report", {})
+    settings["report"].setdefault("publisher_name", "")
+    settings["report"].setdefault("division", "")
+    settings["report"].setdefault("default_project_name", "")
+    settings["report"].setdefault("infra_type", "")
+    settings["report"].setdefault("location_country", "")
+    settings["report"].setdefault("location_region", "")
+    return settings
+
+
+def _save_persistent_settings(settings: dict) -> None:
+    try:
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(settings, f, indent=2)
+    except Exception as e:
+        print(f"Failed to save settings: {e}")
 
 
 @router.get("/status")
@@ -226,6 +282,8 @@ async def get_settings():
     """Get system settings including optional dependencies status."""
     from model_garden.utils.optional_deps import is_unsloth_installed
 
+    persistent_settings = _load_persistent_settings()
+
     # Clear the lru_cache to get fresh status
     is_unsloth_installed.cache_clear()
 
@@ -301,9 +359,54 @@ async def get_settings():
                 "is_systemd_service": is_systemd_service,
                 "can_restart_service": can_restart_service,
             },
+            "carbon": persistent_settings.get("carbon", {}),
+            "report": persistent_settings.get("report", {}),
             "package_operation": _package_operation_status,
         },
     }
+
+
+@router.put("/settings")
+async def update_settings(payload: dict):
+    """Update system settings (currently carbon calibration values)."""
+
+    settings = _load_persistent_settings()
+    carbon_payload = payload.get("carbon", {}) if isinstance(payload, dict) else {}
+    report_payload = payload.get("report", {}) if isinstance(payload, dict) else {}
+
+    if isinstance(carbon_payload, dict):
+        if "power_calibration_kwh" in carbon_payload:
+            try:
+                settings["carbon"]["power_calibration_kwh"] = float(
+                    carbon_payload.get("power_calibration_kwh", 0.0)
+                )
+            except (TypeError, ValueError):
+                pass
+
+        if "duration_calibration_seconds" in carbon_payload:
+            try:
+                settings["carbon"]["duration_calibration_seconds"] = float(
+                    carbon_payload.get("duration_calibration_seconds", 0.0)
+                )
+            except (TypeError, ValueError):
+                pass
+
+    if isinstance(report_payload, dict):
+        for key in (
+            "publisher_name",
+            "division",
+            "default_project_name",
+            "infra_type",
+            "location_country",
+            "location_region",
+        ):
+            if key in report_payload:
+                value = report_payload.get(key, "")
+                settings["report"][key] = "" if value is None else str(value)
+
+    _save_persistent_settings(settings)
+
+    return await get_settings()
 
 
 def _run_package_command(command: list[str], operation: str):

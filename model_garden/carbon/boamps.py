@@ -17,6 +17,50 @@ from typing import Any
 
 from .hardware_detection import get_hardware_detector
 
+# Settings persistence (shared with system settings)
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+SYSTEM_SETTINGS_FILE = PROJECT_ROOT / "storage" / "system_settings.json"
+
+
+def _load_report_settings() -> dict[str, Any]:
+    """Load report-related defaults from system settings if available."""
+    defaults = {
+        "publisher_name": "Model Garden",
+        "division": None,
+        "default_project_name": "Model Garden",
+        "infra_type": None,
+        "location_country": None,
+        "location_region": None,
+    }
+
+    try:
+        if SYSTEM_SETTINGS_FILE.exists():
+            with open(SYSTEM_SETTINGS_FILE) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                report = data.get("report", {}) if isinstance(data.get("report"), dict) else {}
+                defaults.update(
+                    {
+                        "publisher_name": report.get("publisher_name", defaults["publisher_name"]),
+                        "division": report.get("division", defaults["division"]),
+                        "default_project_name": report.get(
+                            "default_project_name", defaults["default_project_name"]
+                        ),
+                        "infra_type": report.get("infra_type", defaults["infra_type"]),
+                        "location_country": report.get(
+                            "location_country", defaults["location_country"]
+                        ),
+                        "location_region": report.get(
+                            "location_region", defaults["location_region"]
+                        ),
+                    }
+                )
+    except Exception:
+        # If settings can't be read, fall back to defaults silently
+        pass
+
+    return defaults
+
 
 def _as_number(value: Any, default: float = 0.0) -> float:
     """Convert arbitrary input to a float, falling back safely."""
@@ -86,6 +130,10 @@ class BoAmpsReportGenerator:
         self,
         publisher_name: str = "Model Garden",
         publisher_division: str | None = None,
+        default_project_name: str | None = None,
+        infra_type_default: str | None = None,
+        location_country_default: str | None = None,
+        location_region_default: str | None = None,
         confidentiality_level: str = "public",
     ):
         """
@@ -94,10 +142,18 @@ class BoAmpsReportGenerator:
         Args:
             publisher_name: Name of the organization
             publisher_division: Division or team name
+            default_project_name: Default project name for reports
+            infra_type_default: Default infrastructure type (onPremise|publicCloud|privateCloud)
+            location_country_default: Default country code or name
+            location_region_default: Default region/city
             confidentiality_level: public|internal|confidential|secret
         """
         self.publisher_name = publisher_name
         self.publisher_division = publisher_division
+        self.default_project_name = default_project_name or "Model Garden"
+        self.infra_type_default = infra_type_default
+        self.location_country_default = location_country_default
+        self.location_region_default = location_region_default
         self.confidentiality_level = confidentiality_level
 
     def generate_report(
@@ -159,7 +215,7 @@ class BoAmpsReportGenerator:
             "publisher": {
                 "name": self.publisher_name,
                 "division": self.publisher_division,
-                "projectName": "Model Garden",
+                "projectName": self.default_project_name,
                 "confidentialityLevel": self.confidentiality_level,
             },
         }
@@ -550,17 +606,20 @@ class BoAmpsReportGenerator:
         except Exception:
             return None, None
 
-    def _fetch_hf_dataset_metadata(self, dataset_path: str) -> tuple[float | None, int | None]:
-        """Fetch dataset size and items from HuggingFace Hub metadata.
+    def _fetch_hf_dataset_metadata(
+        self, dataset_path: str
+    ) -> tuple[float | None, int | None, dict[str, dict[str, float | int | None]]]:
+        """Fetch dataset size/items and split stats from HuggingFace Hub metadata.
 
-        Returns (size_bytes, num_items) when available, otherwise (None, None).
+        Returns (size_bytes, num_items, split_stats) when available, otherwise (None, None, {}).
+        split_stats maps split name -> {"size": bytes|None, "items": int|None}.
         Respects HF_HUB_OFFLINE and can be disabled via BOAMPS_SKIP_HF_FETCH=1.
         """
         if not dataset_path or "/" not in dataset_path:
-            return None, None
+            return None, None, {}
 
         if os.getenv("BOAMPS_SKIP_HF_FETCH", "0") == "1":
-            return None, None
+            return None, None, {}
 
         try:
             # Ensure HF caches are configured before importing hub client
@@ -576,6 +635,7 @@ class BoAmpsReportGenerator:
 
             size_bytes = None
             num_items = None
+            split_stats: dict[str, dict[str, float | int | None]] = {}
 
             # Prefer explicit dataset_size/download_size fields when present
             try:
@@ -599,16 +659,38 @@ class BoAmpsReportGenerator:
             except Exception:
                 size_bytes = None
 
-            # As a last resort, list files to accumulate sizes (may require auth for private datasets)
+            # List files to accumulate sizes (may require auth for private datasets) and infer split sizes
             try:
-                if size_bytes is None:
-                    files = api.list_files_info(dataset_path, repo_type="dataset")
-                    total = 0.0
-                    for file_info in files:
-                        if getattr(file_info, "size", None):
-                            total += float(file_info.size)
-                    if total > 0:
-                        size_bytes = total
+                split_size_heuristics: dict[str, float] = {"train": 0.0, "validation": 0.0, "test": 0.0}
+                files = api.list_files_info(dataset_path, repo_type="dataset")
+                total = 0.0
+                for file_info in files:
+                    if getattr(file_info, "size", None):
+                        total += float(file_info.size)
+
+                    # Heuristic split bucketing by filename
+                    try:
+                        name = getattr(file_info, "rfilename", None) or getattr(file_info, "path", "")
+                        name_l = str(name).lower()
+                        if "train" in name_l:
+                            split_size_heuristics["train"] += float(file_info.size or 0.0)
+                        elif any(token in name_l for token in ["validation", "valid", "val", "eval"]):
+                            split_size_heuristics["validation"] += float(file_info.size or 0.0)
+                        elif "test" in name_l:
+                            split_size_heuristics["test"] += float(file_info.size or 0.0)
+                    except Exception:
+                        pass
+
+                if size_bytes is None and total > 0:
+                    size_bytes = total
+
+                # If we inferred split sizes heuristically, record them
+                for split_name, split_size in split_size_heuristics.items():
+                    if split_size > 0:
+                        existing = split_stats.get(split_name, {})
+                        existing.setdefault("items", None)
+                        existing["size"] = split_size
+                        split_stats[split_name] = existing
             except Exception:
                 size_bytes = size_bytes
 
@@ -627,24 +709,72 @@ class BoAmpsReportGenerator:
                             num_items = int(card[key])
                             break
 
-                    # Aggregate split counts if present
+                    # Aggregate split counts if present and capture per-split stats
                     splits = card.get("splits")
                     if isinstance(splits, list):
                         total_rows = 0
                         for split in splits:
                             if not isinstance(split, dict):
                                 continue
+                            name = str(split.get("name", "")).lower()
                             rows = split.get("num_examples") or split.get("num_rows")
+                            size_split = split.get("num_bytes") or split.get("size_bytes")
                             if isinstance(rows, (int, float)):
                                 total_rows += int(rows)
+                            if name:
+                                split_stats[name] = {
+                                    "items": int(rows) if isinstance(rows, (int, float)) else None,
+                                    "size": float(size_split)
+                                    if isinstance(size_split, (int, float))
+                                    else None,
+                                }
                         if total_rows > 0:
                             num_items = total_rows
             except Exception:
                 num_items = num_items
 
-            return size_bytes, num_items
+            # Extract split stats from info.splits when available
+            try:
+                hf_splits = getattr(info, "splits", None)
+                if hf_splits:
+                    total_rows = 0
+                    total_bytes = 0.0
+                    for split_name, split_obj in hf_splits.items():
+                        name = str(split_name).lower()
+                        split_items = None
+                        split_size = None
+                        try:
+                            split_items = getattr(split_obj, "num_examples", None)
+                        except Exception:
+                            pass
+                        try:
+                            split_size = getattr(split_obj, "num_bytes", None)
+                        except Exception:
+                            pass
+
+                        if isinstance(split_items, (int, float)):
+                            total_rows += int(split_items)
+                        if isinstance(split_size, (int, float)):
+                            total_bytes += float(split_size)
+
+                        if name:
+                            existing = split_stats.get(name, {})
+                            if isinstance(split_items, (int, float)):
+                                existing["items"] = int(split_items)
+                            if isinstance(split_size, (int, float)):
+                                existing["size"] = float(split_size)
+                            split_stats[name] = existing
+
+                    if num_items is None and total_rows > 0:
+                        num_items = total_rows
+                    if size_bytes is None and total_bytes > 0:
+                        size_bytes = total_bytes
+            except Exception:
+                pass
+
+            return size_bytes, num_items, split_stats
         except Exception:
-            return None, None
+            return None, None, {}
 
     def _build_datasets(
         self,
@@ -696,17 +826,53 @@ class BoAmpsReportGenerator:
             computed_items = None
 
             # Try fetching Hub metadata for public datasets when explicit stats are missing
+            hub_split_stats: dict[str, dict[str, float | int | None]] = {}
+            hub_total_size = None
+            hub_total_items = None
             if source_type == "public":
-                hub_size, hub_items = self._fetch_hf_dataset_metadata(dataset_path)
+                hub_size, hub_items, hub_split_stats = self._fetch_hf_dataset_metadata(dataset_path)
+                hub_total_size = hub_size
+                hub_total_items = hub_items
+                if hub_total_items is None and hub_split_stats:
+                    # Derive total items from split stats if missing
+                    total_items_from_splits = sum(
+                        int(v["items"]) for v in hub_split_stats.values() if v.get("items")
+                    )
+                    if total_items_from_splits > 0:
+                        hub_total_items = total_items_from_splits
+                if hub_total_size is None and hub_split_stats:
+                    # Derive total size from split stats if sizes exist
+                    total_size_from_splits = sum(
+                        float(v["size"]) for v in hub_split_stats.values() if v.get("size")
+                    )
+                    if total_size_from_splits > 0:
+                        hub_total_size = total_size_from_splits
                 if hub_size:
                     computed_size_bytes = hub_size
                 if hub_items:
                     computed_items = hub_items
+                # Prefer train split-specific stats when available
+                for name in ["train", "training", "train_split", "train_split_0"]:
+                    split_stat = hub_split_stats.get(name)
+                    if split_stat:
+                        split_items = split_stat.get("items")
+                        split_size = split_stat.get("size")
+                        if split_size:
+                            computed_size_bytes = float(split_size)
+                        elif split_items and hub_total_size and hub_total_items:
+                            # Approximate split size proportionally to item counts
+                            computed_size_bytes = (
+                                float(hub_total_size) * float(split_items) / float(hub_total_items)
+                            )
+                        if split_items:
+                            computed_items = int(split_items)
+                        break
 
             dataset_entry: dict[str, Any] = {
                 "dataUsage": "input",
                 "dataType": primary_data_type,
                 "source": source_type,
+                "subset": "train",
             }
 
             # Add source URI
@@ -813,10 +979,60 @@ class BoAmpsReportGenerator:
         if val_path:
             source_type = "public" if job_config.get("validation_from_hub", False) else "private"
 
+            computed_size_bytes = None
+            computed_items = None
+            hub_split_stats: dict[str, dict[str, float | int | None]] = {}
+            hub_total_size = None
+            hub_total_items = None
+
+            if source_type == "public":
+                hub_size, hub_items, hub_split_stats = self._fetch_hf_dataset_metadata(val_path)
+                hub_total_size = hub_size
+                hub_total_items = hub_items
+                if hub_total_items is None and hub_split_stats:
+                    total_items_from_splits = sum(
+                        int(v["items"]) for v in hub_split_stats.values() if v.get("items")
+                    )
+                    if total_items_from_splits > 0:
+                        hub_total_items = total_items_from_splits
+                if hub_total_size is None and hub_split_stats:
+                    total_size_from_splits = sum(
+                        float(v["size"]) for v in hub_split_stats.values() if v.get("size")
+                    )
+                    if total_size_from_splits > 0:
+                        hub_total_size = total_size_from_splits
+                if hub_size:
+                    computed_size_bytes = hub_size
+                if hub_items:
+                    computed_items = hub_items
+                # Prefer validation split-specific stats when available
+                for name in [
+                    "validation",
+                    "valid",
+                    "val",
+                    "eval",
+                    "validation_split",
+                    "validation_split_0",
+                ]:
+                    split_stat = hub_split_stats.get(name)
+                    if split_stat:
+                        split_items = split_stat.get("items")
+                        split_size = split_stat.get("size")
+                        if split_size:
+                            computed_size_bytes = float(split_size)
+                        elif split_items and hub_total_size and hub_total_items:
+                            computed_size_bytes = (
+                                float(hub_total_size) * float(split_items) / float(hub_total_items)
+                            )
+                        if split_items:
+                            computed_items = int(split_items)
+                        break
+
             val_entry: dict[str, Any] = {
                 "dataUsage": "input",  # Validation is input data
                 "dataType": primary_data_type,
                 "source": source_type,
+                "subset": "validation",
             }
 
             if source_type == "public" and "/" in val_path:
@@ -824,7 +1040,53 @@ class BoAmpsReportGenerator:
             else:
                 val_entry["sourceUri"] = val_path
 
-            val_entry["fileType"] = self._detect_file_type(val_path, source_type)
+            # Determine file type/format for validation set
+            file_type, data_format = self._infer_file_type_from_name(val_path)
+            if source_type == "public" and not file_type:
+                inferred_type, inferred_format = self._infer_hf_file_type(val_path)
+                file_type = inferred_type or file_type
+                data_format = inferred_format or data_format
+
+            if not file_type:
+                file_type = self._detect_file_type(val_path, source_type)
+            if not data_format:
+                mapping = {"json": "json", "csv": "csv", "parquet": "parquet", "txt": "txt"}
+                data_format = mapping.get(file_type)
+
+            val_entry["fileType"] = file_type or "other"
+            if data_format:
+                val_entry["dataFormat"] = data_format
+            if source_type == "public" and val_entry["fileType"] == "other":
+                val_entry["fileType"] = "json"
+                val_entry.setdefault("dataFormat", "json")
+
+            # Size and sample counts
+            size_bytes = 0.0
+            try:
+                p = Path(val_path)
+                if p.exists() and p.is_file():
+                    size_bytes = float(p.stat().st_size)
+            except Exception:
+                pass
+
+            if size_bytes <= 0 and computed_size_bytes:
+                size_bytes = computed_size_bytes
+            if size_bytes <= 0:
+                computed_size_bytes, computed_items = self._compute_dataset_stats(val_path)
+                if computed_size_bytes:
+                    size_bytes = computed_size_bytes
+
+            if size_bytes > 0:
+                val_entry["dataSize"] = round(size_bytes / (1024**3), 4)
+                val_entry["volume"] = size_bytes
+                val_entry["volumeUnit"] = "byte"
+
+            if computed_items:
+                val_entry["dataQuantity"] = int(computed_items)
+                val_entry["items"] = int(computed_items)
+
+            if source_type == "public" and "/" in val_path:
+                val_entry["owner"] = val_path.split("/")[0]
 
             datasets.append(val_entry)
 
@@ -1199,7 +1461,8 @@ class BoAmpsReportGenerator:
         # Note: Removed custom fields not in BoAmps schema
         # (energyConsumption, unit, totalEnergyConsumption, totalEnergyUnit)
 
-        return {"infraType": "onPremise", "components": components}
+        infra_type = self.infra_type_default or "onPremise"
+        return {"infraType": infra_type, "components": components}
 
     def _generate_system(self, emissions_data: dict[str, Any]) -> dict[str, Any]:
         """Generate system section with real OS information."""
@@ -1247,8 +1510,8 @@ class BoAmpsReportGenerator:
     def _generate_environment(self, emissions_data: dict[str, Any]) -> dict[str, Any]:
         """Generate environment section with real location and carbon intensity data."""
         # Use actual data from CodeCarbon
-        country_name = emissions_data.get("country_name", "USA")
-        region = emissions_data.get("region", "Unknown")
+        country_name = emissions_data.get("country_name", self.location_country_default or "USA")
+        region = emissions_data.get("region", self.location_region_default or "Unknown")
         carbon_intensity = _as_number(emissions_data.get("carbon_intensity_g_per_kwh", 0.0), 0.0)
 
         # If carbon intensity is 0, try to calculate it from emissions and energy
@@ -1349,9 +1612,14 @@ class BoAmpsReportGenerator:
 
 def get_boamps_generator() -> BoAmpsReportGenerator:
     """Get a configured BoAmps report generator."""
+    settings = _load_report_settings()
     return BoAmpsReportGenerator(
-        publisher_name="Model Garden",
-        publisher_division="AI Research",
+        publisher_name=settings.get("publisher_name") or "Model Garden",
+        publisher_division=settings.get("division"),
+        default_project_name=settings.get("default_project_name"),
+        infra_type_default=settings.get("infra_type"),
+        location_country_default=settings.get("location_country"),
+        location_region_default=settings.get("location_region"),
         confidentiality_level="public",
     )
 

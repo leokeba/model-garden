@@ -356,6 +356,20 @@ interface GPUMemoryStats {
   profile: GPUMemoryProfile | null;
 }
 
+interface CarbonSettings {
+  power_calibration_kwh: number;
+  duration_calibration_seconds: number;
+}
+
+interface ReportSettings {
+  publisher_name: string;
+  division: string;
+  default_project_name: string;
+  infra_type: string;
+  location_country: string;
+  location_region: string;
+}
+
 interface SystemSettings {
   optional_dependencies: {
     unsloth: UnslothStatus;
@@ -369,6 +383,8 @@ interface SystemSettings {
     is_systemd_service: boolean;
     can_restart_service: boolean;
   };
+  carbon: CarbonSettings;
+  report: ReportSettings;
   package_operation: PackageOperationStatus;
 }
 
@@ -658,6 +674,14 @@ class APIClient {
     return response.data;
   }
 
+  async updateSettings(data: Partial<{ carbon: Partial<CarbonSettings>; report: Partial<ReportSettings> }>): Promise<SystemSettings> {
+    const response = await this.request<{ success: boolean; data: SystemSettings }>('/system/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return response.data;
+  }
+
   async getGpuMemoryStats(): Promise<GPUMemoryStats> {
     const response = await this.request<{ success: boolean; data: GPUMemoryStats }>('/system/gpu/memory');
     return response.data;
@@ -712,7 +736,7 @@ class APIClient {
 
 export const api = new APIClient(API_BASE);
 export type {
-  Config, GPULiveStats, GPUMemoryBreakdown, GPUMemoryConfig, GPUMemoryKVCache, GPUMemoryProfile, GPUMemoryStats, GPUMemoryTiming, GPUMemoryUtilization, Model, PackageOperationStatus, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, SystemSettings, SystemStatus,
+  CarbonSettings, Config, GPULiveStats, GPUMemoryBreakdown, GPUMemoryConfig, GPUMemoryKVCache, GPUMemoryProfile, GPUMemoryStats, GPUMemoryTiming, GPUMemoryUtilization, Model, PackageOperationStatus, RegistryCategory, RegistryHyperparametersDefaults, RegistryInferenceDefaults, RegistryLoRADefaults, RegistryModelCapabilities, RegistryModelInfo, RegistryModelRequirements, RegistryModelsResponse, ReportSettings, SystemSettings, SystemStatus,
   TrainingBackend,
   TrainingJob, UnslothStatus
 };

@@ -14,6 +14,20 @@
     let loading = $state(true);
     let error = $state("");
 
+    let carbonPower = $state(0);
+    let carbonDuration = $state(0);
+    let carbonSaving = $state(false);
+    let carbonSaveMessage = $state("");
+
+    let publisherName = $state("");
+    let division = $state("");
+    let defaultProject = $state("");
+    let infraType = $state("");
+    let locationCountry = $state("");
+    let locationRegion = $state("");
+    let reportSaving = $state(false);
+    let reportSaveMessage = $state("");
+
     // Operation states
     let operationInProgress = $state(false);
     let operationMessage = $state("");
@@ -31,6 +45,18 @@
             settings = settingsResponse;
             backends = backendsResponse.backends;
 
+            carbonPower = settingsResponse.carbon?.power_calibration_kwh ?? 0;
+            carbonDuration =
+                settingsResponse.carbon?.duration_calibration_seconds ?? 0;
+
+            publisherName = settingsResponse.report?.publisher_name ?? "";
+            division = settingsResponse.report?.division ?? "";
+            defaultProject =
+                settingsResponse.report?.default_project_name ?? "";
+            infraType = settingsResponse.report?.infra_type ?? "";
+            locationCountry = settingsResponse.report?.location_country ?? "";
+            locationRegion = settingsResponse.report?.location_region ?? "";
+
             // Check if there's an ongoing operation
             if (settings.package_operation.in_progress) {
                 startPolling();
@@ -40,6 +66,52 @@
                 err instanceof Error ? err.message : "Failed to load settings";
         } finally {
             loading = false;
+        }
+    }
+
+    async function handleSaveCarbonSettings() {
+        if (!settings) return;
+        carbonSaving = true;
+        carbonSaveMessage = "";
+        try {
+            const updated = await api.updateSettings({
+                carbon: {
+                    power_calibration_kwh: Number(carbonPower),
+                    duration_calibration_seconds: Number(carbonDuration),
+                },
+            });
+            settings = updated;
+            carbonSaveMessage = "Saved";
+        } catch (err) {
+            carbonSaveMessage =
+                err instanceof Error ? err.message : "Failed to save";
+        } finally {
+            carbonSaving = false;
+        }
+    }
+
+    async function handleSaveReportSettings() {
+        if (!settings) return;
+        reportSaving = true;
+        reportSaveMessage = "";
+        try {
+            const updated = await api.updateSettings({
+                report: {
+                    publisher_name: publisherName,
+                    division,
+                    default_project_name: defaultProject,
+                    infra_type: infraType,
+                    location_country: locationCountry,
+                    location_region: locationRegion,
+                },
+            });
+            settings = updated;
+            reportSaveMessage = "Saved";
+        } catch (err) {
+            reportSaveMessage =
+                err instanceof Error ? err.message : "Failed to save";
+        } finally {
+            reportSaving = false;
         }
     }
 
@@ -407,6 +479,182 @@
                                 </div>
                             </div>
                         {/each}
+                    </div>
+                </Card>
+            </div>
+
+            <!-- Carbon Calibration Section -->
+            <div class="mb-8">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                    Carbon Calibration
+                </h2>
+                <Card>
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-600">
+                            Provide a baseline measurement to subtract idle
+                            power from task emissions. Use a short calibration
+                            run before jobs and record its energy (kWh) and
+                            duration (seconds).
+                        </p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="power-calibration"
+                                    >Power calibration (kWh)</label
+                                >
+                                <input
+                                    id="power-calibration"
+                                    type="number"
+                                    step="0.0001"
+                                    min="0"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={carbonPower}
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="duration-calibration"
+                                    >Calibration duration (seconds)</label
+                                >
+                                <input
+                                    id="duration-calibration"
+                                    type="number"
+                                    step="1"
+                                    min="0"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={carbonDuration}
+                                />
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                onclick={handleSaveCarbonSettings}
+                                disabled={carbonSaving}
+                                loading={carbonSaving}
+                            >
+                                Save Calibration
+                            </Button>
+                            {#if carbonSaveMessage}
+                                <span class="text-sm text-gray-600">
+                                    {carbonSaveMessage}
+                                </span>
+                            {/if}
+                        </div>
+                    </div>
+                </Card>
+            </div>
+
+            <!-- Report Defaults Section -->
+            <div class="mb-8">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                    Report Defaults
+                </h2>
+                <Card>
+                    <div class="space-y-4">
+                        <p class="text-sm text-gray-600">
+                            Defaults applied to generated reports. These values
+                            can be overridden per job, but setting them here
+                            keeps metadata consistent.
+                        </p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="publisher-name">Publisher name</label
+                                >
+                                <input
+                                    id="publisher-name"
+                                    type="text"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={publisherName}
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="division">Division / team</label
+                                >
+                                <input
+                                    id="division"
+                                    type="text"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={division}
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="project-name"
+                                    >Default project name</label
+                                >
+                                <input
+                                    id="project-name"
+                                    type="text"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={defaultProject}
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="infra-type"
+                                    >Infra type (onPremise / publicCloud /
+                                    privateCloud)</label
+                                >
+                                <input
+                                    id="infra-type"
+                                    type="text"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={infraType}
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="location-country"
+                                    >Location country</label
+                                >
+                                <input
+                                    id="location-country"
+                                    type="text"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={locationCountry}
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    class="block text-sm font-medium text-gray-700 mb-1"
+                                    for="location-region"
+                                    >Location region / city</label
+                                >
+                                <input
+                                    id="location-region"
+                                    type="text"
+                                    class="w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                                    bind:value={locationRegion}
+                                />
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                onclick={handleSaveReportSettings}
+                                disabled={reportSaving}
+                                loading={reportSaving}
+                            >
+                                Save Report Defaults
+                            </Button>
+                            {#if reportSaveMessage}
+                                <span class="text-sm text-gray-600">
+                                    {reportSaveMessage}
+                                </span>
+                            {/if}
+                        </div>
                     </div>
                 </Card>
             </div>
