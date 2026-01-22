@@ -949,15 +949,12 @@ class BoAmpsReportGenerator:
                 samples = _as_number(job_config["dataset_num_samples"], 0)
                 if samples > 0:
                     dataset_entry["dataQuantity"] = int(samples)
-                    dataset_entry["items"] = int(samples)
             elif "num_samples" in job_config:
                 samples = _as_number(job_config["num_samples"], 0)
                 if samples > 0:
                     dataset_entry["dataQuantity"] = int(samples)
-                    dataset_entry["items"] = int(samples)
             elif computed_items:
                 dataset_entry["dataQuantity"] = int(computed_items)
-                dataset_entry["items"] = int(computed_items)
 
             # Add shape info for vision datasets
             if is_vision and "image_size" in job_config:
@@ -1083,7 +1080,6 @@ class BoAmpsReportGenerator:
 
             if computed_items:
                 val_entry["dataQuantity"] = int(computed_items)
-                val_entry["items"] = int(computed_items)
 
             if source_type == "public" and "/" in val_path:
                 val_entry["owner"] = val_path.split("/")[0]
@@ -1111,7 +1107,6 @@ class BoAmpsReportGenerator:
 
             if "num_requests" in job_config:
                 input_entry["dataQuantity"] = job_config["num_requests"]
-                input_entry["items"] = job_config["num_requests"]
 
             datasets.append(input_entry)
 
@@ -1122,7 +1117,6 @@ class BoAmpsReportGenerator:
             }
             if "num_requests" in job_config:
                 output_entry["dataQuantity"] = job_config["num_requests"]
-                output_entry["items"] = job_config["num_requests"]
             datasets.append(output_entry)
 
         # Ensure at least one dataset entry (required by schema)
@@ -1175,7 +1169,6 @@ class BoAmpsReportGenerator:
         )
         if samples > 0 and "dataQuantity" not in primary_entry:
             primary_entry["dataQuantity"] = int(samples)
-            primary_entry["items"] = int(samples)
 
         return datasets
 
@@ -1344,18 +1337,15 @@ class BoAmpsReportGenerator:
         components = []
         hardware = get_hardware_detector()
 
-        total_energy = _as_number(emissions_data.get("energy_consumed_kwh", 0.0), 0.0)
-
         # Add GPU if GPU energy is present
         gpu_energy = _as_number(emissions_data.get("gpu_energy_kwh", 0.0), 0.0)
         if gpu_energy > 0:
-            gpu_share = gpu_energy / total_energy if total_energy > 0 else 0
             gpu_info = hardware.get_gpu_info()
 
             component = {
                 "componentType": "gpu",  # Required field per BoAmps schema
                 "nbComponent": 1,
-                "share": round(gpu_share, 4),
+                "share": 1,
             }
 
             if gpu_info and gpu_info.get("primary"):
@@ -1403,13 +1393,12 @@ class BoAmpsReportGenerator:
         # Add CPU
         cpu_energy = _as_number(emissions_data.get("cpu_energy_kwh", 0.0), 0.0)
         if cpu_energy > 0:
-            cpu_share = cpu_energy / total_energy if total_energy > 0 else 0
             cpu_info = hardware.get_cpu_info()
 
             component = {
                 "componentType": "cpu",  # Required field per BoAmps schema
                 "nbComponent": 1,
-                "share": round(cpu_share, 4),
+                "share": 1,
             }
 
             cpu_manufacturer = cpu_info.get("manufacturer") or "Unknown"
@@ -1433,13 +1422,12 @@ class BoAmpsReportGenerator:
         # Add RAM
         ram_energy = _as_number(emissions_data.get("ram_energy_kwh", 0.0), 0.0)
         if ram_energy > 0:
-            ram_share = ram_energy / total_energy if total_energy > 0 else 0
             ram_info = hardware.get_ram_info()
 
             component = {
                 "componentType": "ram",  # Required field per BoAmps schema
                 "nbComponent": 1,
-                "share": round(ram_share, 4),
+                "share": 1,
             }
 
             # Add memory size as integer in GB

@@ -674,7 +674,7 @@ class TestBoAmpsQualityEstimation:
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_dataset_items(self, mock_hw_detector):
-        """Test items field."""
+        """Test that items field is omitted."""
         mock_hw_detector.return_value = create_mock_hardware_detector()
         from model_garden.carbon.boamps import BoAmpsReportGenerator
 
@@ -689,8 +689,7 @@ class TestBoAmpsQualityEstimation:
         report = generator.generate_report(emissions_data, job_config=job_config)
         dataset = report["task"]["dataset"][0]
 
-        assert "items" in dataset
-        assert dataset["items"] == 5000
+        assert "items" not in dataset
 
     @patch("model_garden.carbon.boamps.get_hardware_detector")
     def test_inference_properties(self, mock_hw_detector):
